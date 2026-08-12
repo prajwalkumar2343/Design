@@ -1,0 +1,20 @@
+{
+  "name": "canvas-local",
+  "interface": {
+    "displayName": "Canvas Local"
+  },
+  "plugins": [
+    {
+      "name": "canvas-design",
+      "source": {
+        "source": "local",
+        "path": "./plugins/canvas-design"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

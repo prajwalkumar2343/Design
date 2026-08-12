@@ -1,0 +1,22 @@
+{
+  "name": "canvas-design",
+  "version": "0.1.0",
+  "description": "Run and visually iterate on the Canvas HTML design workspace from Codex.",
+  "author": {
+    "name": "Canvas"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Canvas Design",
+    "shortDescription": "Build and visually refine HTML designs in Canvas.",
+    "longDescription": "A native Codex workflow for starting Canvas, editing its HTML and CSS, inspecting rendered frames, capturing screenshots, and verifying responsive designs without an MCP server.",
+    "developerName": "Canvas",
+    "category": "Developer Tools",
+    "capabilities": ["HTML/CSS", "Browser Preview", "Visual QA"],
+    "defaultPrompt": [
+      "Open this project in Canvas and inspect its design.",
+      "Refine the selected Canvas frame and verify it visually.",
+      "Review every Canvas viewport for responsive issues."
+    ]
+  }
+}

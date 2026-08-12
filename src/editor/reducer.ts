@@ -1,0 +1,400 @@
+import {
+  createEmptySelection,
+  type ActiveTool,
+  type DocumentEntity,
+  type EditorState,
+  type FrameEntity,
+  type NodeEntity,
+  type PageEntity,
+  type SelectionState,
+} from "./model";
+
+export type EditorAction =
+  | { type: "document/create"; document: DocumentEntity }
+  | {
+      type: "document/replace-html";
+      documentId: string;
+      expectedRevision: number;
+      srcDoc: string;
+    }
+  | { type: "page/create"; page: PageEntity }
+  | { type: "page/rename"; pageId: string; name: string }
+  | { type: "page/switch"; pageId: string }
+  | { type: "frame/create"; frame: FrameEntity }
+  | {
+      type: "frame/move";
+      frameId: string;
+      position: { x: number; y: number };
+    }
+  | {
+      type: "frame/update";
+      frameId: string;
+      patch: Partial<Pick<FrameEntity, "name" | "width" | "height" | "background">>;
+    }
+  | { type: "frame/remove"; frameId: string }
+  | { type: "node/upsert"; node: NodeEntity }
+  | { type: "node/remove"; nodeId: string }
+  | {
+      type: "node/update";
+      nodeId: string;
+      patch: Partial<Pick<NodeEntity, "name" | "locked" | "hidden">>;
+    }
+  | { type: "node/reorder"; nodeId: string; direction: "up" | "down" }
+  | { type: "selection/set"; selection: SelectionState }
+  | { type: "tool/set"; tool: ActiveTool };
+
+export class EditorReducerError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EditorReducerError";
+  }
+}
+
+function requireDocument(state: EditorState, documentId: string): DocumentEntity {
+  const document = state.documents[documentId];
+  if (!document) {
+    throw new EditorReducerError(`Unknown document: ${documentId}`);
+  }
+  return document;
+}
+
+function requirePage(state: EditorState, pageId: string): PageEntity {
+  const page = state.pages[pageId];
+  if (!page) {
+    throw new EditorReducerError(`Unknown page: ${pageId}`);
+  }
+  return page;
+}
+
+function requireFrame(state: EditorState, frameId: string): FrameEntity {
+  const frame = state.frames[frameId];
+  if (!frame) {
+    throw new EditorReducerError(`Unknown frame: ${frameId}`);
+  }
+  return frame;
+}
+
+function uniqueExistingIds(
+  ids: readonly string[],
+  entities: Record<string, unknown>,
+): string[] {
+  const seen = new Set<string>();
+  return ids.filter((id) => {
+    if (seen.has(id) || !entities[id]) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
+}
+
+function normalizeSelection(state: EditorState, selection: SelectionState): SelectionState {
+  const frameIds = uniqueExistingIds(selection.frameIds, state.frames);
+  const nodeIds = uniqueExistingIds(selection.nodeIds, state.nodes);
+  const primaryFrameId =
+    selection.primaryFrameId && frameIds.includes(selection.primaryFrameId)
+      ? selection.primaryFrameId
+      : frameIds[0] ?? null;
+  const primaryNodeId =
+    selection.primaryNodeId && nodeIds.includes(selection.primaryNodeId)
+      ? selection.primaryNodeId
+      : nodeIds[0] ?? null;
+
+  return { frameIds, nodeIds, primaryFrameId, primaryNodeId };
+}
+
+function replaceChildOrder(
+  state: EditorState,
+  nodeId: string,
+  direction: "up" | "down",
+): EditorState {
+  const node = state.nodes[nodeId];
+  if (!node) throw new EditorReducerError(`Unknown node: ${nodeId}`);
+  const siblingIds = node.parentId
+    ? state.nodes[node.parentId]?.childIds
+    : state.documents[node.documentId]?.rootNodeIds;
+  if (!siblingIds) throw new EditorReducerError(`Unknown node hierarchy for: ${nodeId}`);
+  const index = siblingIds.indexOf(nodeId);
+  const nextIndex = direction === "up" ? index - 1 : index + 1;
+  if (index < 0 || nextIndex < 0 || nextIndex >= siblingIds.length) return state;
+  const nextIds = [...siblingIds];
+  [nextIds[index], nextIds[nextIndex]] = [nextIds[nextIndex], nextIds[index]];
+  if (node.parentId) {
+    const parent = state.nodes[node.parentId];
+    if (!parent) throw new EditorReducerError(`Unknown parent node: ${node.parentId}`);
+    return { ...state, nodes: { ...state.nodes, [parent.id]: { ...parent, childIds: nextIds } } };
+  }
+  const document = state.documents[node.documentId];
+  if (!document) throw new EditorReducerError(`Unknown document: ${node.documentId}`);
+  return {
+    ...state,
+    documents: { ...state.documents, [document.id]: { ...document, rootNodeIds: nextIds } },
+  };
+}
+
+export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+  switch (action.type) {
+    case "document/create": {
+      if (state.documents[action.document.id]) {
+        throw new EditorReducerError(`Document already exists: ${action.document.id}`);
+      }
+      return {
+        ...state,
+        documents: { ...state.documents, [action.document.id]: action.document },
+      };
+    }
+
+    case "document/replace-html": {
+      const document = requireDocument(state, action.documentId);
+      if (document.revision !== action.expectedRevision) {
+        throw new EditorReducerError(
+          `Stale document revision for ${document.id}: expected ${action.expectedRevision}, current ${document.revision}`,
+        );
+      }
+      if (document.srcDoc === action.srcDoc) return state;
+      return {
+        ...state,
+        documents: {
+          ...state.documents,
+          [document.id]: {
+            ...document,
+            srcDoc: action.srcDoc,
+            revision: document.revision + 1,
+          },
+        },
+      };
+    }
+
+    case "page/create": {
+      if (state.pages[action.page.id]) {
+        throw new EditorReducerError(`Page already exists: ${action.page.id}`);
+      }
+      const document = requireDocument(state, action.page.documentId);
+      return {
+        ...state,
+        documents: {
+          ...state.documents,
+          [document.id]: {
+            ...document,
+            pageIds: document.pageIds.includes(action.page.id)
+              ? document.pageIds
+              : [...document.pageIds, action.page.id],
+          },
+        },
+        pages: { ...state.pages, [action.page.id]: action.page },
+        activePageId: state.activePageId ?? action.page.id,
+      };
+    }
+
+    case "page/rename": {
+      const page = requirePage(state, action.pageId);
+      const name = action.name.trim();
+      if (!name || name === page.name) return state;
+      return { ...state, pages: { ...state.pages, [page.id]: { ...page, name } } };
+    }
+
+    case "page/switch": {
+      const page = requirePage(state, action.pageId);
+      if (state.activePageId === page.id) return state;
+      const firstFrameId = page.frameIds.find((frameId) => state.frames[frameId]) ?? null;
+      const selection = normalizeSelection(state, {
+        frameIds: firstFrameId ? [firstFrameId] : [],
+        nodeIds: [],
+        primaryFrameId: firstFrameId,
+        primaryNodeId: null,
+      });
+      return { ...state, activePageId: page.id, selection };
+    }
+
+    case "frame/create": {
+      if (state.frames[action.frame.id]) {
+        throw new EditorReducerError(`Frame already exists: ${action.frame.id}`);
+      }
+      requireDocument(state, action.frame.documentId);
+      const page = requirePage(state, action.frame.pageId);
+      if (page.documentId !== action.frame.documentId) {
+        throw new EditorReducerError(
+          `Frame ${action.frame.id} references a page from another document`,
+        );
+      }
+      return {
+        ...state,
+        frames: { ...state.frames, [action.frame.id]: action.frame },
+        pages: {
+          ...state.pages,
+          [page.id]: {
+            ...page,
+            frameIds: page.frameIds.includes(action.frame.id)
+              ? page.frameIds
+              : [...page.frameIds, action.frame.id],
+          },
+        },
+      };
+    }
+
+    case "frame/move": {
+      const frame = requireFrame(state, action.frameId);
+      if (frame.x === action.position.x && frame.y === action.position.y) {
+        return state;
+      }
+      return {
+        ...state,
+        frames: {
+          ...state.frames,
+          [frame.id]: {
+            ...frame,
+            x: action.position.x,
+            y: action.position.y,
+          },
+        },
+      };
+    }
+
+    case "frame/update": {
+      const frame = requireFrame(state, action.frameId);
+      const nextFrame = { ...frame, ...action.patch };
+      if (
+        nextFrame.name === frame.name &&
+        nextFrame.width === frame.width &&
+        nextFrame.height === frame.height &&
+        nextFrame.background === frame.background
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        frames: { ...state.frames, [frame.id]: nextFrame },
+      };
+    }
+
+    case "frame/remove": {
+      const frame = requireFrame(state, action.frameId);
+      const { [frame.id]: _removedFrame, ...frames } = state.frames;
+      const page = requirePage(state, frame.pageId);
+      const selection = {
+        ...state.selection,
+        frameIds: state.selection.frameIds.filter((id) => id !== frame.id),
+        primaryFrameId:
+          state.selection.primaryFrameId === frame.id
+            ? null
+            : state.selection.primaryFrameId,
+      };
+      return {
+        ...state,
+        frames,
+        pages: {
+          ...state.pages,
+          [page.id]: {
+            ...page,
+            frameIds: page.frameIds.filter((id) => id !== frame.id),
+          },
+        },
+        selection: normalizeSelection({ ...state, frames }, selection),
+      };
+    }
+
+    case "node/upsert": {
+      requireDocument(state, action.node.documentId);
+      if (action.node.parentId) {
+        const parent = state.nodes[action.node.parentId];
+        if (!parent) {
+          throw new EditorReducerError(`Unknown parent node: ${action.node.parentId}`);
+        }
+        if (parent.documentId !== action.node.documentId) {
+          throw new EditorReducerError("Node parent belongs to another document");
+        }
+      }
+      const previous = state.nodes[action.node.id];
+      let nextState = { ...state, nodes: { ...state.nodes, [action.node.id]: action.node } };
+      if (previous && previous.parentId !== action.node.parentId) {
+        if (previous.parentId && nextState.nodes[previous.parentId]) {
+          const parent = nextState.nodes[previous.parentId];
+          nextState = {
+            ...nextState,
+            nodes: { ...nextState.nodes, [parent.id]: { ...parent, childIds: parent.childIds.filter((id) => id !== action.node.id) } },
+          };
+        } else if (nextState.documents[action.node.documentId]) {
+          const document = nextState.documents[action.node.documentId];
+          nextState = {
+            ...nextState,
+            documents: { ...nextState.documents, [document.id]: { ...document, rootNodeIds: document.rootNodeIds.filter((id) => id !== action.node.id) } },
+          };
+        }
+      }
+      if (action.node.parentId) {
+        const parent = nextState.nodes[action.node.parentId];
+        if (parent && !parent.childIds.includes(action.node.id)) {
+          nextState = { ...nextState, nodes: { ...nextState.nodes, [parent.id]: { ...parent, childIds: [...parent.childIds, action.node.id] } } };
+        }
+      } else {
+        const document = nextState.documents[action.node.documentId];
+        if (document && !document.rootNodeIds.includes(action.node.id)) {
+          nextState = { ...nextState, documents: { ...nextState.documents, [document.id]: { ...document, rootNodeIds: [...document.rootNodeIds, action.node.id] } } };
+        }
+      }
+      return nextState;
+    }
+
+    case "node/update": {
+      const node = state.nodes[action.nodeId];
+      if (!node) throw new EditorReducerError(`Unknown node: ${action.nodeId}`);
+      const nextNode = { ...node, ...action.patch };
+      if (nextNode.name === node.name && nextNode.locked === node.locked && nextNode.hidden === node.hidden) return state;
+      return { ...state, nodes: { ...state.nodes, [node.id]: nextNode } };
+    }
+
+    case "node/remove": {
+      const node = state.nodes[action.nodeId];
+      if (!node) return state;
+      const removed = new Set<string>();
+      const visit = (nodeId: string) => {
+        if (removed.has(nodeId)) return;
+        removed.add(nodeId);
+        for (const childId of state.nodes[nodeId]?.childIds ?? []) visit(childId);
+      };
+      visit(node.id);
+      const nodes = Object.fromEntries(Object.entries(state.nodes).filter(([id]) => !removed.has(id)));
+      const parent = node.parentId ? state.nodes[node.parentId] : null;
+      const documents = parent
+        ? state.documents
+        : Object.fromEntries(Object.entries(state.documents).map(([id, document]) =>
+            id === node.documentId
+              ? [id, { ...document, rootNodeIds: document.rootNodeIds.filter((childId) => !removed.has(childId)) }]
+              : [id, document],
+          ));
+      if (parent && nodes[parent.id]) {
+        nodes[parent.id] = { ...nodes[parent.id], childIds: parent.childIds.filter((childId) => !removed.has(childId)) };
+      }
+      const nextState = { ...state, nodes, documents };
+      return { ...nextState, selection: normalizeSelection(nextState, state.selection) };
+    }
+
+    case "node/reorder":
+      return replaceChildOrder(state, action.nodeId, action.direction);
+
+    case "selection/set": {
+      const selection = normalizeSelection(state, action.selection);
+      const current = state.selection;
+      if (
+        current.primaryFrameId === selection.primaryFrameId &&
+        current.primaryNodeId === selection.primaryNodeId &&
+        current.frameIds.length === selection.frameIds.length &&
+        current.nodeIds.length === selection.nodeIds.length &&
+        current.frameIds.every((id, index) => id === selection.frameIds[index]) &&
+        current.nodeIds.every((id, index) => id === selection.nodeIds[index])
+      ) {
+        return state;
+      }
+      return { ...state, selection };
+    }
+
+    case "tool/set":
+      return state.activeTool === action.tool
+        ? state
+        : { ...state, activeTool: action.tool };
+  }
+}
+
+export function clearSelectionAction(): EditorAction {
+  return { type: "selection/set", selection: createEmptySelection() };
+}

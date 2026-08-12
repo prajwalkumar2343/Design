@@ -1,0 +1,37 @@
+export {
+  DocumentExchangeError,
+  DocumentExchangeService,
+  MAX_ROUTER_HTML_BYTES,
+  validateRouterHtml,
+  type DocumentExchangeErrorCode,
+  type DocumentHtmlSnapshot,
+  type HtmlValidationResult,
+  type ReplaceDocumentHtmlInput,
+  type ReplaceDocumentHtmlResult,
+} from "./document-exchange";
+export {
+  ContinuousVoiceStream,
+  ContinuousVoiceStreamError,
+  type ContinuousVoiceStreamErrorCode,
+  type ContinuousVoiceStreamOptions,
+  type StartContinuousVoiceStreamOptions,
+} from "./continuous-voice-stream";
+export {
+  MAX_BUFFERED_VOICE_BYTES,
+  MAX_CONTEXT_NODE_IDS,
+  MAX_VOICE_CHUNK_BYTES,
+  VOICE_STREAM_PROTOCOL_VERSION,
+  type AppendVoiceAudioRequest,
+  type CancelVoiceStreamRequest,
+  type CodexVoiceStreamTransport,
+  type StartVoiceStreamRequest,
+  type StartVoiceStreamResult,
+  type StopVoiceStreamRequest,
+  type StopVoiceStreamResult,
+  type UpdateVoiceContextRequest,
+  type VoiceInteractionContext,
+  type VoicePointerContext,
+  type VoiceStreamEventResult,
+  type VoiceStreamLifecycleEvent,
+  type VoiceStreamPhase,
+} from "./voice-stream-protocol";

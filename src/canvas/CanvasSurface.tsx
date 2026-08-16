@@ -1289,6 +1289,7 @@ export function CanvasSurface({
       pendingImageRef.current = null;
       setCreationError(null);
       setInteractionMode("idle");
+      setSampledColor(null);
       editorStore.execute(setActiveToolCommand(tool), { history: "skip" });
       setIsFrameMenuOpen(tool === "frame");
     },
@@ -1487,7 +1488,15 @@ export function CanvasSurface({
               preset.width / 2,
             y: Math.min(...renderRects.map((frame) => frame.y)) + preset.height / 2,
           };
-      const sequence = nextFrameSequenceRef.current++;
+      const existingIds = editorStore.getState().frames;
+      const idPattern = new RegExp(`^${preset.id}-(\\d+)$`);
+      let highestSequence = 0;
+      for (const frameId of Object.keys(existingIds)) {
+        const match = idPattern.exec(frameId);
+        if (match) highestSequence = Math.max(highestSequence, Number(match[1]));
+      }
+      const sequence = Math.max(nextFrameSequenceRef.current, highestSequence + 1);
+      nextFrameSequenceRef.current = sequence + 1;
       const frame = {
         ...createFrameFromPreset({
         preset,

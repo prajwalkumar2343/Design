@@ -340,6 +340,7 @@ export function CanvasSurface({
     selectComment,
     updateComment,
     deleteComment,
+    clearComments,
   } = useComments(editorStore);
   const activeTool = normalizeActiveTool(editorState.activeTool);
   const activeToolRef = useRef<ToolId>(activeTool);
@@ -407,6 +408,7 @@ export function CanvasSurface({
       const text = await persistenceAdapterRef.current!.readProjectFile(file);
       const result = importWireCanvasProject(editorStore, text);
       if (result.changed) {
+        clearComments();
         bridgeControllersRef.current.clear();
         snapshotQueuesRef.current.clear();
         snapshotSequenceRef.current.clear();
@@ -425,7 +427,7 @@ export function CanvasSurface({
           : "The project could not be imported.";
       setPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
     }
-  }, [editorStore]);
+  }, [clearComments, editorStore]);
 
   const toOverlayTarget = useCallback(
     (entry: OverlayBridgeTargetState): OverlayNodeTarget | null => {

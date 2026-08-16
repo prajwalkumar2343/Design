@@ -141,6 +141,7 @@ export type BridgeCommand =
       stroke?: string;
       strokeWidth?: number;
       editable?: boolean;
+      style?: Record<string, string>;
     }
   | {
       command: "delete-element";
@@ -179,6 +180,7 @@ export interface BridgeCreatedElementSnapshot {
   stroke: string;
   strokeWidth: number;
   editable: boolean;
+  style: Record<string, string>;
 }
 
 export type BridgeUndoCommand =
@@ -452,7 +454,8 @@ function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElement
     isValidString(value.fill, { maxLength: 4096, allowEmpty: true }) &&
     isValidString(value.stroke, { maxLength: 4096, allowEmpty: true }) &&
     isFiniteNumber(value.strokeWidth) && value.strokeWidth >= 0 && value.strokeWidth <= 100 &&
-    typeof value.editable === "boolean";
+    typeof value.editable === "boolean" &&
+    isStringRecord(value.style, 4096);
 }
 
 function isBridgeCommand(value: unknown): value is BridgeCommand {
@@ -497,7 +500,8 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
       (value.fill === undefined || isValidString(value.fill, { maxLength: 4096, allowEmpty: true })) &&
       (value.stroke === undefined || isValidString(value.stroke, { maxLength: 4096, allowEmpty: true })) &&
       (value.strokeWidth === undefined || (isFiniteNumber(value.strokeWidth) && value.strokeWidth >= 0 && value.strokeWidth <= 100)) &&
-      (value.editable === undefined || typeof value.editable === "boolean");
+      (value.editable === undefined || typeof value.editable === "boolean") &&
+      (value.style === undefined || isStringRecord(value.style, 4096));
   }
   return false;
 }

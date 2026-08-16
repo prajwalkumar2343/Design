@@ -850,6 +850,16 @@ export function CanvasSurface({
       else {
         bridgeControllersRef.current.delete(frameId);
         snapshotSequenceRef.current.delete(frameId);
+        setBridgeTargets((current) =>
+          Object.fromEntries(
+            Object.entries(current).filter(([key]) => !key.startsWith(`${frameId}:`)),
+          ),
+        );
+        setBridgeHierarchies((current) => {
+          const next = { ...current };
+          delete next[frameId];
+          return next;
+        });
       }
     },
     [snapshotSequenceRef],

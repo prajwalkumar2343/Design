@@ -12,12 +12,15 @@ export interface CommentPopoverProps {
 
 export function CommentPopover({ comment, feedback, style, onClose, onSave, onDelete }: CommentPopoverProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const finalizedRef = useRef(false);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, [comment.id]);
 
   const finalize = (nextBody: string) => {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
     const body = nextBody.trim();
     onClose();
     if (body === "") {

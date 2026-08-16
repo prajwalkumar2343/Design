@@ -1,5 +1,6 @@
 import {
   type ActiveTool,
+  type DocumentMode,
   type EditorState,
   type FrameEntity,
   type FrameSeed,
@@ -7,9 +8,17 @@ import {
   type PageEntity,
   type SelectionState,
 } from "./model";
+import type {
+  BriefFieldUpdate,
+  BriefReference,
+  ConfirmedDecision,
+  StartBrainstormSessionOptions,
+} from "../session/model";
+import type { BrainstormSessionAction } from "../session/reducer";
 import { editorReducer } from "./reducer";
 
 export type EditorCommand =
+  | { type: "document/create"; document: import("./model").DocumentEntity }
   | {
       type: "frame/create";
       frame: FrameSeed;
@@ -19,6 +28,7 @@ export type EditorCommand =
       documentId: string;
       expectedRevision: number;
       srcDoc: string;
+      mode: DocumentMode;
     }
   | { type: "page/create"; page: PageEntity }
   | { type: "page/rename"; pageId: string; name: string }
@@ -39,7 +49,8 @@ export type EditorCommand =
   | { type: "node/update"; nodeId: string; patch: Partial<Pick<NodeEntity, "name" | "locked" | "hidden">> }
   | { type: "node/reorder"; nodeId: string; direction: "up" | "down" }
   | { type: "selection/set"; selection: SelectionState }
-  | { type: "tool/set"; tool: ActiveTool };
+  | { type: "tool/set"; tool: ActiveTool }
+  | BrainstormSessionAction;
 
 export class EditorCommandError extends Error {
   constructor(message: string) {
@@ -59,16 +70,22 @@ function applyCreateFrameCommand(state: EditorState, frame: FrameSeed): EditorSt
       document: {
         id: frame.documentId,
         name: frame.documentName ?? frame.documentId,
+        mode: frame.mode ?? "design",
         srcDoc: frame.srcDoc,
         revision: 1,
         rootNodeIds: [],
         pageIds: [],
       },
     });
-  } else if (existingDocument.srcDoc !== frame.srcDoc) {
-    throw new EditorCommandError(
-      `Document ${frame.documentId} has a different iframe source document`,
-    );
+  } else {
+    if (existingDocument.srcDoc !== frame.srcDoc) {
+      throw new EditorCommandError(
+        `Document ${frame.documentId} has a different iframe source document`,
+      );
+    }
+    if (existingDocument.mode !== (frame.mode ?? "design")) {
+      throw new EditorCommandError(`Document ${frame.documentId} has a different document mode`);
+    }
   }
 
   const existingPage = nextState.pages[pageId];
@@ -107,6 +124,8 @@ export function applyEditorCommand(
   command: EditorCommand,
 ): EditorState {
   switch (command.type) {
+    case "document/create":
+      return editorReducer(state, command);
     case "frame/create":
       return applyCreateFrameCommand(state, command.frame);
     case "document/replace-html":
@@ -129,6 +148,19 @@ export function applyEditorCommand(
       return editorReducer(state, command);
     case "tool/set":
       return editorReducer(state, command);
+    case "session/start":
+    case "session/brief-update":
+    case "session/reference-add":
+    case "session/reference-update":
+    case "session/reference-remove":
+    case "session/decision-add":
+    case "session/decision-update":
+    case "session/decision-remove":
+    case "session/wireframe-created":
+    case "session/lifecycle-transition":
+    case "session/brief-select":
+    case "session/brief-move":
+      return editorReducer(state, command);
   }
 }
 
@@ -136,6 +168,7 @@ export function replaceDocumentHtmlCommand(options: {
   documentId: string;
   expectedRevision: number;
   srcDoc: string;
+  mode: DocumentMode;
 }): EditorCommand {
   return { type: "document/replace-html", ...options };
 }
@@ -169,4 +202,84 @@ export function setSelectionCommand(selection: SelectionState): EditorCommand {
 
 export function setActiveToolCommand(tool: ActiveTool): EditorCommand {
   return { type: "tool/set", tool };
+}
+
+export function startBrainstormSessionCommand(
+  options: StartBrainstormSessionOptions,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/start", options, expectedRevision };
+}
+
+export function updateBriefFieldCommand(
+  update: BriefFieldUpdate,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/brief-update", update, expectedRevision };
+}
+
+export function addBriefReferenceCommand(
+  reference: BriefReference,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/reference-add", reference, expectedRevision };
+}
+
+export function updateBriefReferenceCommand(options: {
+  referenceId: string;
+  patch: Partial<Pick<BriefReference, "label" | "url" | "note">>;
+  expectedRevision?: number;
+}): EditorCommand {
+  return { type: "session/reference-update", ...options };
+}
+
+export function removeBriefReferenceCommand(
+  referenceId: string,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/reference-remove", referenceId, expectedRevision };
+}
+
+export function addConfirmedDecisionCommand(
+  decision: ConfirmedDecision,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/decision-add", decision, expectedRevision };
+}
+
+export function updateConfirmedDecisionCommand(options: {
+  decisionId: string;
+  patch: Partial<Pick<ConfirmedDecision, "statement" | "rationale">>;
+  expectedRevision?: number;
+}): EditorCommand {
+  return { type: "session/decision-update", ...options };
+}
+
+export function removeConfirmedDecisionCommand(
+  decisionId: string,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/decision-remove", decisionId, expectedRevision };
+}
+
+export function transitionBrainstormSessionCommand(
+  to: "wireframing" | "completed",
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "session/lifecycle-transition", to, expectedRevision };
+}
+
+export function wireframeCreatedCommand(expectedRevision?: number): EditorCommand {
+  return { type: "session/wireframe-created", expectedRevision };
+}
+
+export function selectBriefFrameCommand(briefFrameId: string | null): EditorCommand {
+  return { type: "session/brief-select", briefFrameId };
+}
+
+export function moveBriefFrameCommand(options: {
+  position: { x: number; y: number };
+  expectedRevision?: number;
+}): EditorCommand {
+  return { type: "session/brief-move", ...options };
 }

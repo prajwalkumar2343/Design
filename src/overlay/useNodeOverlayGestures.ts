@@ -128,6 +128,60 @@ export function useNodeOverlayGestures({
   const gestureStylesRef = useRef(new Map<string, Partial<Record<SafeInlineStyleProperty, string | null>>>());
   const [gestureOverlayTargets, setGestureOverlayTargets] = useState<OverlayNodeTarget[] | null>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<{ axis: "x" | "y"; value: number }[]>([]);
+  const liveFrameRef = useRef<number | null>(null);
+  const pendingLiveChangesRef = useRef<OverlayStyleChange[]>([]);
+  const liveSettledRef = useRef<Promise<void>>(Promise.resolve());
+
+  const flushLiveApply = useCallback(() => {
+    liveFrameRef.current = null;
+    const changes = pendingLiveChangesRef.current;
+    pendingLiveChangesRef.current = [];
+    const operation = nodeGestureRef.current;
+    if (changes.length === 0 || !operation) return;
+    const entries = changes.flatMap((change) =>
+      toInlineStyleCommands([change], "next").map((command) => ({
+        frameId: change.target.frameId,
+        command,
+        change,
+      })),
+    );
+    const captures: Promise<void>[] = [];
+    for (const { frameId, command, change } of entries) {
+      const controller = bridgeControllersRef.current.get(frameId);
+      if (!controller) continue;
+      const key = `${frameId}:${command.targetId}:${command.property}`;
+      const captured = operation.capturedPrevious;
+      captures.push(
+        controller.setInlineStyle(command).then((ack) => {
+          if (ack?.command !== "set-inline-style") return;
+          if (!captured.has(key)) {
+            captured.set(key, ack.previousValue);
+            change.previous[command.property] = ack.previousValue;
+          }
+        }).catch(() => undefined),
+      );
+    }
+    if (captures.length === 0) return;
+    const settle = Promise.all(captures).then(() => undefined).catch(() => undefined);
+    liveSettledRef.current = liveSettledRef.current.then(() => settle);
+  }, [bridgeControllersRef]);
+
+  const scheduleLiveApply = useCallback((changes: OverlayStyleChange[]) => {
+    pendingLiveChangesRef.current = changes;
+    if (liveFrameRef.current === null) {
+      liveFrameRef.current = requestAnimationFrame(() => {
+        flushLiveApply();
+      });
+    }
+  }, [flushLiveApply]);
+
+  const cancelPendingLiveApply = useCallback(() => {
+    if (liveFrameRef.current !== null) {
+      cancelAnimationFrame(liveFrameRef.current);
+      liveFrameRef.current = null;
+    }
+    pendingLiveChangesRef.current = [];
+  }, []);
 
   const selectedOverlayTargets = useMemo(() => {
     if (gestureOverlayTargets) return gestureOverlayTargets;
@@ -142,6 +196,12 @@ export function useNodeOverlayGestures({
       .map(toOverlayTarget)
       .filter((target): target is OverlayNodeTarget => target !== null);
   }, [bridgeTargets, gestureOverlayTargets, selection, toOverlayTarget]);
+
+  useEffect(() => {
+    return () => {
+      if (liveFrameRef.current !== null) cancelAnimationFrame(liveFrameRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!nodeGestureRef.current) setGestureOverlayTargets(null);
@@ -333,12 +393,10 @@ export function useNodeOverlayGestures({
           rotation: change.rotation,
         })),
       );
-      operation.queue = operation.queue
-        .then(() => applyStyleChanges(changes, "next", operation.capturedPrevious))
-        .catch(() => undefined);
+      scheduleLiveApply(changes);
       return true;
     },
-    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, setInteractionMode, surfaceRef, toOverlayTarget],
+    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, scheduleLiveApply, setInteractionMode, surfaceRef, toOverlayTarget],
   );
 
   const endNodeGesture = useCallback(
@@ -346,6 +404,7 @@ export function useNodeOverlayGestures({
       const operation = nodeGestureRef.current;
       if (!operation || operation.pointerId !== event.pointerId) return;
       nodeGestureRef.current = null;
+      cancelPendingLiveApply();
       setAlignmentGuides([]);
       setInteractionMode("idle");
 
@@ -377,8 +436,10 @@ export function useNodeOverlayGestures({
           .catch(() => undefined);
       };
 
+      const settled = liveSettledRef.current;
       const schedule = (direction: "previous" | "next") => {
         operation.queue = operation.queue
+          .then(() => settled)
           .then(() => applyStyleChanges(operation.changes, direction, operation.capturedPrevious))
           .catch(() => undefined);
         setGestureOverlayTargets(
@@ -396,7 +457,7 @@ export function useNodeOverlayGestures({
       if (editorStore.hasActiveTransaction()) editorStore.commitTransaction(effect);
       refreshAfterQueue();
     },
-    [applyStyleChanges, editorStore, refreshSnapshot, refreshTarget, setInteractionMode],
+    [applyStyleChanges, cancelPendingLiveApply, editorStore, refreshSnapshot, refreshTarget, setInteractionMode],
   );
 
   const cancelNodeGesture = useCallback(() => {
@@ -404,9 +465,12 @@ export function useNodeOverlayGestures({
     if (!operation) return false;
     operation.cancelled = true;
     nodeGestureRef.current = null;
+    cancelPendingLiveApply();
     setAlignmentGuides([]);
     setGestureOverlayTargets(operation.snapshots.map((snapshot) => snapshot.target));
+    const settled = liveSettledRef.current;
     operation.queue = operation.queue
+      .then(() => settled)
       .then(() => applyStyleChanges(operation.changes, "previous"))
       .catch(() => undefined);
     const affectedFrameIds = Array.from(new Set(operation.changes.map((change) => change.target.frameId)));

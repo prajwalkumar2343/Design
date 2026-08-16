@@ -4,11 +4,22 @@ export {
   MAX_ROUTER_HTML_BYTES,
   validateRouterHtml,
   type DocumentExchangeErrorCode,
+  type CreateWireframeInput,
+  type CreateWireframeResult,
   type DocumentHtmlSnapshot,
+  type DocumentMode,
   type HtmlValidationResult,
   type ReplaceDocumentHtmlInput,
   type ReplaceDocumentHtmlResult,
+  type WireframeViolation,
+  type WireframeViolationCode,
 } from "./document-exchange";
+export {
+  validateWireframeHtml,
+  WireframeAdmissionError,
+  type WireframeValidationResult,
+  type WireframeAdmissionErrorCode,
+} from "./wireframe-admission";
 export {
   ContinuousVoiceStream,
   ContinuousVoiceStreamError,
@@ -35,3 +46,20 @@ export {
   type VoiceStreamLifecycleEvent,
   type VoiceStreamPhase,
 } from "./voice-stream-protocol";
+export {
+  BRAINSTORM_OPENING_PROMPT,
+  BrainstormSessionService,
+  BrainstormSessionServiceError,
+  type AddBriefReferenceInput,
+  type AddConfirmedDecisionInput,
+  type BrainstormSessionErrorCode,
+  type BrainstormSessionMutationResult,
+  type BrainstormSessionSnapshot,
+  type RemoveBriefReferenceInput,
+  type RemoveConfirmedDecisionInput,
+  type StartBrainstormSessionInput,
+  type TransitionBrainstormSessionInput,
+  type UpdateBriefFieldInput,
+  type UpdateBriefReferenceInput,
+  type UpdateConfirmedDecisionInput,
+} from "./brainstorm-session";

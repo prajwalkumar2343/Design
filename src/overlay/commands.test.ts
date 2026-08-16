@@ -181,6 +181,22 @@ describe("overlay style commands", () => {
     expect(change.rotation).toBe(30);
   });
 
+  it("rotates a multi-node selection rigidly around the group center", () => {
+    const left = snapshot("div", { x: 0, y: 0, width: 100, height: 50 });
+    const right = snapshot("div", { x: 200, y: 0, width: 100, height: 50 });
+
+    const changes = buildRotationChanges([left, right], 90);
+
+    expect(changes[0].next).toMatchObject({
+      transform: "translate(100px, -100px) rotate(90deg)",
+    });
+    expect(changes[1].next).toMatchObject({
+      transform: "translate(-100px, 100px) rotate(90deg)",
+    });
+    expect(changes[0].rotation).toBe(90);
+    expect(changes[1].rotation).toBe(90);
+  });
+
   it("falls back to appending deltas when a transform cannot be parsed", () => {
     const scaled = snapshot(
       "div",

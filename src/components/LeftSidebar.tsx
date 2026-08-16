@@ -18,7 +18,7 @@ import {
   Upload,
   WandSparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
 import type { FrameRenderModel, NodeEntity, PageEntity, SelectionState } from "../editor/model";
 import { buildLayerTree, layerDisplayName, siblingIdsForNode, type LayerTreeNode } from "./panel-model";
@@ -246,12 +246,17 @@ function LayersPanel({
 }: Pick<LeftSidebarProps, "frames" | "hierarchies" | "nodes" | "selection" | "onSelectNode" | "onRenameNode" | "onToggleNodeLock" | "onToggleNodeHidden" | "onReorderNode">) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const expandedFrameIdsRef = useRef<Set<string>>(new Set());
   const selected = useMemo(() => new Set(selection.nodeIds), [selection.nodeIds]);
   const frameEntries = frames.map((frame) => ({ frame, snapshot: hierarchies[frame.id] })).filter(({ snapshot }) => snapshot);
   useEffect(() => {
     setExpanded((current) => {
       const next = new Set(current);
-      frameEntries.forEach(({ snapshot }) => snapshot?.nodes.forEach((node) => { if (node.childIds.length > 0) next.add(node.elementId); }));
+      frameEntries.forEach(({ frame, snapshot }) => {
+        if (expandedFrameIdsRef.current.has(frame.id)) return;
+        snapshot?.nodes.forEach((node) => { if (node.childIds.length > 0) next.add(node.elementId); });
+        expandedFrameIdsRef.current.add(frame.id);
+      });
       return next;
     });
   }, [frameEntries.map(({ frame }) => frame.id).join("|"), Object.keys(hierarchies).length]);

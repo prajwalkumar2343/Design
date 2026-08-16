@@ -3,6 +3,8 @@ import type { OverlayNodeTarget } from "./NodeOverlayLayer";
 import {
   buildMoveChanges,
   buildResizeChanges,
+  buildRotationChanges,
+  parseTransform,
   toInlineStyleCommands,
   type OverlayStyleSnapshot,
 } from "./commands";
@@ -113,5 +115,80 @@ describe("overlay style commands", () => {
     expect(toInlineStyleCommands([change], "next")).toEqual([
       { command: "set-inline-style", targetId: "id:h1", property: "transform", value: "translate(24px, 8px)" },
     ]);
+  });
+
+  it("parses canonical and authored transform chains", () => {
+    expect(parseTransform(null)).toEqual({ tx: 0, ty: 0, rotation: 0 });
+    expect(parseTransform("none")).toEqual({ tx: 0, ty: 0, rotation: 0 });
+    expect(parseTransform("rotate(30deg)")).toEqual({ tx: 0, ty: 0, rotation: 30 });
+    expect(parseTransform("translate(24px, 8px)")).toEqual({ tx: 24, ty: 8, rotation: 0 });
+    expect(parseTransform("translate(5px, 0px) rotate(30deg)")).toEqual({ tx: 5, ty: 0, rotation: 30 });
+    expect(parseTransform("translate(10px 20px) rotate(15deg) rotate(15deg)")).toEqual({ tx: 10, ty: 20, rotation: 30 });
+    expect(parseTransform("scale(2)")).toBeNull();
+  });
+
+  it("keeps world-axis translation on a rotated node and reports the total rotation", () => {
+    const rotated = snapshot(
+      "h1",
+      { x: 10, y: 20, width: 100, height: 30 },
+      { transform: "rotate(30deg)" },
+    );
+    const change = buildMoveChanges([rotated], { x: 24, y: 8 })[0];
+
+    expect(change.next).toEqual({ transform: "translate(24px, 8px) rotate(30deg)" });
+    expect(change.rotation).toBe(30);
+  });
+
+  it("accumulates an existing translation when moving a previously moved node", () => {
+    const moved = snapshot(
+      "h1",
+      { x: 10, y: 20, width: 100, height: 30 },
+      { transform: "translate(5px, 0px) rotate(30deg)" },
+    );
+    const change = buildMoveChanges([moved], { x: 24, y: 8 })[0];
+
+    expect(change.next).toEqual({ transform: "translate(29px, 8px) rotate(30deg)" });
+  });
+
+  it("appends a rotation delta to an existing rotation without rewriting translation", () => {
+    const rotated = snapshot(
+      "h1",
+      { x: 10, y: 20, width: 100, height: 30 },
+      { transform: "translate(5px, 0px) rotate(20deg)" },
+    );
+    const change = buildRotationChanges([rotated], 10)[0];
+
+    expect(change.next).toEqual({ transform: "translate(5px, 0px) rotate(30deg)" });
+    expect(change.rotation).toBe(30);
+  });
+
+  it("resizes a rotated element along its own rotated axes", () => {
+    const rotated = snapshot(
+      "div",
+      { x: 10, y: 20, width: 100, height: 50 },
+      { transform: "rotate(30deg)" },
+    );
+    const change = buildResizeChanges(
+      [rotated],
+      rotated.target.bounds,
+      "e",
+      { x: 100, y: 0 },
+    )[0];
+
+    expect(change.next.transform).toBeUndefined();
+    expect(Number.parseFloat(change.next.width!)).toBeCloseTo(186.6, 1);
+    expect(change.next.height).toBeUndefined();
+    expect(change.rotation).toBe(30);
+  });
+
+  it("falls back to appending deltas when a transform cannot be parsed", () => {
+    const scaled = snapshot(
+      "div",
+      { x: 10, y: 20, width: 100, height: 30 },
+      { transform: "scale(2)" },
+    );
+    const change = buildMoveChanges([scaled], { x: 24, y: 8 })[0];
+
+    expect(change.next).toEqual({ transform: "scale(2) translate(24px, 8px)" });
   });
 });

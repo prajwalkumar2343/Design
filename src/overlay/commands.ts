@@ -17,18 +17,89 @@ export interface OverlayStyleChange {
   next: Partial<Record<SafeInlineStyleProperty, string | null>>;
 }
 
-function transformValue(
+export interface ParsedTransform {
+  tx: number;
+  ty: number;
+  rotation: number;
+}
+
+const TRANSFORM_FRAGMENT =
+  /(-?\d+(?:\.\d+)?)/g;
+
+function parseTranslate(value: string): { tx: number; ty: number } | null {
+  const match = value.match(/translate\(\s*([-\d.]+)(?:px)?(?:\s*[, ]\s*([-\d.]+)(?:px)?)?\s*\)/);
+  if (!match) return null;
+  return { tx: Number(match[1]), ty: match[2] !== undefined ? Number(match[2]) : 0 };
+}
+
+function parseRotations(value: string): number {
+  let total = 0;
+  for (const match of value.matchAll(/rotate\(\s*(-?\d+(?:\.\d+)?)deg\s*\)/g)) {
+    total += Number(match[1]);
+  }
+  return total;
+}
+
+/**
+ * Extracts the canonical translate/rotate form of a CSS transform. Returns
+ * `null` when the value cannot be understood, so callers can fall back to
+ * appending deltas instead of corrupting an unknown transform.
+ */
+export function parseTransform(
+  value: string | null | undefined,
+): ParsedTransform | null {
+  if (!value || value === "none") return { tx: 0, ty: 0, rotation: 0 };
+  const translate = parseTranslate(value);
+  const rotation = parseRotations(value);
+  if (!translate && rotation === 0) return null;
+  return {
+    tx: translate?.tx ?? 0,
+    ty: translate?.ty ?? 0,
+    rotation,
+  };
+}
+
+function round(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Composes the canonical `translate(...) rotate(...)` chain so the element's
+ * total translation is applied in world axes (before the rotation spins the
+ * element about its own center), keeping the overlay and the live element in
+ * exact agreement. Unknown transforms fall back to appending deltas.
+ */
+function composeTransform(
   original: string | null,
   translation: Point,
   rotation: number,
 ): string | null {
+  const parsed = parseTransform(original);
+  if (parsed) {
+    const tx = parsed.tx + translation.x;
+    const ty = parsed.ty + translation.y;
+    const totalRotation = parsed.rotation + rotation;
+    if (Math.abs(tx) < 0.01 && Math.abs(ty) < 0.01 && Math.abs(totalRotation) < 0.01) {
+      return original;
+    }
+    const parts: string[] = [];
+    if (Math.abs(tx) > 0.01 || Math.abs(ty) > 0.01) {
+      parts.push(`translate(${round(tx)}px, ${round(ty)}px)`);
+    }
+    if (Math.abs(totalRotation) > 0.01) {
+      parts.push(`rotate(${round(totalRotation)}deg)`);
+    }
+    return parts.join(" ");
+  }
   const additions: string[] = [];
   if (Math.abs(translation.x) > 0.01 || Math.abs(translation.y) > 0.01) {
-    additions.push(`translate(${translation.x}px, ${translation.y}px)`);
+    additions.push(`translate(${round(translation.x)}px, ${round(translation.y)}px)`);
   }
-  if (Math.abs(rotation) > 0.01) additions.push(`rotate(${rotation}deg)`);
+  if (Math.abs(rotation) > 0.01) {
+    additions.push(`rotate(${round(rotation)}deg)`);
+  }
   if (additions.length === 0) return original;
-  return [original, ...additions].filter((value) => value && value !== "none").join(" ");
+  return [original, ...additions].filter((value) => Boolean(value)).join(" ");
 }
 
 function styleValue(
@@ -99,7 +170,9 @@ function createChange(
     x: nextBounds.x - snapshot.target.bounds.x,
     y: nextBounds.y - snapshot.target.bounds.y,
   };
-  const nextTransform = transformValue(previousTransform, translation, rotation);
+  const parsed = parseTransform(previousTransform);
+  const totalRotation = parsed ? parsed.rotation + rotation : rotation;
+  const nextTransform = composeTransform(previousTransform, translation, rotation);
   const previous: Partial<Record<SafeInlineStyleProperty, string | null>> = {};
   const next: Partial<Record<SafeInlineStyleProperty, string | null>> = {};
   const setStyle = (
@@ -138,10 +211,23 @@ function createChange(
   return {
     target: snapshot.target,
     nextBounds,
-    rotation,
+    rotation: totalRotation,
     previous,
     next,
   };
+}
+
+function rotateVector(point: Point, radians: number): Point {
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return {
+    x: point.x * cos - point.y * sin,
+    y: point.x * sin + point.y * cos,
+  };
+}
+
+function snapshotTransform(snapshot: OverlayStyleSnapshot): string | null {
+  return snapshot.inlineStyle.transform ?? snapshot.computedStyle.transform ?? null;
 }
 
 export function buildMoveChanges(
@@ -164,6 +250,16 @@ export function buildResizeChanges(
   delta: Point,
   minimumSize = 24,
 ): OverlayStyleChange[] {
+  if (snapshots.length === 1) {
+    const snapshot = snapshots[0];
+    const parsed = parseTransform(snapshotTransform(snapshot));
+    if (parsed && Math.abs(parsed.rotation) > 0.01) {
+      const radians = (parsed.rotation * Math.PI) / 180;
+      const localDelta = rotateVector(delta, -radians);
+      const nextBounds = resizeRect(snapshot.target.bounds, handle, localDelta, minimumSize);
+      return [createChange(snapshot, nextBounds, 0, { handle })];
+    }
+  }
   const nextGroup = resizeRect(groupBounds, handle, delta, minimumSize);
   const scaleX = groupBounds.width > 0 ? nextGroup.width / groupBounds.width : 1;
   const scaleY = groupBounds.height > 0 ? nextGroup.height / groupBounds.height : 1;

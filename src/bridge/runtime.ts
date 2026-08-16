@@ -86,6 +86,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   let lastHoveredElementId = null;
   let lastSelectedElement = null;
   let activeTextEdit = null;
+  let pendingPointerMove = null;
+  let pendingPointerMoveFrame = null;
 
   const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
   const isSafeString = (value, maxLength, allowEmpty = false) =>
@@ -306,8 +308,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       element = document.createElement("img");
       element.src = spec.src;
       element.alt = isSafeString(spec.alt, 4096, true) ? spec.alt : "";
-      element.style.objectFit = "contain";
-      element.style.background = "#f4f4f2";
+      element.style.objectFit = "cover";
+      element.style.background = "transparent";
       styleCreatedElement(element, bounds);
     } else {
       if (!safePoints(spec.points)) throw { code: "invalid-path", message: "A vector shape needs at least two safe points" };
@@ -462,7 +464,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
 
   function isEditableTextElement(element) {
     return element instanceof HTMLElement &&
-      !["HTML", "BODY", "SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED"].includes(element.tagName) &&
+      !["HTML", "BODY", "SCRIPT", "STYLE", "IFRAME", "OBJECT", "EMBED", "IMG"].includes(element.tagName) &&
       element.children.length === 0 &&
       (element.textContent || "").length <= MAX_TEXT_LENGTH;
   }
@@ -550,6 +552,29 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
   }
 
+  function dispatchPendingPointerMove() {
+    pendingPointerMoveFrame = null;
+    const event = pendingPointerMove;
+    pendingPointerMove = null;
+    if (!event) return;
+    const target = event.target instanceof Element ? describe(event.target) : null;
+    sendEvent("pointermove", event, target);
+    const nextId = target ? target.elementId : null;
+    if (nextId === lastHoveredElementId) return;
+    lastHoveredElementId = nextId;
+    sendEvent("hover", event, target);
+  }
+
+  function queuePointerMove(event) {
+    pendingPointerMove = event;
+    if (pendingPointerMoveFrame !== null) return;
+    if (typeof requestAnimationFrame === "function") {
+      pendingPointerMoveFrame = requestAnimationFrame(dispatchPendingPointerMove);
+    } else {
+      dispatchPendingPointerMove();
+    }
+  }
+
   function isSafeStyleValue(value) {
     return value === null || (
       isSafeString(value, 4096, true) &&
@@ -594,7 +619,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
 
     if (command.command === "set-text") {
-      if (!isSafeString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED)$/.test(element.tagName)) {
+      if (!isSafeString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG)$/.test(element.tagName)) {
         throw { code: "unsafe-text-target", message: "Text edits are not allowed for this element" };
       }
       const previousText = element.textContent || "";
@@ -620,7 +645,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       return { kind: "command", command: "cancel-text-edit", targetId: command.targetId };
     }
     if (command.command === "commit-text-edit") {
-      if (!isSafeString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED)$/.test(element.tagName)) {
+      if (!isSafeString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG)$/.test(element.tagName)) {
         throw { code: "unsafe-text-target", message: "Text edits are not allowed for this element" };
       }
       const edit = activeTextEdit && activeTextEdit.element === element ? activeTextEdit : null;
@@ -740,9 +765,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
 
   function install() {
     document.addEventListener("pointerover", handleHover, true);
-    document.addEventListener("pointermove", handleHover, true);
+    document.addEventListener("pointermove", queuePointerMove, true);
     document.addEventListener("pointerout", handlePointerOut, true);
-    ["pointerdown", "pointermove", "pointerup"].forEach((eventName) => {
+    ["pointerdown", "pointerup"].forEach((eventName) => {
       document.addEventListener(eventName, (event) => {
         const target = event.target instanceof Element ? describe(event.target) : null;
         sendEvent(eventName, event, target);

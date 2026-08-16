@@ -23,6 +23,11 @@ export interface ExecuteCommandOptions {
   label?: string;
 }
 
+export interface ReplaceStateOptions {
+  label?: string;
+  equals?: (current: EditorState, next: EditorState) => boolean;
+}
+
 interface ActiveTransaction {
   label: string;
   before: EditorState;
@@ -86,6 +91,30 @@ export class EditorStore {
       ];
       this.future = [];
     }
+    this.notify();
+    return true;
+  }
+
+  replaceState(nextState: EditorState, options: ReplaceStateOptions = {}): boolean {
+    if (this.transaction) {
+      throw new Error("Cannot replace state while an editor transaction is active");
+    }
+
+    const previousState = this.state;
+    if (previousState === nextState || options.equals?.(previousState, nextState)) {
+      return false;
+    }
+
+    this.state = nextState;
+    this.past = [
+      ...this.past,
+      {
+        label: options.label ?? "Replace editor state",
+        before: previousState,
+        after: nextState,
+      },
+    ];
+    this.future = [];
     this.notify();
     return true;
   }

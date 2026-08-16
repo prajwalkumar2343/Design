@@ -51,7 +51,7 @@ export function parseTransform(
   if (!value || value === "none") return { tx: 0, ty: 0, rotation: 0 };
   const translate = parseTranslate(value);
   const rotation = parseRotations(value);
-  if (!translate && rotation === 0) return null;
+  if (!translate && rotation === 0 && !/rotate\s*\(/i.test(value)) return null;
   return {
     tx: translate?.tx ?? 0,
     ty: translate?.ty ?? 0,

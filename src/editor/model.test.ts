@@ -32,6 +32,7 @@ describe("normalized editor model", () => {
 
     expect(Object.keys(state.documents)).toEqual(["document-1"]);
     expect(state.documents["document-1"].srcDoc).toBe(srcDoc);
+    expect(state.documents["document-1"].mode).toBe("design");
     expect(state.documents["document-1"].pageIds).toEqual(["page-1"]);
     expect(state.pages["page-1"].frameIds).toEqual(["desktop", "mobile"]);
     expect(state.frames.mobile).not.toHaveProperty("srcDoc");
@@ -45,6 +46,7 @@ describe("normalized editor model", () => {
       expect.objectContaining({
         id: "desktop",
         documentId: "document-1",
+        mode: "design",
         srcDoc,
       }),
     ]);
@@ -54,5 +56,15 @@ describe("normalized editor model", () => {
     expect(() =>
       createEditorStateFromFrameSeeds([seed(), seed({ id: "other", srcDoc: "different" })]),
     ).toThrow("inconsistent iframe source documents");
+  });
+
+  it("preserves an explicit wireframe mode and rejects mixed linked document modes", () => {
+    const state = createEditorStateFromFrameSeeds([seed({ mode: "wireframe" })]);
+    expect(state.documents["document-1"].mode).toBe("wireframe");
+    expect(selectFrameRenderModels(state)[0]).toMatchObject({ mode: "wireframe" });
+    expect(() => createEditorStateFromFrameSeeds([
+      seed({ mode: "wireframe" }),
+      seed({ id: "other", mode: "design" }),
+    ])).toThrow("inconsistent document modes");
   });
 });

@@ -649,7 +649,8 @@ export function CanvasSurface({
           if (ack.command !== "set-text") return;
           const nextText = message.text!;
           const node = editorStore.getState().nodes[message.target!.elementId];
-          editorStore.beginTransaction("Edit text");
+          const hadActiveTransaction = editorStore.hasActiveTransaction();
+          if (!hadActiveTransaction) editorStore.beginTransaction("Edit text");
           if (node) {
             editorStore.execute({
               type: "node/update",
@@ -657,6 +658,7 @@ export function CanvasSurface({
               patch: { name: nextText.slice(0, 80) || "Text" },
             }, { history: "skip" });
           }
+          if (hadActiveTransaction) return refreshSnapshotRef.current(frameId);
           editorStore.commitTransaction({
             undo: () => {
               void controller.setText(ack.undo as Extract<BridgeCommand, { command: "set-text" }>)
@@ -909,6 +911,7 @@ export function CanvasSurface({
       setCreationError("The selected frame is not ready. Select a live frame and try again.");
       return false;
     }
+    let hadActiveTransaction = false;
     try {
       const ack = await controller.createElement(command);
       if (!("target" in ack) || !ack.target) {
@@ -927,7 +930,8 @@ export function CanvasSurface({
         childIds: [],
         frameId,
       };
-      editorStore.beginTransaction(label);
+      hadActiveTransaction = editorStore.hasActiveTransaction();
+      if (!hadActiveTransaction) editorStore.beginTransaction(label);
       editorStore.execute({ type: "node/upsert", node }, { history: "skip" });
       editorStore.execute(setSelectionCommand({
         frameIds: [frameId],
@@ -936,23 +940,25 @@ export function CanvasSurface({
         primaryNodeId: target.elementId,
       }), { history: "skip" });
       const replay = ack.replay;
-      editorStore.commitTransaction({
-        undo: () => {
-          if (ack.undo.command === "delete-element") {
-            void controller.deleteElement(ack.undo).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
-          }
-        },
-        redo: () => {
-          if (replay.command === "create-element") {
-            void controller.createElement(replay).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
-          }
-        },
-      });
+      if (!hadActiveTransaction) {
+        editorStore.commitTransaction({
+          undo: () => {
+            if (ack.undo.command === "delete-element") {
+              void controller.deleteElement(ack.undo).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
+            }
+          },
+          redo: () => {
+            if (replay.command === "create-element") {
+              void controller.createElement(replay).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
+            }
+          },
+        });
+      }
       await refreshBridgeSnapshot(frameId);
       setCreationError(null);
       return true;
     } catch (error) {
-      if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
+      if (!hadActiveTransaction && editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
       const detail = error instanceof Error ? error.message : "the bridge rejected the request";
       setCreationError(`Could not ${label.toLowerCase()}: ${detail}`);
       return false;
@@ -1025,6 +1031,7 @@ export function CanvasSurface({
     const controller = frameId ? bridgeControllersRef.current.get(frameId) : undefined;
     if (!source || !frameId || !controller || source.attributes["data-design-tool-created"] !== "true") return;
     const elementId = createElementId("duplicate");
+    let hadActiveTransaction = false;
     try {
       const ack = await controller.duplicateElement({ command: "duplicate-element", targetId: source.id, elementId });
       if (!("target" in ack) || !ack.target) return;
@@ -1040,20 +1047,23 @@ export function CanvasSurface({
         childIds: [],
         frameId,
       };
-      editorStore.beginTransaction("Duplicate layer");
+      hadActiveTransaction = editorStore.hasActiveTransaction();
+      if (!hadActiveTransaction) editorStore.beginTransaction("Duplicate layer");
       editorStore.execute({ type: "node/upsert", node }, { history: "skip" });
       editorStore.execute(setSelectionCommand({ frameIds: [frameId], nodeIds: [target.elementId], primaryFrameId: frameId, primaryNodeId: target.elementId }), { history: "skip" });
-      editorStore.commitTransaction({
-        undo: () => {
-          if (ack.undo.command === "delete-element") void controller.deleteElement(ack.undo).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
-        },
-        redo: () => {
-          if (ack.replay.command === "create-element") void controller.createElement(ack.replay).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
-        },
-      });
+      if (!hadActiveTransaction) {
+        editorStore.commitTransaction({
+          undo: () => {
+            if (ack.undo.command === "delete-element") void controller.deleteElement(ack.undo).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
+          },
+          redo: () => {
+            if (ack.replay.command === "create-element") void controller.createElement(ack.replay).then(() => refreshSnapshotRef.current(frameId)).catch(() => undefined);
+          },
+        });
+      }
       await refreshBridgeSnapshot(frameId);
     } catch {
-      // Ignore unsupported or stale duplicate targets.
+      if (!hadActiveTransaction && editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
     }
   }, [bridgeControllersRef, editorStore, refreshBridgeSnapshot]);
 
@@ -1064,6 +1074,7 @@ export function CanvasSurface({
       .filter((node): node is NodeEntity => Boolean(node && node.frameId && node.attributes["data-design-tool-created"] === "true"));
     if (selected.length === 0) return;
     const applied: Array<{ frameId: string; ack: Extract<import("../bridge/protocol").BridgeCommandAck, { command: "delete-element" }> }> = [];
+    let hadActiveTransaction = false;
     try {
       for (const node of selected) {
         const controller = bridgeControllersRef.current.get(node.frameId!);
@@ -1078,9 +1089,14 @@ export function CanvasSurface({
       }
       return;
     }
-    editorStore.beginTransaction("Delete layers");
+    hadActiveTransaction = editorStore.hasActiveTransaction();
+    if (!hadActiveTransaction) editorStore.beginTransaction("Delete layers");
     for (const node of selected) editorStore.execute({ type: "node/remove", nodeId: node.id }, { history: "skip" });
     editorStore.execute(setSelectionCommand({ frameIds: [], nodeIds: [], primaryFrameId: null, primaryNodeId: null }), { history: "skip" });
+    if (hadActiveTransaction) {
+      for (const { frameId } of applied) await refreshBridgeSnapshot(frameId);
+      return;
+    }
     editorStore.commitTransaction({
       undo: () => {
         for (const { frameId, ack } of [...applied].reverse()) {

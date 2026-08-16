@@ -550,6 +550,29 @@ export function CanvasSurface({
     setInteractionMode("idle");
   }, []);
 
+  const finishPenStroke = useCallback((frameId: string) => {
+    const operation = creationRef.current;
+    creationRef.current = null;
+    setInteractionMode("idle");
+    if (operation?.type === "pen" && operation.points.length >= 2) {
+      const minX = Math.min(...operation.points.map((point) => point.x));
+      const minY = Math.min(...operation.points.map((point) => point.y));
+      const maxX = Math.max(...operation.points.map((point) => point.x));
+      const maxY = Math.max(...operation.points.map((point) => point.y));
+      const bounds = { x: minX, y: minY, width: Math.max(16, maxX - minX), height: Math.max(16, maxY - minY) };
+      void createLiveElementRef.current(frameId, {
+        command: "create-element",
+        elementId: createElementId("path"),
+        kind: "path",
+        bounds,
+        points: operation.points,
+        fill: "none",
+        stroke: "#222222",
+        strokeWidth: 2,
+      }, "Create path");
+    }
+  }, []);
+
   const handleBridgeEvent = useCallback(
     (frameId: string, message: BridgeEventMessage, iframe: HTMLIFrameElement) => {
       const surface = surfaceRef.current;
@@ -610,24 +633,10 @@ export function CanvasSurface({
           return;
         }
         if (currentTool === "pen" && (message.key === "Enter" || message.key === "Escape")) {
-          const operation = creationRef.current;
-          creationRef.current = null;
-          if (message.key === "Enter" && operation?.type === "pen" && operation.points.length >= 2) {
-            const minX = Math.min(...operation.points.map((point) => point.x));
-            const minY = Math.min(...operation.points.map((point) => point.y));
-            const maxX = Math.max(...operation.points.map((point) => point.x));
-            const maxY = Math.max(...operation.points.map((point) => point.y));
-            const bounds = { x: minX, y: minY, width: Math.max(16, maxX - minX), height: Math.max(16, maxY - minY) };
-            void createLiveElementRef.current(frameId, {
-              command: "create-element",
-              elementId: createElementId("path"),
-              kind: "path",
-              bounds,
-              points: operation.points,
-              fill: "none",
-              stroke: "#222222",
-              strokeWidth: 2,
-            }, "Create path");
+          if (message.key === "Enter") finishPenStroke(frameId);
+          else {
+            creationRef.current = null;
+            setInteractionMode("idle");
           }
           return;
         }
@@ -769,7 +778,7 @@ export function CanvasSurface({
         { history: "skip" },
       );
     },
-    [bridgeControllersRef, editorStore, toOverlayTarget],
+    [bridgeControllersRef, editorStore, finishPenStroke, toOverlayTarget],
   );
 
   const handleBridgeInspection = useCallback(
@@ -1797,6 +1806,15 @@ export function CanvasSurface({
         return;
       }
 
+      if (event.key === "Enter" && activeTool === "pen") {
+        const operation = creationRef.current;
+        if (operation?.type === "pen" && operation.frameId) {
+          event.preventDefault();
+          finishPenStroke(operation.frameId);
+          return;
+        }
+      }
+
       const action = resolveEditorShortcut(event);
       if (!action) {
         return;
@@ -1862,7 +1880,7 @@ export function CanvasSurface({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [deleteSelectedNodes, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
+  }, [activeTool, deleteSelectedNodes, duplicateSelectedNode, editorStore, finishPenStroke, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
 
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;
 

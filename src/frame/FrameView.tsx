@@ -1,9 +1,9 @@
 import { GripHorizontal } from "lucide-react";
 import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { injectBridgeRuntime } from "../bridge/inject";
 import { IframeBridgeTransport, type IframeBridgeController } from "../bridge/transport";
 import type { BridgeElementTarget, BridgeEventMessage, BridgeHierarchySnapshot, BridgeInspection } from "../bridge/protocol";
 import type { CanvasFrame, Point } from "../canvas/types";
+import { renderFrameDocument } from "./render-document";
 
 interface FrameViewProps {
   frame: CanvasFrame;
@@ -199,7 +199,7 @@ export const FrameView = memo(function FrameView({
     onBridgeSnapshot,
   ]);
 
-  const bridgeSrcDoc = injectBridgeRuntime(frame.srcDoc, bridgeSession);
+  const bridgeSrcDoc = renderFrameDocument(frame.srcDoc, frame.mode, bridgeSession);
 
   const getCreationPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
     const iframe = iframeRef.current;

@@ -1909,7 +1909,7 @@ export function CanvasSurface({
         ) : null}
         {frames.map((frame) => (
           <FrameView
-            key={frame.id}
+            key={`${frame.id}-${persistenceVersion}`}
             frame={frame}
             isLive={liveFrameIdSet.has(frame.id)}
             isSelected={frame.id === selectedFrameId}

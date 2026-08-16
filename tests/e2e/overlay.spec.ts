@@ -226,6 +226,39 @@ test.describe("iframe node overlays", () => {
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().x)).toBeCloseTo(x2, 0);
   });
 
+  test("keeps a freshly placed image immediately movable and resizable", async ({ page }) => {
+    await page.goto("/?demo=1");
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+    await expect(frame).toHaveAttribute("data-bridge-status", "ready");
+
+    await page.getByTestId("tool-button-image").click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+    await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.5 + 120, box.y + box.height * 0.5 + 80, { steps: 5 });
+    await page.mouse.up();
+    await page.getByTestId("canvas-image-input").setInputFiles({
+      name: "pixel.png",
+      mimeType: "image/png",
+      buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"),
+    });
+    await expect.poll(() => preview.locator('[data-design-tool-kind="image"]').count()).toBe(1);
+    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+    await expect(page.getByTestId("node-resize-handle-e")).toBeVisible();
+
+    const image = preview.locator('[data-design-tool-kind="image"]');
+    const before = await image.evaluate((element) => element.getBoundingClientRect().toJSON());
+    await drag(page, page.getByTestId("node-selection-box"), 60, 30);
+    await expect.poll(() => image.evaluate((element) => element.getBoundingClientRect().x)).toBeGreaterThan(before.x + 20);
+
+    const widthBefore = await image.evaluate((element) => element.getBoundingClientRect().width);
+    await drag(page, page.getByTestId("node-resize-handle-e"), 120, 0);
+    await expect.poll(() => image.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(widthBefore + 60);
+  });
+
   test("rotates with the dedicated handle and keeps handle size stable through zoom", async ({ page }) => {
     await openDesktop(page);
     const rotateHandle = page.getByTestId("node-rotation-handle");

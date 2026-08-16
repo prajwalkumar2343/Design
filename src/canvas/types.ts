@@ -1,3 +1,5 @@
+import type { DocumentMode } from "../editor/model";
+
 export interface Point {
   x: number;
   y: number;
@@ -20,6 +22,8 @@ export interface CanvasFrame extends Rect {
   id: string;
   name: string;
   documentId: string;
+  /** Legacy canvas fixtures omit mode and therefore render as design. */
+  mode?: DocumentMode;
   /** Optional normalized editor metadata used when a frame seeds another page. */
   pageId?: string;
   pageName?: string;

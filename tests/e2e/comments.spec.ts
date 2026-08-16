@@ -7,7 +7,7 @@ async function openEditor(page: import("@playwright/test").Page) {
 }
 
 test.describe("canvas comments", () => {
-  test("creates, selects, edits, resolves, deletes, and restores a comment", async ({ page }) => {
+  test("auto-saves a typed comment and dismisses empty comments", async ({ page }) => {
     await openEditor(page);
     const preview = page.locator('[data-frame-id="desktop"] iframe').contentFrame();
     const heading = preview.getByRole("heading", { name: "Make room for better ideas." });
@@ -19,35 +19,38 @@ test.describe("canvas comments", () => {
     await expect(page.getByTestId("comment-input")).toBeFocused();
 
     await page.getByTestId("comment-input").fill("Tighten the heading rhythm");
-    await page.getByTestId("comment-save").click();
-    await expect(page.getByTestId("comment-body")).toHaveText("Tighten the heading rhythm");
+    await page.getByTestId("tool-button-select").click();
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
+    await expect(page.getByTestId("comment-marker")).toHaveCount(1);
     await expect(page.getByTestId("comment-feedback")).toHaveText("Comment saved");
 
-    await page.getByTestId("comment-edit").click();
-    await page.getByTestId("comment-input").fill("Use a calmer headline scale");
-    await page.getByTestId("comment-save").click();
-    await expect(page.getByTestId("comment-body")).toHaveText("Use a calmer headline scale");
-
-    await page.getByRole("button", { name: "Resolve comment" }).click();
-    await expect(page.getByTestId("comment-marker")).toHaveAttribute("data-comment-status", "resolved");
-    await expect(page.getByRole("button", { name: "Reopen comment" })).toBeVisible();
-
-    await page.getByRole("button", { name: "Close comment" }).click();
-    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
     await page.getByTestId("comment-marker").click();
-    await expect(page.getByTestId("comment-body")).toHaveText("Use a calmer headline scale");
+    await expect(page.getByTestId("comment-input")).toHaveValue("Tighten the heading rhythm");
 
-    await page.getByRole("button", { name: "Delete comment" }).click();
-    await expect(page.getByTestId("comment-marker")).toHaveCount(0);
-    await expect(page.getByTestId("comment-feedback")).toHaveText("Comment deleted");
-
-    await page.getByTestId("undo-button").click();
+    await page.getByTestId("comment-input").fill("Use a calmer headline scale");
+    await page.getByTestId("canvas-surface").click({ position: { x: 30, y: 40 } });
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
     await expect(page.getByTestId("comment-marker")).toHaveCount(1);
-    await expect(page.getByTestId("comment-body")).toHaveText("Use a calmer headline scale");
-    await expect(page.getByTestId("comment-feedback")).toHaveText("Comment restored");
 
-    await page.getByTestId("redo-button").click();
+    await page.getByTestId("comment-marker").click();
+    await page.getByTestId("comment-input").fill("");
+    await page.getByTestId("tool-button-select").click();
     await expect(page.getByTestId("comment-marker")).toHaveCount(0);
     await expect(page.getByTestId("comment-feedback")).toHaveText("Comment deleted");
+  });
+
+  test("dismisses a brand-new empty comment without registering it", async ({ page }) => {
+    await openEditor(page);
+    const preview = page.locator('[data-frame-id="desktop"] iframe').contentFrame();
+    const heading = preview.getByRole("heading", { name: "Make room for better ideas." });
+
+    await page.getByTestId("tool-button-comment").click();
+    await heading.click();
+    await expect(page.getByTestId("comment-marker")).toHaveCount(1);
+    await expect(page.getByTestId("comment-input")).toBeFocused();
+
+    await page.getByTestId("tool-button-select").click();
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
+    await expect(page.getByTestId("comment-marker")).toHaveCount(0);
   });
 });

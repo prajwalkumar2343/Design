@@ -58,7 +58,7 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
       const after: CommentsState = {
         comments: [...before.comments, comment],
         selectedCommentId: comment.id,
-        feedback: "Comment added — add a note.",
+        feedback: null,
       };
       commitChange({
         label: "Add comment",

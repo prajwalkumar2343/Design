@@ -83,8 +83,11 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
   const groupBounds = unionRects(selectedTargets.map((target) => target.bounds));
   const movableTargets = selectedTargets.filter((target) => !target.locked);
   const targetIds = movableTargets.map(targetKey);
-  const handleSize = 10 / Math.max(zoom, 0.08);
-  const rotationSize = 12 / Math.max(zoom, 0.08);
+  const handleSize = 14 / Math.max(zoom, 0.08);
+  const handleVisual = 6 / Math.max(zoom, 0.08);
+  const handleBorder = Math.max(0.75, 1 / Math.max(zoom, 0.08));
+  const rotationSize = 16 / Math.max(zoom, 0.08);
+  const rotationVisual = 8 / Math.max(zoom, 0.08);
 
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
@@ -167,8 +170,9 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
               style={{
                 width: handleSize,
                 height: handleSize,
-                borderWidth: Math.max(0.75, 1 / Math.max(zoom, 0.08)),
-              }}
+                "--handle-visual": `${handleVisual}px`,
+                "--handle-border": `${handleBorder}px`,
+              } as CSSProperties}
               type="button"
             />
           ))}
@@ -180,9 +184,10 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
             style={{
               width: rotationSize,
               height: rotationSize,
-              borderWidth: Math.max(0.75, 1 / Math.max(zoom, 0.08)),
-              top: -32 / Math.max(zoom, 0.08),
-            }}
+              "--handle-visual": `${rotationVisual}px`,
+              "--handle-border": `${handleBorder}px`,
+              top: -40 / Math.max(zoom, 0.08),
+            } as CSSProperties}
             type="button"
           />
         </div>

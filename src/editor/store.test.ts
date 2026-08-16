@@ -109,4 +109,38 @@ describe("editor store history", () => {
     store.redo();
     expect(calls).toEqual(["undo", "redo"]);
   });
+
+  it("replaces the complete state as one undoable entry and skips equivalent state", () => {
+    const initial = createEditorStateFromFrameSeeds([frame]);
+    const store = createEditorStore(initial);
+    const imported = {
+      ...initial,
+      frames: {
+        ...initial.frames,
+        "frame-1": { ...initial.frames["frame-1"], x: 900 },
+      },
+    };
+
+    expect(store.replaceState(imported, { label: "Import project" })).toBe(true);
+    expect(store.getState().frames["frame-1"].x).toBe(900);
+    expect(store.getHistory().past).toHaveLength(1);
+    expect(store.replaceState(imported, { equals: () => true })).toBe(false);
+    expect(store.getHistory().past).toHaveLength(1);
+
+    expect(store.undo()).toBe(true);
+    expect(store.getState()).toBe(initial);
+    expect(store.redo()).toBe(true);
+    expect(store.getState()).toBe(imported);
+  });
+
+  it("rejects replacement during an active transaction", () => {
+    const initial = createEditorStateFromFrameSeeds([frame]);
+    const store = createEditorStore(initial);
+    store.beginTransaction("Move");
+
+    expect(() => store.replaceState(initial)).toThrow(
+      "Cannot replace state while an editor transaction is active",
+    );
+    store.rollbackTransaction();
+  });
 });

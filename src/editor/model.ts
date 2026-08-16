@@ -2,8 +2,13 @@ export type DocumentId = string;
 export type PageId = string;
 export type FrameId = string;
 export type NodeId = string;
+export type DocumentMode = "design" | "wireframe";
 
 import type { ToolId } from "./tools";
+import {
+  createEmptyBrainstormSession,
+  type BrainstormSessionState,
+} from "../session/model";
 
 /** `pan` remains accepted for state compatibility with the initial editor slice. */
 export type ActiveTool = ToolId | "pan";
@@ -12,6 +17,7 @@ export type EditorNodeKind = "element" | "text" | "component";
 export interface DocumentEntity {
   id: DocumentId;
   name: string;
+  mode: DocumentMode;
   srcDoc: string;
   revision: number;
   rootNodeIds: NodeId[];
@@ -63,6 +69,7 @@ export interface EditorState {
   pages: Record<PageId, PageEntity>;
   frames: Record<FrameId, FrameEntity>;
   nodes: Record<NodeId, NodeEntity>;
+  session: BrainstormSessionState;
   activePageId: PageId | null;
   selection: SelectionState;
   activeTool: ActiveTool;
@@ -79,6 +86,8 @@ export interface FrameSeed {
   pageId?: PageId;
   documentName?: string;
   pageName?: string;
+  /** Existing seeds default to the production/design document mode. */
+  mode?: DocumentMode;
   x: number;
   y: number;
   width: number;
@@ -89,6 +98,7 @@ export interface FrameSeed {
 
 /** Render-facing frame shape retained for iframe and canvas compatibility. */
 export interface FrameRenderModel extends FrameEntity {
+  mode: DocumentMode;
   srcDoc: string;
 }
 
@@ -113,6 +123,7 @@ export function createEmptyEditorState(): EditorState {
     pages: {},
     frames: {},
     nodes: {},
+    session: createEmptyBrainstormSession(),
     activePageId: null,
     selection: createEmptySelection(),
     activeTool: "select",
@@ -140,15 +151,21 @@ export function createEditorStateFromFrameSeeds(
       state.documents[seed.documentId] = {
         id: seed.documentId,
         name: seed.documentName ?? defaultDocumentName ?? seed.documentId,
+        mode: seed.mode ?? "design",
         srcDoc: seed.srcDoc,
         revision: 1,
         rootNodeIds: [],
         pageIds: [],
       };
-    } else if (document.srcDoc !== seed.srcDoc) {
-      throw new Error(
-        `Document ${seed.documentId} has inconsistent iframe source documents`,
-      );
+    } else {
+      if (document.srcDoc !== seed.srcDoc) {
+        throw new Error(
+          `Document ${seed.documentId} has inconsistent iframe source documents`,
+        );
+      }
+      if (document.mode !== (seed.mode ?? "design")) {
+        throw new Error(`Document ${seed.documentId} has inconsistent document modes`);
+      }
     }
 
     const page = state.pages[pageId];
@@ -198,8 +215,12 @@ export function selectFrameRenderModels(state: EditorState): FrameRenderModel[] 
 }
 
 export function selectAllFrameRenderModels(state: EditorState): FrameRenderModel[] {
-  return Object.values(state.frames).map((frame) => ({
-    ...frame,
-    srcDoc: state.documents[frame.documentId]?.srcDoc ?? "",
-  }));
+  return Object.values(state.frames).map((frame) => {
+    const document = state.documents[frame.documentId];
+    return {
+      ...frame,
+      mode: document?.mode ?? "design",
+      srcDoc: document?.srcDoc ?? "",
+    };
+  });
 }

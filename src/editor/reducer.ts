@@ -1,6 +1,7 @@
 import {
   createEmptySelection,
   type ActiveTool,
+  type DocumentMode,
   type DocumentEntity,
   type EditorState,
   type FrameEntity,
@@ -8,6 +9,11 @@ import {
   type PageEntity,
   type SelectionState,
 } from "./model";
+import {
+  applyBrainstormSessionAction,
+  BrainstormSessionReducerError,
+  type BrainstormSessionAction,
+} from "../session/reducer";
 
 export type EditorAction =
   | { type: "document/create"; document: DocumentEntity }
@@ -16,6 +22,7 @@ export type EditorAction =
       documentId: string;
       expectedRevision: number;
       srcDoc: string;
+      mode: DocumentMode;
     }
   | { type: "page/create"; page: PageEntity }
   | { type: "page/rename"; pageId: string; name: string }
@@ -41,12 +48,16 @@ export type EditorAction =
     }
   | { type: "node/reorder"; nodeId: string; direction: "up" | "down" }
   | { type: "selection/set"; selection: SelectionState }
-  | { type: "tool/set"; tool: ActiveTool };
+  | { type: "tool/set"; tool: ActiveTool }
+  | BrainstormSessionAction;
 
 export class EditorReducerError extends Error {
-  constructor(message: string) {
+  readonly cause?: unknown;
+
+  constructor(message: string, options: { cause?: unknown } = {}) {
     super(message);
     this.name = "EditorReducerError";
+    this.cause = options.cause;
   }
 }
 
@@ -132,6 +143,21 @@ function replaceChildOrder(
   };
 }
 
+function reduceBrainstormSession(
+  state: EditorState,
+  action: BrainstormSessionAction,
+): EditorState {
+  try {
+    const session = applyBrainstormSessionAction(state.session, action);
+    return session === state.session ? state : { ...state, session };
+  } catch (error) {
+    if (error instanceof BrainstormSessionReducerError) {
+      throw new EditorReducerError(error.message, { cause: error });
+    }
+    throw error;
+  }
+}
+
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case "document/create": {
@@ -151,13 +177,14 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           `Stale document revision for ${document.id}: expected ${action.expectedRevision}, current ${document.revision}`,
         );
       }
-      if (document.srcDoc === action.srcDoc) return state;
+      if (document.srcDoc === action.srcDoc && document.mode === action.mode) return state;
       return {
         ...state,
         documents: {
           ...state.documents,
           [document.id]: {
             ...document,
+            mode: action.mode,
             srcDoc: action.srcDoc,
             revision: document.revision + 1,
           },
@@ -392,6 +419,20 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return state.activeTool === action.tool
         ? state
         : { ...state, activeTool: action.tool };
+
+    case "session/start":
+    case "session/brief-update":
+    case "session/reference-add":
+    case "session/reference-update":
+    case "session/reference-remove":
+    case "session/decision-add":
+    case "session/decision-update":
+    case "session/decision-remove":
+    case "session/wireframe-created":
+    case "session/lifecycle-transition":
+    case "session/brief-select":
+    case "session/brief-move":
+      return reduceBrainstormSession(state, action);
   }
 }
 

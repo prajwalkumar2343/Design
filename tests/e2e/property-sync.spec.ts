@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.describe("properties panel synchronization", () => {
   test("keeps live size data current and preserves prior moves on a position edit", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
 
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();

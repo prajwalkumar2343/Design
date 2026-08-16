@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 async function openDesktop(page: Page) {
-  await page.goto("/");
+  await page.goto("/?demo=1");
   const frame = page.locator('[data-frame-id="desktop"]');
   const preview = frame.locator("iframe").contentFrame();
   const heading = preview.getByRole("heading", { name: "Make room for better ideas." });
@@ -23,7 +23,7 @@ async function drag(page: Page, locator: Locator, dx: number, dy: number) {
 
 test.describe("iframe node overlays", () => {
   test("shows a subtle hover outline and selected handles", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
     const heading = preview.getByRole("heading", { name: "Make room for better ideas." });

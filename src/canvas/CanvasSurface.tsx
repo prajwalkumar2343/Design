@@ -17,6 +17,7 @@ import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import { CommentPopover } from "../comments/CommentPopover";
 import { useComments } from "../comments/useComments";
 import { mapIframePointToCanvas, mapIframeRectToCanvas } from "../bridge/coordinates";
+import { EmptyCanvasState } from "./EmptyCanvasState";
 import type {
   BridgeElementTarget,
   BridgeEventMessage,
@@ -27,12 +28,13 @@ import type {
   SafeInlineStyleProperty,
 } from "../bridge/protocol";
 import type { IframeBridgeController } from "../bridge/transport";
-import { initialFrames } from "../demo/documents";
 import {
   createFrameCommand,
   createPageCommand,
+  moveBriefFrameCommand,
   moveFrameCommand,
   renamePageCommand,
+  selectBriefFrameCommand,
   setSelectionCommand,
   switchPageCommand,
 } from "../editor/commands";
@@ -54,8 +56,20 @@ import {
   type EditorStore,
 } from "../editor/store";
 import { prependTranslationTransform } from "../editor/position";
+import { BriefFrameView } from "../frame/BriefFrameView";
 import { FrameView } from "../frame/FrameView";
 import { createFrameFromPreset, type FramePreset } from "../frame/presets";
+import { useBrainstormSessionController } from "./brainstorm-session-controller";
+import {
+  BrowserPersistenceAdapter,
+  importWireCanvasProject,
+  serializeWireCanvasProject,
+  WIRECANVAS_FILE_MIME_TYPE,
+  WIRECANVAS_FILE_NAME,
+  WireCanvasCodecError,
+  type BrowserDownloadAdapter,
+  type PersistenceAdapter,
+} from "../persistence";
 import {
   NodeOverlayLayer,
   type OverlayNodeTarget,
@@ -78,6 +92,10 @@ import { rankVisibleFrames } from "./virtualization";
 const CAMERA_FIT_PADDING = 148;
 const CAMERA_SETTLE_MS = 140;
 
+function cameraFitPadding(viewport: Size): number {
+  return viewport.width < 760 ? 18 : CAMERA_FIT_PADDING;
+}
+
 const surfaceStyle: CSSProperties = {
   position: "fixed",
   inset: 0,
@@ -98,7 +116,8 @@ const worldStyle: CSSProperties = {
 
 type PointerOperation =
   | { type: "pan"; pointerId: number; last: Point }
-  | { type: "move-frame"; pointerId: number; last: Point; frameId: string };
+  | { type: "move-frame"; pointerId: number; last: Point; frameId: string }
+  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string };
 
 type CreationOperation =
   | { type: "box"; tool: "rectangle" | "text" | "image"; frameId: string; pointerId: number; start: Point; last: Point }
@@ -223,9 +242,15 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 export interface CanvasSurfaceProps {
   frames?: CanvasFrame[];
+  persistenceAdapter?: PersistenceAdapter;
+  downloadAdapter?: BrowserDownloadAdapter;
 }
 
-export function CanvasSurface({ frames: suppliedFrames = initialFrames }: CanvasSurfaceProps) {
+export function CanvasSurface({
+  frames: suppliedFrames = [],
+  persistenceAdapter,
+  downloadAdapter,
+}: CanvasSurfaceProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const editorStoreRef = useRef<EditorStore | null>(null);
   if (editorStoreRef.current === null) {
@@ -234,6 +259,14 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
     );
   }
   const editorStore = editorStoreRef.current;
+  const persistenceAdapterRef = useRef<PersistenceAdapter | null>(null);
+  if (persistenceAdapterRef.current === null) {
+    persistenceAdapterRef.current = persistenceAdapter ?? new BrowserPersistenceAdapter();
+  }
+  const downloadAdapterRef = useRef<BrowserDownloadAdapter | null>(null);
+  if (downloadAdapterRef.current === null) {
+    downloadAdapterRef.current = downloadAdapter ?? new BrowserPersistenceAdapter();
+  }
   const editorState = useSyncExternalStore(
     editorStore.subscribe,
     editorStore.getState,
@@ -241,6 +274,16 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
   );
   const frames = useMemo(() => selectFrameRenderModels(editorState), [editorState]);
   const allFrames = useMemo(() => selectAllFrameRenderModels(editorState), [editorState]);
+  const briefFrame = editorState.session.briefFrame;
+  const renderRects = useMemo(
+    () => briefFrame ? [...frames, briefFrame] : frames,
+    [briefFrame, frames],
+  );
+  const isEmptyState = frames.length === 0
+    && briefFrame === null
+    && Object.keys(editorState.documents).length === 0
+    && Object.keys(editorState.pages).length === 0;
+  const showDesignChrome = !isEmptyState;
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 });
   const pointerRef = useRef<PointerOperation | null>(null);
   const creationRef = useRef<CreationOperation | null>(null);
@@ -272,12 +315,20 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
   const [bridgeHierarchies, setBridgeHierarchies] = useState<Record<string, BridgeHierarchySnapshot>>({});
   const [hoveredOverlayTarget, setHoveredOverlayTarget] = useState<OverlayNodeTarget | null>(null);
   const selectedFrameId = editorState.selection.primaryFrameId;
+  const selectedBriefFrameId = editorState.session.selection.type === "brief-frame"
+    ? editorState.session.selection.briefFrameId
+    : null;
   const [interactionMode, setInteractionMode] = useState<NodeInteractionMode>("idle");
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
   const [sampledColor, setSampledColor] = useState<string | null>(null);
   const [creationError, setCreationError] = useState<string | null>(null);
+  const [persistenceVersion, setPersistenceVersion] = useState(0);
+  const [persistenceFeedback, setPersistenceFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
   const {
     comments,
     selectedCommentId,
@@ -297,6 +348,7 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
 
   const setSelectedFrameId = useCallback(
     (frameId: string | null) => {
+      editorStore.execute(selectBriefFrameCommand(null), { history: "skip" });
       editorStore.execute(
         setSelectionCommand({
           frameIds: frameId ? [frameId] : [],
@@ -309,6 +361,69 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
     },
     [editorStore],
   );
+
+  const {
+    selectBriefFrame,
+    startBrainstorming,
+    updateBriefField,
+    addBriefReference,
+    updateBriefReference,
+    removeBriefReference,
+    addConfirmedDecision,
+    updateConfirmedDecision,
+    removeConfirmedDecision,
+  } = useBrainstormSessionController({
+    editorStore,
+    surfaceRef,
+    viewport,
+    cameraRef,
+    setCamera,
+  });
+
+  const exportProject = useCallback(() => {
+    if (editorStore.getState().session.lifecycle === "not-started") {
+      setPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      return;
+    }
+    try {
+      downloadAdapterRef.current?.downloadProjectFile({
+        text: serializeWireCanvasProject(editorStore.getState()),
+        filename: WIRECANVAS_FILE_NAME,
+        mimeType: WIRECANVAS_FILE_MIME_TYPE,
+      });
+      setPersistenceFeedback({ kind: "success", message: "Project exported as a .wirecanvas.json file." });
+    } catch (error) {
+      setPersistenceFeedback({
+        kind: "error",
+        message: `Could not export project: ${error instanceof Error ? error.message : "download failed"}`,
+      });
+    }
+  }, [editorStore]);
+
+  const importProject = useCallback(async (file: File) => {
+    try {
+      const text = await persistenceAdapterRef.current!.readProjectFile(file);
+      const result = importWireCanvasProject(editorStore, text);
+      if (result.changed) {
+        bridgeControllersRef.current.clear();
+        snapshotQueuesRef.current.clear();
+        snapshotSequenceRef.current.clear();
+        setBridgeTargets({});
+        setBridgeHierarchies({});
+        setPersistenceVersion((current) => current + 1);
+        setPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
+      } else {
+        setPersistenceFeedback({ kind: "success", message: "This project already matches the current canvas." });
+      }
+    } catch (error) {
+      const message = error instanceof WireCanvasCodecError
+        ? error.message
+        : error instanceof Error
+          ? error.message
+          : "The project could not be imported.";
+      setPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
+    }
+  }, [editorStore]);
 
   const toOverlayTarget = useCallback(
     (entry: OverlayBridgeTargetState): OverlayNodeTarget | null => {
@@ -869,7 +984,14 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
         bounds: placement.bounds,
         src: reader.result,
         alt: file.name.replace(/\.[^.]+$/, "").slice(0, 120),
-      }, "Place image");
+      }, "Place image").then((created) => {
+        if (!created) return;
+        setCreationError(null);
+        creationRef.current = null;
+        pendingImageRef.current = null;
+        setInteractionMode("idle");
+        editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+      });
     };
     reader.onerror = () => {
       setCreationError("The image could not be read. Check the file and try again.");
@@ -1236,7 +1358,7 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
       .map((frameId) => nextState.frames[frameId])
       .filter((frame): frame is NonNullable<typeof frame> => Boolean(frame));
     if (pageFrames.length > 0 && viewport.width > 0 && viewport.height > 0) {
-      updateCamera(fitRect(getFramesBounds(pageFrames), viewport, CAMERA_FIT_PADDING));
+      updateCamera(fitRect(getFramesBounds(pageFrames), viewport, cameraFitPadding(viewport)));
     }
   }, [editorStore, updateCamera, viewport]);
 
@@ -1244,8 +1366,8 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
     if (viewport.width <= 0 || viewport.height <= 0) {
       return;
     }
-    updateCamera(fitRect(getFramesBounds(frames), viewport, CAMERA_FIT_PADDING));
-  }, [frames, updateCamera, viewport]);
+    updateCamera(fitRect(getFramesBounds(renderRects), viewport, cameraFitPadding(viewport)));
+  }, [renderRects, updateCamera, viewport]);
 
   useEffect(() => {
     if (
@@ -1255,10 +1377,11 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
     ) {
       return;
     }
+    if (renderRects.length === 0) return;
     cameraInitializedRef.current = true;
-    const openingFrame = frames[0] ?? getFramesBounds(frames);
-    updateCamera(fitRect(openingFrame, viewport, CAMERA_FIT_PADDING));
-  }, [frames, updateCamera, viewport]);
+    const openingFrame = renderRects[0];
+    updateCamera(fitRect(openingFrame, viewport, cameraFitPadding(viewport)));
+  }, [renderRects, updateCamera, viewport]);
 
   useEffect(
     () => () => {
@@ -1304,14 +1427,14 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
         { x: usableViewport.width / 2, y: usableViewport.height / 2 },
         cameraRef.current,
       );
-      const position = frames.length === 0
+      const position = renderRects.length === 0
         ? viewportCenter
         : {
             x:
-              Math.max(...frames.map((frame) => frame.x + frame.width)) +
+              Math.max(...renderRects.map((frame) => frame.x + frame.width)) +
               140 +
               preset.width / 2,
-            y: Math.min(...frames.map((frame) => frame.y)) + preset.height / 2,
+            y: Math.min(...renderRects.map((frame) => frame.y)) + preset.height / 2,
           };
       const sequence = nextFrameSequenceRef.current++;
       const frame = {
@@ -1328,9 +1451,9 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
       editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
       editorStore.commitTransaction();
       setIsFrameMenuOpen(false);
-      updateCamera(fitRect(frame, usableViewport, 132));
+      updateCamera(fitRect(frame, usableViewport, cameraFitPadding(usableViewport)));
     },
-    [editorState.activePageId, editorStore, frames, setSelectedFrameId, updateCamera, viewport],
+    [editorState.activePageId, editorStore, renderRects, setSelectedFrameId, updateCamera, viewport],
   );
 
   const beginFramePointer = useCallback(
@@ -1367,6 +1490,38 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
       setInteractionMode("moving-frame");
     },
     [editorStore, setSelectedFrameId],
+  );
+
+  const beginBriefFramePointer = useCallback(
+    (briefFrameId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+      const surface = surfaceRef.current;
+      if (!surface || event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      surface.focus({ preventScroll: true });
+      surface.setPointerCapture(event.pointerId);
+      const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
+      if (spacePressedRef.current || currentTool === "hand") {
+        pointerRef.current = {
+          type: "pan",
+          pointerId: event.pointerId,
+          last: getPointerPosition(event, surface),
+        };
+        setInteractionMode("panning");
+        return;
+      }
+      if (currentTool !== "select") return;
+      selectBriefFrame(briefFrameId);
+      editorStore.beginTransaction(`Move ${briefFrameId}`);
+      pointerRef.current = {
+        type: "move-brief-frame",
+        pointerId: event.pointerId,
+        last: getPointerPosition(event, surface),
+        briefFrameId,
+      };
+      setInteractionMode("moving-frame");
+    },
+    [editorStore, selectBriefFrame],
   );
 
   const beginCanvasPan = useCallback(
@@ -1442,6 +1597,20 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
       x: delta.x / cameraRef.current.zoom,
       y: delta.y / cameraRef.current.zoom,
     };
+    if (operation.type === "move-brief-frame") {
+      const currentBriefFrame = editorStore.getState().session.briefFrame;
+      if (!currentBriefFrame || currentBriefFrame.id !== operation.briefFrameId) return;
+      editorStore.execute(
+        moveBriefFrameCommand({
+          position: {
+            x: currentBriefFrame.x + worldDelta.x,
+            y: currentBriefFrame.y + worldDelta.y,
+          },
+        }),
+        { history: "skip" },
+      );
+      return;
+    }
     const frame = editorStore.getState().frames[operation.frameId];
     if (!frame) {
       return;
@@ -1461,7 +1630,7 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
     endNodeGesture(event);
     const operation = pointerRef.current;
     pointerRef.current = null;
-    if (operation?.type === "move-frame" && editorStore.hasActiveTransaction()) {
+    if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
       editorStore.commitTransaction();
     }
     setInteractionMode("idle");
@@ -1504,7 +1673,7 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
     cancelNodeGesture();
     const operation = pointerRef.current;
     pointerRef.current = null;
-    if (operation?.type === "move-frame" && editorStore.hasActiveTransaction()) {
+    if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
       editorStore.rollbackTransaction();
     }
     setInteractionMode("idle");
@@ -1636,6 +1805,22 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
         data-testid="canvas-world"
         style={{ ...worldStyle, transform: cameraTransform(camera) }}
       >
+        {briefFrame ? (
+          <BriefFrameView
+            key={`brief-frame-${persistenceVersion}-${briefFrame.id}`}
+            briefFrame={briefFrame}
+            isSelected={briefFrame.id === selectedBriefFrameId}
+            onSelect={selectBriefFrame}
+            onStartMove={beginBriefFramePointer}
+            onUpdateBriefField={updateBriefField}
+            onAddReference={addBriefReference}
+            onUpdateReference={updateBriefReference}
+            onRemoveReference={removeBriefReference}
+            onAddDecision={addConfirmedDecision}
+            onUpdateDecision={updateConfirmedDecision}
+            onRemoveDecision={removeConfirmedDecision}
+          />
+        ) : null}
         {frames.map((frame) => (
           <FrameView
             key={frame.id}
@@ -1714,34 +1899,44 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
         />
       ) : null}
 
-      <WorkspaceHeader frameCount={frames.length} />
-      <CanvasDock
-        zoom={camera.zoom}
-        activeTool={activeTool}
-        temporaryHand={spacePressed}
-        isFrameMenuOpen={isFrameMenuOpen}
-        canUndo={editorStore.canUndo()}
-        canRedo={editorStore.canRedo()}
-        onAddFrame={addFrame}
-        onFit={fitAllFrames}
-        onZoomIn={() => zoomAtViewportCenter(1.22)}
-        onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
-        onSelectTool={setActiveTool}
-        activeShape={activeShape}
-        onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle"); }}
-        onToggleFrameMenu={toggleFrameMenu}
-        onCloseFrameMenu={() => setIsFrameMenuOpen(false)}
-        onUndo={() => {
-          if (!editorStore.hasActiveTransaction()) {
-            editorStore.undo();
-          }
-        }}
-        onRedo={() => {
-          if (!editorStore.hasActiveTransaction()) {
-            editorStore.redo();
-          }
-        }}
+      {isEmptyState ? (
+        <EmptyCanvasState onStartBrainstorming={startBrainstorming} />
+      ) : null}
+
+      <WorkspaceHeader
+        frameCount={frames.length}
+        projectMeta={briefFrame ? `${frames.length} frames · Brainstorming` : undefined}
+        projectName={isEmptyState ? "Untitled canvas" : briefFrame ? "Project brief" : undefined}
+        canExport={editorState.session.lifecycle !== "not-started"}
+        onImportFile={importProject}
+        onExport={exportProject}
+        persistenceFeedback={persistenceFeedback}
       />
+      {showDesignChrome ? (
+        <CanvasDock
+          zoom={camera.zoom}
+          activeTool={activeTool}
+          temporaryHand={spacePressed}
+          isFrameMenuOpen={isFrameMenuOpen}
+          canUndo={editorStore.canUndo()}
+          canRedo={editorStore.canRedo()}
+          onAddFrame={addFrame}
+          onFit={fitAllFrames}
+          onZoomIn={() => zoomAtViewportCenter(1.22)}
+          onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
+          onSelectTool={setActiveTool}
+          activeShape={activeShape}
+          onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle"); }}
+          onToggleFrameMenu={toggleFrameMenu}
+          onCloseFrameMenu={() => setIsFrameMenuOpen(false)}
+          onUndo={() => {
+            if (!editorStore.hasActiveTransaction()) editorStore.undo();
+          }}
+          onRedo={() => {
+            if (!editorStore.hasActiveTransaction()) editorStore.redo();
+          }}
+        />
+      ) : null}
 
       {creationMode ? (
         <div
@@ -1785,32 +1980,36 @@ export function CanvasSurface({ frames: suppliedFrames = initialFrames }: Canvas
         </div>
       ) : null}
 
-      <LeftSidebar
-        pages={Object.values(editorState.pages)}
-        activePageId={editorState.activePageId}
-        frames={allFrames}
-        hierarchies={bridgeHierarchies}
-        nodes={editorState.nodes}
-        selection={editorState.selection}
-        onCreatePage={createPage}
-        onRenamePage={renamePage}
-        onSwitchPage={switchPage}
-        onSelectNode={selectNode}
-        onRenameNode={renameNode}
-        onToggleNodeLock={toggleNodeLock}
-        onToggleNodeHidden={toggleNodeHidden}
-        onReorderNode={(nodeId, direction) => editorStore.execute({ type: "node/reorder", nodeId, direction })}
-      />
-      <PropertiesPanel
-        frames={editorState.frames}
-        nodes={editorState.nodes}
-        selection={editorState.selection}
-        bridgeTargets={bridgeTargets}
-        onUpdateFrame={updateFrameFromPanel}
-        onMoveFrame={moveFrameFromPanel}
-        onEditNodeStyle={editNodeStyle}
-        onEditNodePosition={editNodePosition}
-      />
+      {showDesignChrome ? (
+        <>
+          <LeftSidebar
+            pages={Object.values(editorState.pages)}
+            activePageId={editorState.activePageId}
+            frames={allFrames}
+            hierarchies={bridgeHierarchies}
+            nodes={editorState.nodes}
+            selection={editorState.selection}
+            onCreatePage={createPage}
+            onRenamePage={renamePage}
+            onSwitchPage={switchPage}
+            onSelectNode={selectNode}
+            onRenameNode={renameNode}
+            onToggleNodeLock={toggleNodeLock}
+            onToggleNodeHidden={toggleNodeHidden}
+            onReorderNode={(nodeId, direction) => editorStore.execute({ type: "node/reorder", nodeId, direction })}
+          />
+          <PropertiesPanel
+            frames={editorState.frames}
+            nodes={editorState.nodes}
+            selection={editorState.selection}
+            bridgeTargets={bridgeTargets}
+            onUpdateFrame={updateFrameFromPanel}
+            onMoveFrame={moveFrameFromPanel}
+            onEditNodeStyle={editNodeStyle}
+            onEditNodePosition={editNodePosition}
+          />
+        </>
+      ) : null}
 
       <div className="canvas-help" aria-hidden="true">
         <span><kbd>Space</kbd> drag to pan</span>

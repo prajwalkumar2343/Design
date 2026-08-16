@@ -26,6 +26,10 @@ Confirm at least one of these signals before applying this workflow:
 
 If none match, explain that this is not a recognized Canvas workspace and do not guess at commands.
 
+For the shipped startup flow, open `/` for the blank Brainstorming Mode entry state. Use
+`/?demo=1` only as the explicit legacy/demo fixture path when a supplied frame set is
+needed for compatibility tests or visual inspection.
+
 ## Workflow
 
 1. Inspect `package.json`, `PROJECT_SPEC.md`, and the relevant document/frame modules.
@@ -37,6 +41,13 @@ If none match, explain that this is not a recognized Canvas workspace and do not
 7. Use the bundled capture or inspection script when browser tooling is unavailable or structured evidence is useful.
 8. Iterate until the request and responsive behavior are satisfied.
 9. Run the narrowest relevant checks, followed by `npm run typecheck` and affected tests when source changed.
+
+For Codex-facing integration or test harnesses, use the typed services/store documented in
+`references/current-project.md`: `BrainstormSessionService` for Brief/session mutations,
+`DocumentExchangeService.createWireframe` for first/subsequent Brainstorm wireframes, and
+`replaceHtml` for existing documents with explicit mode and expected revision. Use browser
+Import/Export for `.wirecanvas.json`; this project has no Canvas CLI or direct workspace
+filesystem writer.
 
 ## Current Canvas Mapping
 

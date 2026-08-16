@@ -16,7 +16,7 @@ async function iframeKey(preview: FrameLocator, key: string) {
 
 test.describe("sandboxed iframe bridge", () => {
   test("reports ready, hover, selection, hierarchy, and computed-style inspection", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const iframe = frame.locator("iframe");
     const preview = iframe.contentFrame();
@@ -35,7 +35,7 @@ test.describe("sandboxed iframe bridge", () => {
   });
 
   test("rejects malformed child messages without changing the selected target", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const iframe = frame.locator("iframe");
     const preview = iframe.contentFrame();
@@ -68,7 +68,7 @@ test.describe("sandboxed iframe bridge", () => {
   });
 
   test("creates real bridge-backed layers, keeps text editable, and reverses insertion", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const iframe = frame.locator("iframe");
     const preview = iframe.contentFrame();
@@ -129,7 +129,7 @@ test.describe("sandboxed iframe bridge", () => {
   });
 
   test("creates and selects a shape through ordinary canvas pointer interaction", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
     await page.getByTestId("tool-button-rectangle").click();
@@ -156,7 +156,7 @@ test.describe("sandboxed iframe bridge", () => {
   });
 
   test("shows an actionable error when image picking receives a non-image file", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     await page.getByTestId("tool-button-image").click();
     const creationLayer = frame.getByTestId("frame-creation-layer");

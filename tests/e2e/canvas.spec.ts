@@ -5,7 +5,7 @@ const worldSelector = '[data-testid="canvas-world"]';
 const frameSelector = "[data-frame-id]";
 
 async function openCanvas(page: Page) {
-  await page.goto("/");
+  await page.goto("/?demo=1");
   await expect(page.locator(surfaceSelector)).toBeVisible();
   await expect(page.locator(worldSelector)).toBeVisible();
 }

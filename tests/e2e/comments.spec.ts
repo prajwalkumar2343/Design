@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 async function openEditor(page: import("@playwright/test").Page) {
-  await page.goto("/");
+  await page.goto("/?demo=1");
   await expect(page.getByTestId("canvas-surface")).toBeVisible();
   await expect(page.locator('[data-frame-id="desktop"]')).toHaveAttribute("data-bridge-status", "ready");
 }
@@ -51,4 +51,3 @@ test.describe("canvas comments", () => {
     await expect(page.getByTestId("comment-feedback")).toHaveText("Comment deleted");
   });
 });
-

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test.describe("Lumina Station desktop screen", () => {
   test("renders as a distinct 1440px screen with the local hero asset", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
 
     await page.getByTestId("sidebar-tab-pages").click();
     await page.locator(".page-row").filter({ hasText: "Lumina Station" }).locator(".page-select-button").click();
@@ -21,7 +21,7 @@ test.describe("Lumina Station desktop screen", () => {
   });
 
   test("reveals the feature chapter on scroll without external URLs", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     await page.getByTestId("sidebar-tab-pages").click();
     await page.locator(".page-row").filter({ hasText: "Lumina Station" }).locator(".page-select-button").click();
     const frame = page.locator('[data-frame-id="lumina-desktop"]');
@@ -39,7 +39,7 @@ test.describe("Lumina Station desktop screen", () => {
   });
 
   test("places the generated local asset through the editor image-upload flow", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
     await expect(frame).toHaveAttribute("data-bridge-status", "ready");

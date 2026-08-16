@@ -1,7 +1,7 @@
 # Agent-Native Design Tool — Product and Technical Specification
 
-Status: Draft v0.2  
-Last updated: 2026-08-13  
+Status: Active spec; Brainstorming Mode v1 shipped
+Last updated: 2026-08-14
 Working title: Canvas  
 
 ## 1. Product statement
@@ -19,6 +19,126 @@ The product combines:
 - A Codex router plugin that supplies HTML and operates Canvas through typed capabilities.
 - A future internal-LLM fallback for sessions where Codex is not connected; its provider and model remain intentionally unspecified.
 - A low-latency visual preview loop separated from durable source-code reconciliation.
+
+The roadmap sections below retain the larger product direction. The currently shipped
+browser workflow and its real boundaries are defined in section 1.1; that section takes
+precedence where the roadmap describes capabilities that are not yet implemented.
+
+## 1.1 Shipped Brainstorming Mode v1
+
+Canvas starts at `/` with a truly blank editor state: zero demo documents, pages, or
+frames. The quiet empty state offers **Start brainstorming**. The `?demo=1` query
+parameter is an explicit local/demo fixture path used by legacy visual and end-to-end
+coverage; it loads `src/demo/documents.ts` and is not the normal product startup.
+
+Starting Brainstorming Mode creates the first canonical Brief Frame with stable IDs
+generated at the UI boundary. The product protocol opening prompt is exactly:
+
+> Alright—let’s understand the project first. What are you making, who is it for, and what should it help them do?
+
+Codex keeps the reasoning and conversation. Canvas does not add an internal LLM or chat
+panel. The Brief Frame is a first-class, editable canvas artifact at its own coordinates,
+with per-field save behavior and the existing canvas selection/movement/history model.
+Its canonical content fields are:
+
+- `projectDescription`
+- `audience`
+- `goals`
+- `successCriteria`
+- `requiredContent`
+- `requiredFeatures`
+- `visualDirection`
+- `constraints`
+- `references` / links
+- `openQuestions`
+- `confirmedDecisions`
+
+Reference links are editable but accept only `http:` or `https:` URLs; rendered external
+links deliberately use `noopener`/`noreferrer`.
+
+The typed domain state lives in `src/session/model.ts` and has schema kind
+`brainstorm-session`, schema version `1`, and lifecycle values
+`not-started | briefing | wireframing | completed`. Session and Brief Frame revisions
+are monotonic. Mutations use expected revisions and preserve undo/redo; stale writes are
+rejected rather than silently overwriting newer work. The transport-independent
+`BrainstormSessionService` in `src/router/brainstorm-session.ts` exposes bounded snapshots,
+session start, every Brief/reference/decision mutation, and the legal lifecycle changes.
+
+### Document modes and wireframe admission
+
+`DocumentMode` is the typed union `"design" | "wireframe"` on normalized documents and
+compatible frame seeds. Existing seeds default to `design`. `DocumentExchangeService` in
+`src/router/document-exchange.ts` exposes:
+
+- `createWireframe(...)` for the first and subsequent agent-created wireframes. The input
+  must explicitly declare `mode: "wireframe"`, provide caller-owned stable document/page/
+  frame IDs, names, complete HTML, finite position, positive size, background, and the
+  expected Brainstorm session revision. The first accepted wireframe moves `briefing` to
+  `wireframing`; later accepted wireframes keep that lifecycle and increment the session
+  revision through a dedicated action. Normalized document, page, and frame creation is
+  one undoable transaction and rolls back atomically on any validation or reducer error.
+- `replaceHtml(...)` for an existing document. It requires an explicit mode and expected
+  document revision. During an active Brainstorm session (`briefing` or `wireframing`),
+  agent HTML must be `wireframe`; existing non-Brainstorm design documents remain
+  supported.
+
+Wireframe admission is structured and fail-closed. It requires a complete doctype HTML
+document and blocks the bridge/theme reserved markers, scripts, event-handler attributes,
+executable or embedded content, external resources/assets, media/images, externally
+submitting forms, navigation/external URLs except inert `#` anchors, CSS `url()`, imports,
+`@font-face`, animations/transitions, arbitrary visual styling, legacy visual/presentational
+attributes, MathML/namespaced URL attributes, `<base>`, and all `meta http-equiv` values.
+Safe nested responsive at-rules are recursively validated. The allowlist is limited to
+semantic HTML plus neutral layout/typography properties such as normal flow, flex/grid,
+positioning, sizing, spacing, overflow, alignment, text sizing, line height, and text
+alignment. Canvas owns color, background, borders, shadows, filters, opacity, transforms,
+and motion treatment. Violations have stable typed router error codes and are rejected
+before editor state or revision mutation.
+
+Accepted wireframes render through the existing `sandbox="allow-scripts"` iframe boundary.
+Canvas injects one idempotent, reserved-marker neutral grayscale theme at render time for
+wireframe mode, before the bridge runtime. The canonical `DocumentEntity.srcDoc` remains
+byte-for-byte unchanged; design mode follows the existing render path. No
+`allow-same-origin`, network permission, or agent-provided runtime is added.
+
+### Portable project files
+
+The browser persistence boundary is a versioned `.wirecanvas.json` file, not a direct
+workspace filesystem write. The top-level contract is `kind: "wirecanvas-project"` and
+`schemaVersion: 1`, separate from the embedded Brainstorm session schema/version. Export
+uses MIME `application/json` and the filename
+`brainstorm-session.wirecanvas.json`.
+
+The durable export contains the complete state needed to restore the project: session and
+Brief Frame content/lifecycle/revisions, selection, normalized documents with exact HTML,
+mode, revisions and metadata, pages, frames and geometry/backgrounds, normalized nodes,
+`activePageId`, and active tool. It excludes transient bridge state, hover state, local
+drafts, microphone state, and history internals. Import treats JSON as untrusted input,
+enforces structural/reference/geometry/revision limits, revalidates stored HTML using its
+mode (including strict wireframe admission), and rejects malformed or future file/session
+versions. Validation builds a complete candidate before mutation, so failed imports leave
+live state and history untouched. A changed import is one undoable whole-state replacement;
+an equivalent import is a no-op.
+
+The UI exposes Import on the normal Canvas header, including the blank canvas, and Export
+once a session exists. `PersistenceAdapter` reads a browser `File`-like object and
+`BrowserDownloadAdapter` uses `File`, `Blob`, and browser download APIs. These adapters are
+replaceable for tests or a future host integration; the current browser app does not claim
+direct Codex workspace writes.
+
+### Current limits and non-goals
+
+- Brainstorming Mode is Codex-facing protocol/state, not an internal model or chat UI.
+- The browser app has no Canvas CLI, filesystem backend, direct workspace writer, or
+  automatic project sync service.
+- Agent first-wireframe creation uses `createWireframe`; `replaceHtml` is for existing
+  normalized documents.
+- The strict wireframe mode is intentionally not a production-design HTML/JavaScript
+  admission path. Existing design fixtures and direct Canvas manipulation remain for
+  compatibility, but active Brainstorm agent submissions are wireframes only.
+- The larger voice, source-code reconciliation, framework adapters, broad production HTML
+  capabilities, publishing, and internal-LLM ideas elsewhere in this document remain
+  roadmap/non-goals for this shipped slice.
 
 ## 2. Product principles
 

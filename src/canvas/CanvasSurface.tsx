@@ -74,17 +74,20 @@ import {
   NodeOverlayLayer,
   type OverlayNodeTarget,
 } from "../overlay/NodeOverlayLayer";
+import { parseTransform } from "../overlay/commands";
 import {
   useNodeOverlayGestures,
   type NodeInteractionMode,
   type OverlayBridgeTargetState,
 } from "../overlay/useNodeOverlayGestures";
 import {
+  cameraAtZoomProgress,
   cameraTransform,
   fitRect,
   panCamera,
   screenToWorld,
   zoomCameraAtPoint,
+  ZOOM_SMOOTH_STEPS,
 } from "./camera";
 import type { Camera, CanvasFrame, Point, Rect, Size } from "./types";
 import { rankVisibleFrames } from "./virtualization";
@@ -336,7 +339,6 @@ export function CanvasSurface({
     addComment,
     selectComment,
     updateComment,
-    toggleCommentResolved,
     deleteComment,
   } = useComments(editorStore);
   const activeTool = normalizeActiveTool(editorState.activeTool);
@@ -429,6 +431,8 @@ export function CanvasSurface({
     (entry: OverlayBridgeTargetState): OverlayNodeTarget | null => {
       const frame = editorStore.getState().frames[entry.frameId];
       if (!frame) return null;
+      const transform = entry.inspection?.inlineStyle.transform ?? entry.inspection?.computedStyle.transform;
+      const parsedRotation = transform ? parseTransform(transform)?.rotation ?? 0 : 0;
       return {
         frameId: entry.frameId,
         nodeId: entry.target.elementId,
@@ -441,6 +445,7 @@ export function CanvasSurface({
           height: entry.target.bounds.height,
         },
         locked: editorStore.getState().nodes[entry.target.elementId]?.locked ?? entry.target.locked,
+        rotation: parsedRotation || undefined,
       };
     },
     [editorStore],
@@ -687,7 +692,7 @@ export function CanvasSurface({
         camera: cameraRef.current,
       };
 
-      if (message.target) {
+      if (message.event !== "pointermove" && message.target) {
         const mappedPoint = mapIframePointToCanvas(message.point, context);
         lastBridgeTargetRef.current = {
           frameId,
@@ -712,7 +717,7 @@ export function CanvasSurface({
             toOverlayTarget({ frameId, target: message.target, inspection: null }),
           );
         }
-      } else {
+      } else if (message.event !== "pointermove") {
         lastBridgeTargetRef.current = null;
         if (message.event === "hover") setHoveredOverlayTarget(null);
       }
@@ -984,6 +989,7 @@ export function CanvasSurface({
         bounds: placement.bounds,
         src: reader.result,
         alt: file.name.replace(/\.[^.]+$/, "").slice(0, 120),
+        editable: false,
       }, "Place image").then((created) => {
         if (!created) return;
         setCreationError(null);
@@ -1350,6 +1356,40 @@ export function CanvasSurface({
     setCamera(nextCamera);
   }, []);
 
+  const zoomFrameRef = useRef<number | null>(null);
+
+  const cancelZoomAnimation = useCallback(() => {
+    if (zoomFrameRef.current !== null) {
+      cancelAnimationFrame(zoomFrameRef.current);
+      zoomFrameRef.current = null;
+    }
+  }, []);
+
+  const animateZoomTo = useCallback(
+    (target: Camera, anchor: Point) => {
+      cancelZoomAnimation();
+      const from = cameraRef.current;
+      if (Math.abs(target.zoom - from.zoom) < 0.0001) {
+        updateCamera(target);
+        return;
+      }
+      let step = 0;
+      const frame = () => {
+        step += 1;
+        const progress = step / ZOOM_SMOOTH_STEPS;
+        if (step >= ZOOM_SMOOTH_STEPS) {
+          zoomFrameRef.current = null;
+          updateCamera(target);
+          return;
+        }
+        updateCamera(cameraAtZoomProgress(from, target, anchor, progress));
+        zoomFrameRef.current = requestAnimationFrame(frame);
+      };
+      zoomFrameRef.current = requestAnimationFrame(frame);
+    },
+    [cancelZoomAnimation, cameraRef, updateCamera],
+  );
+
   const switchPage = useCallback((pageId: string) => {
     editorStore.execute(switchPageCommand(pageId), { history: "skip" });
     const nextState = editorStore.getState();
@@ -1358,16 +1398,18 @@ export function CanvasSurface({
       .map((frameId) => nextState.frames[frameId])
       .filter((frame): frame is NonNullable<typeof frame> => Boolean(frame));
     if (pageFrames.length > 0 && viewport.width > 0 && viewport.height > 0) {
+      cancelZoomAnimation();
       updateCamera(fitRect(getFramesBounds(pageFrames), viewport, cameraFitPadding(viewport)));
     }
-  }, [editorStore, updateCamera, viewport]);
+  }, [cancelZoomAnimation, editorStore, updateCamera, viewport]);
 
   const fitAllFrames = useCallback(() => {
     if (viewport.width <= 0 || viewport.height <= 0) {
       return;
     }
+    cancelZoomAnimation();
     updateCamera(fitRect(getFramesBounds(renderRects), viewport, cameraFitPadding(viewport)));
-  }, [renderRects, updateCamera, viewport]);
+  }, [cancelZoomAnimation, renderRects, updateCamera, viewport]);
 
   useEffect(() => {
     if (
@@ -1385,6 +1427,10 @@ export function CanvasSurface({
 
   useEffect(
     () => () => {
+      if (zoomFrameRef.current !== null) {
+        cancelAnimationFrame(zoomFrameRef.current);
+        zoomFrameRef.current = null;
+      }
       if (motionTimeoutRef.current !== null) {
         clearTimeout(motionTimeoutRef.current);
       }
@@ -1408,13 +1454,16 @@ export function CanvasSurface({
   const zoomAtViewportCenter = useCallback(
     (factor: number) => {
       const center = { x: viewport.width / 2, y: viewport.height / 2 };
-      updateCamera(
-        zoomCameraAtPoint(cameraRef.current, cameraRef.current.zoom * factor, center),
+      const target = zoomCameraAtPoint(
+        cameraRef.current,
+        cameraRef.current.zoom * factor,
+        center,
       );
+      animateZoomTo(target, center);
       setInteractionMode("zooming");
       settleInteraction();
     },
-    [settleInteraction, updateCamera, viewport],
+    [animateZoomTo, cameraRef, settleInteraction, viewport],
   );
 
   const addFrame = useCallback(
@@ -1451,9 +1500,10 @@ export function CanvasSurface({
       editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
       editorStore.commitTransaction();
       setIsFrameMenuOpen(false);
+      cancelZoomAnimation();
       updateCamera(fitRect(frame, usableViewport, cameraFitPadding(usableViewport)));
     },
-    [editorState.activePageId, editorStore, renderRects, setSelectedFrameId, updateCamera, viewport],
+    [cancelZoomAnimation, editorState.activePageId, editorStore, renderRects, setSelectedFrameId, updateCamera, viewport],
   );
 
   const beginFramePointer = useCallback(
@@ -1466,6 +1516,7 @@ export function CanvasSurface({
       event.stopPropagation();
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
+      cancelZoomAnimation();
       const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
       if (spacePressedRef.current || currentTool === "hand") {
         pointerRef.current = {
@@ -1500,6 +1551,7 @@ export function CanvasSurface({
       event.stopPropagation();
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
+      cancelZoomAnimation();
       const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
       if (spacePressedRef.current || currentTool === "hand") {
         pointerRef.current = {
@@ -1534,6 +1586,7 @@ export function CanvasSurface({
       event.stopPropagation();
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
+      cancelZoomAnimation();
       pointerRef.current = {
         type: "pan",
         pointerId: event.pointerId,
@@ -1541,7 +1594,7 @@ export function CanvasSurface({
       };
       setInteractionMode("panning");
     },
-    [],
+    [cancelZoomAnimation],
   );
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1558,6 +1611,7 @@ export function CanvasSurface({
       return;
     }
 
+    cancelZoomAnimation();
     event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1651,21 +1705,16 @@ export function CanvasSurface({
     event.preventDefault();
     const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
     const delta = { x: event.deltaX * multiplier, y: event.deltaY * multiplier };
+    const zoomAmount = Math.exp(-delta.y / 360);
 
-    if (event.ctrlKey || event.metaKey) {
-      const pointer = getPointerPosition(event, event.currentTarget);
-      updateCamera(
-        zoomCameraAtPoint(
-          cameraRef.current,
-          cameraRef.current.zoom * Math.exp(-delta.y / 360),
-          pointer,
-        ),
-      );
-      setInteractionMode("zooming");
-    } else {
-      updateCamera(panCamera(cameraRef.current, delta));
-      setInteractionMode("panning");
-    }
+    const pointer = getPointerPosition(event, event.currentTarget);
+    const target = zoomCameraAtPoint(
+      cameraRef.current,
+      cameraRef.current.zoom * zoomAmount,
+      pointer,
+    );
+    animateZoomTo(target, pointer);
+    setInteractionMode("zooming");
     settleInteraction();
   };
 
@@ -1882,7 +1931,6 @@ export function CanvasSurface({
                   onClose={() => selectComment(null)}
                   onDelete={deleteComment}
                   onSave={updateComment}
-                  onToggleResolved={toggleCommentResolved}
                   style={{ left: frame.x + comment.point.x + 18, top: frame.y + comment.point.y + 18 }}
                 />
               ) : null}

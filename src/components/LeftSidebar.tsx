@@ -69,7 +69,6 @@ function EditableLabel({
       <button
         className={className ?? "sidebar-label-button"}
         onDoubleClick={() => setEditing(true)}
-        onClick={() => setEditing(true)}
         type="button"
       >
         {value}

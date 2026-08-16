@@ -5,6 +5,7 @@ export {
   selectFrameRenderModels,
   type ActiveTool,
   type DocumentEntity,
+  type DocumentMode,
   type DocumentId,
   type EditorNodeKind,
   type EditorState,
@@ -18,6 +19,34 @@ export {
   type PageId,
   type SelectionState,
 } from "./model";
+export {
+  BRAINSTORM_SESSION_KIND,
+  BRAINSTORM_SESSION_SCHEMA_VERSION,
+  createEmptyBriefContent,
+  createEmptyBrainstormSession,
+  DEFAULT_BRIEF_FRAME_NAME,
+  DEFAULT_BRIEF_FRAME_SIZE,
+  type BrainstormSelection,
+  type BrainstormSessionLifecycle,
+  type BrainstormSessionState,
+  type BriefContent,
+  type BriefField,
+  type BriefFieldUpdate,
+  type BriefFrame,
+  type BriefListField,
+  type BriefReference,
+  type BriefTextField,
+  type ConfirmedDecision,
+  type StartBrainstormSessionOptions,
+  type BrainstormSessionTransitionTarget,
+} from "../session/model";
+export {
+  applyBrainstormSessionAction,
+  BrainstormSessionReducerError,
+  createBrainstormSessionReducerError,
+  type BrainstormSessionAction,
+  type BrainstormSessionReducerErrorCode,
+} from "../session/reducer";
 export {
   getToolDefinition,
   getToolForShortcut,
@@ -45,11 +74,23 @@ export {
   createPageCommand,
   EditorCommandError,
   moveFrameCommand,
+  moveBriefFrameCommand,
   replaceDocumentHtmlCommand,
   renamePageCommand,
+  addBriefReferenceCommand,
+  addConfirmedDecisionCommand,
+  removeBriefReferenceCommand,
+  removeConfirmedDecisionCommand,
+  selectBriefFrameCommand,
   setActiveToolCommand,
   setSelectionCommand,
+  startBrainstormSessionCommand,
+  transitionBrainstormSessionCommand,
   switchPageCommand,
+  updateBriefFieldCommand,
+  updateBriefReferenceCommand,
+  updateConfirmedDecisionCommand,
+  wireframeCreatedCommand,
   type EditorCommand,
 } from "./commands";
 export {
@@ -66,5 +107,6 @@ export {
   type EditorHistorySnapshot,
   type EditorStoreListener,
   type ExecuteCommandOptions,
+  type ReplaceStateOptions,
 } from "./store";
 export { prependTranslationTransform } from "./position";

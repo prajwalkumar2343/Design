@@ -1,4 +1,4 @@
-import { Cloud, Sparkles } from "lucide-react";
+import { Cloud } from "lucide-react";
 import type { ChangeEvent } from "react";
 
 interface WorkspaceHeaderProps {
@@ -80,10 +80,6 @@ export function WorkspaceHeader({
           <span className="sync-status">
             <Cloud size={13} strokeWidth={1.8} aria-hidden="true" />
             Saved
-          </span>
-          <span className="agent-status">
-            <Sparkles size={13} strokeWidth={1.8} aria-hidden="true" />
-            Agent ready
           </span>
           <span className="avatar" aria-label="Current user">A</span>
         </div>

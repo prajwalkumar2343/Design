@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -8,7 +9,6 @@ import {
   type ChangeEvent,
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import { CanvasDock } from "../components/CanvasDock";
 import { LeftSidebar } from "../components/LeftSidebar";
@@ -86,6 +86,7 @@ import {
   fitRect,
   panCamera,
   screenToWorld,
+  worldToScreen,
   zoomCameraAtPoint,
   ZOOM_SMOOTH_STEPS,
 } from "./camera";
@@ -119,8 +120,8 @@ const worldStyle: CSSProperties = {
 
 type PointerOperation =
   | { type: "pan"; pointerId: number; last: Point }
-  | { type: "move-frame"; pointerId: number; last: Point; frameId: string }
-  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string };
+  | { type: "move-frame"; pointerId: number; last: Point; frameId: string; start: Point; frameStart: Point }
+  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string; start: Point; briefStart: Point };
 
 type CreationOperation =
   | { type: "box"; tool: "rectangle" | "text" | "image"; frameId: string; pointerId: number; start: Point; last: Point }
@@ -293,10 +294,12 @@ export function CanvasSurface({
   const pendingImageRef = useRef<PendingImagePlacement | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const clipboardTargetRef = useRef<{ frameId: string; nodeId: string } | null>(null);
+  const frameTextEditRef = useRef<Set<string>>(new Set());
   const spacePressedRef = useRef(false);
   const cameraInitializedRef = useRef(false);
   const motionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const nextFrameSequenceRef = useRef(suppliedFrames.length + 1);
+  const frameDragRef = useRef<{ elementKey: string; transform: string } | null>(null);
   const lastBridgeTargetRef = useRef<{
     frameId: string;
     elementId: string;
@@ -317,6 +320,7 @@ export function CanvasSurface({
   const [bridgeTargets, setBridgeTargets] = useState<Record<string, OverlayBridgeTargetState>>({});
   const [bridgeHierarchies, setBridgeHierarchies] = useState<Record<string, BridgeHierarchySnapshot>>({});
   const [hoveredOverlayTarget, setHoveredOverlayTarget] = useState<OverlayNodeTarget | null>(null);
+  const [sidebarHoveredNode, setSidebarHoveredNode] = useState<{ frameId: string; nodeId: string } | null>(null);
   const selectedFrameId = editorState.selection.primaryFrameId;
   const selectedBriefFrameId = editorState.session.selection.type === "brief-frame"
     ? editorState.session.selection.briefFrameId
@@ -579,6 +583,9 @@ export function CanvasSurface({
       const frame = editorStore.getState().frames[frameId];
       if (!surface || !frame) return;
 
+      if (message.event === "text-edit-start") frameTextEditRef.current.add(frameId);
+      else if (message.event === "text-commit" || message.event === "text-cancel") frameTextEditRef.current.delete(frameId);
+
       const currentTool = activeToolRef.current;
       const currentShape = activeShapeRef.current;
       const isCreationToolActive = isCreationTool(currentTool);
@@ -639,6 +646,22 @@ export function CanvasSurface({
             setInteractionMode("idle");
           }
           return;
+        }
+        if (!frameTextEditRef.current.has(frameId) && (message.metaKey || message.ctrlKey)) {
+          const action = resolveEditorShortcut({
+            key: message.key ?? "",
+            metaKey: message.metaKey,
+            ctrlKey: message.ctrlKey,
+            shiftKey: message.shiftKey,
+            altKey: message.altKey,
+          });
+          if (action?.type === "undo" || action?.type === "redo") {
+            if (!editorStore.hasActiveTransaction()) {
+              if (action.type === "undo") editorStore.undo();
+              else editorStore.redo();
+            }
+            return;
+          }
         }
       }
       if (message.event === "input" && message.target && message.text !== undefined) {
@@ -1318,6 +1341,12 @@ export function CanvasSurface({
     setInteractionMode,
   });
 
+  const sidebarHoveredOverlayTarget = useMemo(() => {
+    if (!sidebarHoveredNode) return null;
+    const entry = bridgeTargets[targetStateKey(sidebarHoveredNode.frameId, sidebarHoveredNode.nodeId)];
+    return entry ? toOverlayTarget(entry) : null;
+  }, [bridgeTargets, editorState.frames, sidebarHoveredNode, toOverlayTarget]);
+
   const setActiveTool = useCallback(
     (tool: ToolId) => {
       creationRef.current = null;
@@ -1576,17 +1605,21 @@ export function CanvasSurface({
       if (currentTool !== "select") {
         return;
       }
+      const start = getPointerPosition(event, surface);
+      const frame = editorStore.getState().frames[frameId];
       setSelectedFrameId(frameId);
       editorStore.beginTransaction(`Move ${frameId}`);
       pointerRef.current = {
         type: "move-frame",
         pointerId: event.pointerId,
-        last: getPointerPosition(event, surface),
+        last: start,
         frameId,
+        start,
+        frameStart: frame ? { x: frame.x, y: frame.y } : { x: 0, y: 0 },
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, setSelectedFrameId],
+    [editorStore, setSelectedFrameId, cancelZoomAnimation],
   );
 
   const beginBriefFramePointer = useCallback(
@@ -1609,17 +1642,21 @@ export function CanvasSurface({
         return;
       }
       if (currentTool !== "select") return;
+      const start = getPointerPosition(event, surface);
+      const currentBriefFrame = editorStore.getState().session.briefFrame;
       selectBriefFrame(briefFrameId);
       editorStore.beginTransaction(`Move ${briefFrameId}`);
       pointerRef.current = {
         type: "move-brief-frame",
         pointerId: event.pointerId,
-        last: getPointerPosition(event, surface),
+        last: start,
         briefFrameId,
+        start,
+        briefStart: currentBriefFrame ? { x: currentBriefFrame.x, y: currentBriefFrame.y } : { x: 0, y: 0 },
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, selectBriefFrame],
+    [editorStore, selectBriefFrame, cancelZoomAnimation],
   );
 
   const beginCanvasPan = useCallback(
@@ -1672,6 +1709,69 @@ export function CanvasSurface({
     setInteractionMode("panning");
   };
 
+  const applyFrameDragTransform = (operation: PointerOperation) => {
+    if (operation.type !== "move-frame" && operation.type !== "move-brief-frame") return;
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    const elementKey = operation.type === "move-frame"
+      ? `frame:${operation.frameId}`
+      : `brief:${operation.briefFrameId}`;
+    const element = operation.type === "move-frame"
+      ? surface.querySelector<HTMLElement>(`[data-frame-id="${operation.frameId}"]`)
+      : surface.querySelector<HTMLElement>(`[data-testid="brief-frame"]`);
+    if (!element) return;
+    const worldDelta = {
+      x: (operation.last.x - operation.start.x) / cameraRef.current.zoom,
+      y: (operation.last.y - operation.start.y) / cameraRef.current.zoom,
+    };
+    const position = operation.type === "move-frame"
+      ? { x: operation.frameStart.x + worldDelta.x, y: operation.frameStart.y + worldDelta.y }
+      : { x: operation.briefStart.x + worldDelta.x, y: operation.briefStart.y + worldDelta.y };
+    const transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
+    element.style.transform = transform;
+    frameDragRef.current = { elementKey, transform };
+  };
+
+  const finalizeFrameDrag = (operation: PointerOperation) => {
+    frameDragRef.current = null;
+    if (operation.type !== "move-frame" && operation.type !== "move-brief-frame") return;
+    const worldDelta = {
+      x: (operation.last.x - operation.start.x) / cameraRef.current.zoom,
+      y: (operation.last.y - operation.start.y) / cameraRef.current.zoom,
+    };
+    if (operation.type === "move-frame") {
+      editorStore.execute(
+        moveFrameCommand({
+          frameId: operation.frameId,
+          position: {
+            x: operation.frameStart.x + worldDelta.x,
+            y: operation.frameStart.y + worldDelta.y,
+          },
+        }),
+      );
+    } else {
+      editorStore.execute(
+        moveBriefFrameCommand({
+          position: {
+            x: operation.briefStart.x + worldDelta.x,
+            y: operation.briefStart.y + worldDelta.y,
+          },
+        }),
+        { history: "skip" },
+      );
+    }
+  };
+
+  useLayoutEffect(() => {
+    const drag = frameDragRef.current;
+    if (!drag) return;
+    const surface = surfaceRef.current;
+    const element = drag.elementKey.startsWith("frame:")
+      ? surface?.querySelector<HTMLElement>(`[data-frame-id="${drag.elementKey.slice(6)}"]`)
+      : surface?.querySelector<HTMLElement>(`[data-testid="brief-frame"]`);
+    if (element) element.style.transform = drag.transform;
+  });
+
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (moveNodeGesture(event)) {
       return;
@@ -1693,37 +1793,7 @@ export function CanvasSurface({
       return;
     }
 
-    const worldDelta = {
-      x: delta.x / cameraRef.current.zoom,
-      y: delta.y / cameraRef.current.zoom,
-    };
-    if (operation.type === "move-brief-frame") {
-      const currentBriefFrame = editorStore.getState().session.briefFrame;
-      if (!currentBriefFrame || currentBriefFrame.id !== operation.briefFrameId) return;
-      editorStore.execute(
-        moveBriefFrameCommand({
-          position: {
-            x: currentBriefFrame.x + worldDelta.x,
-            y: currentBriefFrame.y + worldDelta.y,
-          },
-        }),
-        { history: "skip" },
-      );
-      return;
-    }
-    const frame = editorStore.getState().frames[operation.frameId];
-    if (!frame) {
-      return;
-    }
-    editorStore.execute(
-      moveFrameCommand({
-        frameId: operation.frameId,
-        position: {
-          x: frame.x + worldDelta.x,
-          y: frame.y + worldDelta.y,
-        },
-      }),
-    );
+    applyFrameDragTransform(operation);
   };
 
   const endPointerOperation = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1731,6 +1801,7 @@ export function CanvasSurface({
     const operation = pointerRef.current;
     pointerRef.current = null;
     if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
+      finalizeFrameDrag(operation);
       editorStore.commitTransaction();
     }
     setInteractionMode("idle");
@@ -1744,33 +1815,58 @@ export function CanvasSurface({
     endPointerOperation(event);
   };
 
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+  const handleWheel = (event: WheelEvent) => {
     if (isCanvasControlTarget(event.target)) {
       return;
     }
     event.preventDefault();
     const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
-    const delta = { x: event.deltaX * multiplier, y: event.deltaY * multiplier };
-    const zoomAmount = Math.exp(-delta.y / 360);
+    const deltaX = event.deltaX * multiplier;
+    const deltaY = event.deltaY * multiplier;
 
-    const pointer = getPointerPosition(event, event.currentTarget);
-    const target = zoomCameraAtPoint(
-      cameraRef.current,
-      cameraRef.current.zoom * zoomAmount,
-      pointer,
-    );
-    animateZoomTo(target, pointer);
-    setInteractionMode("zooming");
+    if (Math.abs(deltaX) > Math.abs(deltaY)) {
+      updateCamera(panCamera(cameraRef.current, { x: deltaX, y: deltaY }));
+      setInteractionMode("panning");
+    } else {
+      const surface = surfaceRef.current;
+      const pointer = surface ? getPointerPosition(event, surface) : { x: event.clientX, y: event.clientY };
+      const zoomAmount = Math.exp(-deltaY / 360);
+      const target = zoomCameraAtPoint(
+        cameraRef.current,
+        cameraRef.current.zoom * zoomAmount,
+        pointer,
+      );
+      animateZoomTo(target, pointer);
+      setInteractionMode("zooming");
+    }
     settleInteraction();
   };
+
+  useEffect(() => {
+    const surface = surfaceRef.current;
+    if (!surface) return;
+    surface.addEventListener("wheel", handleWheel, { passive: false });
+    return () => surface.removeEventListener("wheel", handleWheel);
+  }, [animateZoomTo, settleInteraction, updateCamera]);
 
   const cancelInteraction = useCallback(() => {
     cancelNodeGesture();
     const operation = pointerRef.current;
     pointerRef.current = null;
-    if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
-      editorStore.rollbackTransaction();
+    if (operation?.type === "move-frame" || operation?.type === "move-brief-frame") {
+      const surface = surfaceRef.current;
+      const element = operation.type === "move-frame"
+        ? surface?.querySelector<HTMLElement>(`[data-frame-id="${operation.frameId}"]`)
+        : surface?.querySelector<HTMLElement>(`[data-testid="brief-frame"]`);
+      if (element) {
+        const position = operation.type === "move-frame" ? operation.frameStart : operation.briefStart;
+        element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
+      }
+      if (editorStore.hasActiveTransaction()) {
+        editorStore.rollbackTransaction();
+      }
     }
+    frameDragRef.current = null;
     setInteractionMode("idle");
   }, [cancelNodeGesture, editorStore]);
 
@@ -1884,6 +1980,20 @@ export function CanvasSurface({
 
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;
 
+  const selectedComment = selectedCommentId
+    ? comments.find((entry) => entry.id === selectedCommentId) ?? null
+    : null;
+  const selectedCommentAnchor = selectedComment
+    ? (() => {
+        const frame = frames.find((entry) => entry.id === selectedComment.frameId);
+        if (!frame) return null;
+        return worldToScreen(
+          { x: frame.x + selectedComment.point.x, y: frame.y + selectedComment.point.y },
+          camera,
+        );
+      })()
+    : null;
+
   return (
     <main
       ref={surfaceRef}
@@ -1898,7 +2008,6 @@ export function CanvasSurface({
       onPointerUp={endPointerOperation}
       onPointerCancel={endPointerOperation}
       onLostPointerCapture={handleLostPointerCapture}
-      onWheel={handleWheel}
       onBlur={() => {
         spacePressedRef.current = false;
         setSpacePressed(false);
@@ -1948,7 +2057,7 @@ export function CanvasSurface({
         ))}
         <NodeOverlayLayer
           zoom={camera.zoom}
-          hoveredTarget={hoveredOverlayTarget}
+          hoveredTarget={sidebarHoveredOverlayTarget ?? hoveredOverlayTarget}
           selectedTargets={selectedOverlayTargets}
           interactive={!creationMode}
           guides={alignmentGuides}
@@ -1961,38 +2070,39 @@ export function CanvasSurface({
           const frame = frames.find((entry) => entry.id === comment.frameId);
           if (!frame) return null;
           return (
-            <div key={comment.id}>
-              <button
-                aria-label={comment.body ? `Canvas comment: ${comment.body}` : "Canvas comment: Add a note"}
-                className="canvas-comment-marker"
-                data-canvas-control
-                data-comment-status={comment.status}
-                data-testid="comment-marker"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  selectComment(comment.id);
-                }}
-                onPointerDown={(event) => event.stopPropagation()}
-                style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y }}
-                title={comment.body || "Add a note"}
-                type="button"
-              >
-                <span>{comment.status === "resolved" ? "✓" : "•"}</span>
-              </button>
-              {selectedCommentId === comment.id ? (
-                <CommentPopover
-                  comment={comment}
-                  feedback={commentFeedback}
-                  onClose={() => selectComment(null)}
-                  onDelete={deleteComment}
-                  onSave={updateComment}
-                  style={{ left: frame.x + comment.point.x + 18, top: frame.y + comment.point.y + 18 }}
-                />
-              ) : null}
-            </div>
+            <button
+              key={comment.id}
+              aria-label={comment.body ? `Canvas comment: ${comment.body}` : "Canvas comment: Add a note"}
+              className="canvas-comment-marker"
+              data-canvas-control
+              data-comment-status={comment.status}
+              data-testid="comment-marker"
+              onClick={(event) => {
+                event.stopPropagation();
+                selectComment(comment.id);
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
+              style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y }}
+              title={comment.body || "Add a note"}
+              type="button"
+            >
+              <span>{comment.status === "resolved" ? "✓" : "•"}</span>
+            </button>
           );
         })}
       </div>
+
+      {selectedComment && selectedCommentAnchor ? (
+        <CommentPopover
+          key={selectedComment.id}
+          comment={selectedComment}
+          feedback={commentFeedback}
+          onClose={() => selectComment(null)}
+          onDelete={deleteComment}
+          onSave={updateComment}
+          style={{ left: selectedCommentAnchor.x + 18, top: selectedCommentAnchor.y + 18 }}
+        />
+      ) : null}
 
       {guardIframes ? (
         <div
@@ -2100,6 +2210,9 @@ export function CanvasSurface({
             onToggleNodeLock={toggleNodeLock}
             onToggleNodeHidden={toggleNodeHidden}
             onReorderNode={(nodeId, direction) => editorStore.execute({ type: "node/reorder", nodeId, direction })}
+            onHoverNode={(frameId, nodeId) => setSidebarHoveredNode({ frameId, nodeId })}
+            onHoverNodeEnd={() => setSidebarHoveredNode(null)}
+            hoveredLayerNode={hoveredOverlayTarget ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId } : null}
           />
           <PropertiesPanel
             frames={editorState.frames}

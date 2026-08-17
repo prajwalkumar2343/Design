@@ -1,6 +1,6 @@
 import type { BridgeCommand, SafeInlineStyleProperty } from "../bridge/protocol";
 import type { Point, Rect } from "../canvas/types";
-import { resizeRect, type ResizeHandle } from "./geometry";
+import { resizeRect, unionRects, type ResizeHandle } from "./geometry";
 import type { OverlayNodeTarget } from "./NodeOverlayLayer";
 
 export interface OverlayStyleSnapshot {
@@ -51,7 +51,7 @@ export function parseTransform(
   if (!value || value === "none") return { tx: 0, ty: 0, rotation: 0 };
   const translate = parseTranslate(value);
   const rotation = parseRotations(value);
-  if (!translate && rotation === 0) return null;
+  if (!translate && rotation === 0 && !/rotate\s*\(/i.test(value)) return null;
   return {
     tx: translate?.tx ?? 0,
     ty: translate?.ty ?? 0,
@@ -278,7 +278,29 @@ export function buildRotationChanges(
   snapshots: readonly OverlayStyleSnapshot[],
   rotation: number,
 ): OverlayStyleChange[] {
-  return snapshots.map((snapshot) => createChange(snapshot, snapshot.target.bounds, rotation));
+  if (snapshots.length <= 1) {
+    return snapshots.map((snapshot) => createChange(snapshot, snapshot.target.bounds, rotation));
+  }
+  const group = unionRects(snapshots.map((snapshot) => snapshot.target.bounds));
+  if (!group) return [];
+  const centerX = group.x + group.width / 2;
+  const centerY = group.y + group.height / 2;
+  const radians = (rotation * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return snapshots.map((snapshot) => {
+    const bounds = snapshot.target.bounds;
+    const offsetX = bounds.x + bounds.width / 2 - centerX;
+    const offsetY = bounds.y + bounds.height / 2 - centerY;
+    const nextCenterX = centerX + offsetX * cos - offsetY * sin;
+    const nextCenterY = centerY + offsetX * sin + offsetY * cos;
+    return createChange(snapshot, {
+      x: nextCenterX - bounds.width / 2,
+      y: nextCenterY - bounds.height / 2,
+      width: bounds.width,
+      height: bounds.height,
+    }, rotation);
+  });
 }
 
 export function toInlineStyleCommands(

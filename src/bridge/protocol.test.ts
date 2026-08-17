@@ -158,7 +158,7 @@ describe("iframe bridge protocol", () => {
       ...base,
       command: {
         command: "restore-element",
-        snapshot: { elementId: "x", kind: "rectangle", bounds: { x: 0, y: 0, width: 10, height: 10 }, text: "", alt: "", src: "", points: [], fill: "#fff", stroke: "#000", strokeWidth: 2, editable: true },
+        snapshot: { elementId: "x", kind: "rectangle", bounds: { x: 0, y: 0, width: 10, height: 10 }, text: "", alt: "", src: "", points: [], fill: "#fff", stroke: "#000", strokeWidth: 2, editable: true, style: {} },
       },
     })).not.toBeNull();
   });

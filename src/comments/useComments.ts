@@ -15,6 +15,7 @@ export interface UseCommentsResult extends CommentsState {
   updateComment: (commentId: string, body: string) => boolean;
   toggleCommentResolved: (commentId: string) => void;
   deleteComment: (commentId: string) => void;
+  clearComments: () => void;
 }
 
 export function useComments(editorStore: EditorStore): UseCommentsResult {
@@ -162,6 +163,10 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
     ? state.comments.find((comment) => comment.id === state.selectedCommentId) ?? null
     : null;
 
+  const clearComments = useCallback(() => {
+    applyState(createEmptyCommentsState());
+  }, [applyState]);
+
   return {
     ...state,
     selectedComment,
@@ -170,6 +175,7 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
     updateComment,
     toggleCommentResolved,
     deleteComment,
+    clearComments,
   };
 }
 

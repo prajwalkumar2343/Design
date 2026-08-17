@@ -121,6 +121,7 @@ describe("overlay style commands", () => {
     expect(parseTransform(null)).toEqual({ tx: 0, ty: 0, rotation: 0 });
     expect(parseTransform("none")).toEqual({ tx: 0, ty: 0, rotation: 0 });
     expect(parseTransform("rotate(30deg)")).toEqual({ tx: 0, ty: 0, rotation: 30 });
+    expect(parseTransform("rotate(0deg)")).toEqual({ tx: 0, ty: 0, rotation: 0 });
     expect(parseTransform("translate(24px, 8px)")).toEqual({ tx: 24, ty: 8, rotation: 0 });
     expect(parseTransform("translate(5px, 0px) rotate(30deg)")).toEqual({ tx: 5, ty: 0, rotation: 30 });
     expect(parseTransform("translate(10px 20px) rotate(15deg) rotate(15deg)")).toEqual({ tx: 10, ty: 20, rotation: 30 });
@@ -179,6 +180,22 @@ describe("overlay style commands", () => {
     expect(Number.parseFloat(change.next.width!)).toBeCloseTo(186.6, 1);
     expect(change.next.height).toBeUndefined();
     expect(change.rotation).toBe(30);
+  });
+
+  it("rotates a multi-node selection rigidly around the group center", () => {
+    const left = snapshot("div", { x: 0, y: 0, width: 100, height: 50 });
+    const right = snapshot("div", { x: 200, y: 0, width: 100, height: 50 });
+
+    const changes = buildRotationChanges([left, right], 90);
+
+    expect(changes[0].next).toMatchObject({
+      transform: "translate(100px, -100px) rotate(90deg)",
+    });
+    expect(changes[1].next).toMatchObject({
+      transform: "translate(-100px, 100px) rotate(90deg)",
+    });
+    expect(changes[0].rotation).toBe(90);
+    expect(changes[1].rotation).toBe(90);
   });
 
   it("falls back to appending deltas when a transform cannot be parsed", () => {

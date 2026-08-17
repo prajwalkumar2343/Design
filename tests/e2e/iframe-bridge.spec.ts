@@ -155,6 +155,26 @@ test.describe("sandboxed iframe bridge", () => {
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
   });
 
+  test("finishes a pen stroke drawn on the creation layer with Enter", async ({ page }) => {
+    await page.goto("/?demo=1");
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+    await page.getByTestId("tool-button-pen").click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.3, y: box.y + box.height * 0.3 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 64, start.y + 40, { steps: 4 });
+    await page.mouse.up();
+    await page.keyboard.press("Enter");
+
+    await expect.poll(() => preview.locator('[data-design-tool-kind="path"]').count()).toBe(1);
+    await expect(page.locator("[data-testid^='node-selection-outline-']")).toHaveCount(1);
+  });
+
   test("shows an actionable error when image picking receives a non-image file", async ({ page }) => {
     await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');

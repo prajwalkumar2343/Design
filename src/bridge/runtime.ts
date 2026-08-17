@@ -345,6 +345,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     element.setAttribute("data-design-tool-stroke", stroke);
     element.setAttribute("data-design-tool-stroke-width", String(strokeWidth));
     element.setAttribute("data-design-tool-editable", spec.editable === false ? "false" : "true");
+    if (isRecord(spec.style)) {
+      for (const [property, value] of Object.entries(spec.style)) {
+        if (!SAFE_STYLE_PROPERTIES.has(property) || !isSafeStyleValue(value)) continue;
+        element.style.setProperty(property, value);
+      }
+    }
     parent.appendChild(element);
     return element;
   }
@@ -358,6 +364,11 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     let points;
     try { points = JSON.parse(element.getAttribute("data-design-tool-points") || "[]"); } catch { points = []; }
     if (!Array.isArray(points) || !points.every(isPoint)) points = [];
+    const style = {};
+    for (const property of SAFE_STYLE_PROPERTIES) {
+      const value = element.style.getPropertyValue(property);
+      if (value) style[property] = value.slice(0, MAX_ATTRIBUTE_LENGTH);
+    }
     return {
       elementId: elementId(element),
       kind: element.getAttribute("data-design-tool-kind") || "rectangle",
@@ -370,6 +381,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       stroke: element.getAttribute("data-design-tool-stroke") || "#222222",
       strokeWidth: Number(element.getAttribute("data-design-tool-stroke-width") || 2),
       editable: element.getAttribute("data-design-tool-editable") !== "false",
+      style,
     };
   }
 
@@ -387,6 +399,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       stroke: snapshot.stroke,
       strokeWidth: snapshot.strokeWidth,
       editable: snapshot.editable,
+      style: snapshot.style,
     };
   }
 
@@ -717,6 +730,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         bounds: { ...sourceSnapshot.bounds, x: sourceSnapshot.bounds.x + 16, y: sourceSnapshot.bounds.y + 16 },
       };
       const element = createElementFromSpec(snapshotValue);
+      if (source.parentElement) source.parentElement.insertBefore(element, source.nextSibling);
       const target = describe(element);
       if (!target) throw { code: "duplicate-failed", message: "The duplicate could not be inspected" };
       return {

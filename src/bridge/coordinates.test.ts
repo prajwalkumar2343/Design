@@ -8,19 +8,19 @@ const context = {
 };
 
 describe("iframe coordinate mapping", () => {
-  it("maps child viewport points through parent iframe bounds and canvas zoom", () => {
+  it("maps child viewport points through scaled parent iframe bounds and canvas zoom", () => {
     expect(mapIframePointToCanvas({ x: 20, y: 30 }, context)).toEqual({
-      screen: { x: 220, y: 230 },
-      world: { x: 160, y: 185 },
+      screen: { x: 240, y: 260 },
+      world: { x: 170, y: 200 },
     });
   });
 
   it("maps inspected child bounds into world-space rectangles", () => {
     expect(mapIframeRectToCanvas({ x: 20, y: 30, width: 100, height: 40 }, context)).toEqual({
-      x: 160,
-      y: 185,
-      width: 50,
-      height: 20,
+      x: 170,
+      y: 200,
+      width: 100,
+      height: 40,
     });
   });
 });

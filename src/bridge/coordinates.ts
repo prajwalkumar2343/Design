@@ -17,16 +17,17 @@ export interface MappedIframePoint {
 
 /**
  * Maps a point reported by the sandboxed document's viewport into both parent
- * coordinate spaces. `iframeRect` is the parent DOMRect, while `localPoint`
- * is the child viewport point from the bridge runtime.
+ * coordinate spaces. `iframeRect` is the parent DOMRect (already scaled by the
+ * canvas camera transform), while `localPoint` is the child viewport point from
+ * the bridge runtime, which lives in the iframe's unscaled CSS pixel space.
  */
 export function mapIframePointToCanvas(
   localPoint: BridgePoint,
   context: IframeCoordinateContext,
 ): MappedIframePoint {
   const screen = {
-    x: context.iframeRect.x - context.surfaceRect.x + localPoint.x,
-    y: context.iframeRect.y - context.surfaceRect.y + localPoint.y,
+    x: context.iframeRect.x - context.surfaceRect.x + localPoint.x * context.camera.zoom,
+    y: context.iframeRect.y - context.surfaceRect.y + localPoint.y * context.camera.zoom,
   };
   return { screen, world: screenToWorld(screen, context.camera) };
 }
@@ -39,8 +40,8 @@ export function mapIframeRectToCanvas(
   return {
     x: topLeft.world.x,
     y: topLeft.world.y,
-    width: localRect.width / context.camera.zoom,
-    height: localRect.height / context.camera.zoom,
+    width: localRect.width,
+    height: localRect.height,
   };
 }
 

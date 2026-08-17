@@ -10,8 +10,8 @@ async function iframePointer(preview: FrameLocator, type: "pointerdown" | "point
   });
 }
 
-async function iframeKey(preview: FrameLocator, key: string) {
-  await preview.locator("body").dispatchEvent("keydown", { bubbles: true, key });
+async function iframeKey(preview: FrameLocator, key: string, modifiers: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; altKey?: boolean } = {}) {
+  await preview.locator("body").dispatchEvent("keydown", { bubbles: true, key, ...modifiers });
 }
 
 test.describe("sandboxed iframe bridge", () => {
@@ -126,6 +126,34 @@ test.describe("sandboxed iframe bridge", () => {
     await expect.poll(() => preview.locator('[data-design-tool-kind="image"]').count()).toBe(0);
     await page.getByTestId("redo-button").click();
     await expect.poll(() => preview.locator('[data-design-tool-kind="image"]').count()).toBe(1);
+  });
+
+  test("undoes and redoes an in-frame edit with Cmd/Ctrl+Z from inside the wireframe", async ({ page }) => {
+    await page.goto("/?demo=1");
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const iframe = frame.locator("iframe");
+    const preview = iframe.contentFrame();
+    const box = await iframe.boundingBox();
+    if (!box || !preview) throw new Error("Live desktop frame is unavailable");
+    await expect(frame).toHaveAttribute("data-bridge-status", "ready");
+
+    await page.getByTestId("tool-button-rectangle").click();
+    await iframePointer(preview, "pointerdown", { x: 520, y: 180 });
+    await iframePointer(preview, "pointermove", { x: 820, y: 315 });
+    await iframePointer(preview, "pointerup", { x: 820, y: 315 });
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
+
+    await iframeKey(preview, "z", { metaKey: true });
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(0);
+
+    await iframeKey(preview, "z", { metaKey: true, shiftKey: true });
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
+
+    await iframeKey(preview, "z", { ctrlKey: true });
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(0);
+
+    await iframeKey(preview, "y", { ctrlKey: true });
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
   });
 
   test("creates and selects a shape through ordinary canvas pointer interaction", async ({ page }) => {

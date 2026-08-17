@@ -546,6 +546,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       ...(typeof event.pointerId === "number" ? { pointerId: event.pointerId } : {}),
       shiftKey: Boolean(event.shiftKey),
       altKey: Boolean(event.altKey),
+      metaKey: Boolean(event.metaKey),
+      ctrlKey: Boolean(event.ctrlKey),
     });
   }
 

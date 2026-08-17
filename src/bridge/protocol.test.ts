@@ -59,6 +59,27 @@ describe("iframe bridge protocol", () => {
     expect(parseBridgeMessage(command)).toEqual(command);
   });
 
+  it("accepts keydown events carrying command modifiers and rejects non-boolean modifier values", () => {
+    const base = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "event",
+      event: "keydown",
+      target,
+      point: { x: 25, y: 35 },
+      key: "z",
+      shiftKey: false,
+      altKey: false,
+    };
+
+    expect(parseBridgeMessage({ ...base, metaKey: true })).toEqual({ ...base, metaKey: true });
+    expect(parseBridgeMessage({ ...base, ctrlKey: true })).toEqual({ ...base, ctrlKey: true });
+    expect(parseBridgeMessage({ ...base, metaKey: true, ctrlKey: true })).toEqual({ ...base, metaKey: true, ctrlKey: true });
+    expect(parseBridgeMessage({ ...base, metaKey: "yes" })).toBeNull();
+    expect(parseBridgeMessage({ ...base, ctrlKey: 1 })).toBeNull();
+  });
+
   it("rejects malformed command shapes while leaving value policy to the sandbox runtime", () => {
     const base = {
       protocol: BRIDGE_PROTOCOL,

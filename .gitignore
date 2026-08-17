@@ -4,3 +4,10 @@ playwright-report
 test-results
 *.tsbuildinfo
 .DS_Store
+
+# Local LLM credentials (see .env.example) — never commit real keys.
+.env
+.env.local
+.env.*.local
+!.env.example
+!.env.development

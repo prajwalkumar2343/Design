@@ -32,6 +32,10 @@ describe("editor keyboard shortcuts", () => {
 
   it("resolves undo and redo across platform modifier conventions", () => {
     expect(resolveEditorShortcut({ key: "z", metaKey: true })).toEqual({ type: "undo" });
+    expect(resolveEditorShortcut({ key: "z", ctrlKey: true })).toEqual({ type: "undo" });
+    expect(resolveEditorShortcut({ key: "z", metaKey: true, shiftKey: true })).toEqual({
+      type: "redo",
+    });
     expect(resolveEditorShortcut({ key: "z", ctrlKey: true, shiftKey: true })).toEqual({
       type: "redo",
     });

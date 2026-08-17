@@ -142,4 +142,38 @@ test.describe("contextual sidebars", () => {
     await page.keyboard.press("Control+Shift+z");
     await expect.poll(() => heading.evaluate((element) => element.style.width)).toBe("180px");
   });
+
+  test("highlights the matching element on the canvas when hovering a layer row", async ({ page }) => {
+    await openEditor(page);
+    const heading = page.locator('[data-frame-id="desktop"] iframe').contentFrame().getByRole("heading", { name: "Make room for better ideas." });
+    await expect(heading).toBeVisible();
+    const headingBox = await heading.boundingBox();
+    if (!headingBox) throw new Error("Heading has no box");
+
+    await layerButton(page, "Make room for better ideas.").hover();
+
+    const outline = page.getByTestId("node-hover-outline");
+    await expect(outline).toBeVisible();
+    const outlineBox = await outline.boundingBox();
+    if (!outlineBox) throw new Error("Hover outline has no box");
+
+    const centerX = headingBox.x + headingBox.width / 2;
+    const centerY = headingBox.y + headingBox.height / 2;
+    expect(centerX).toBeGreaterThan(outlineBox.x - 2);
+    expect(centerX).toBeLessThan(outlineBox.x + outlineBox.width + 2);
+    expect(centerY).toBeGreaterThan(outlineBox.y - 2);
+    expect(centerY).toBeLessThan(outlineBox.y + outlineBox.height + 2);
+
+    await page.locator(".sidebar-search").hover();
+    await expect(outline).toHaveCount(0);
+  });
+
+  test("highlights the matching layer row when hovering an element on the canvas", async ({ page }) => {
+    await openEditor(page);
+    const heading = page.locator('[data-frame-id="desktop"] iframe').contentFrame().getByRole("heading", { name: "Make room for better ideas." });
+    await heading.hover();
+
+    const headingRow = layerButton(page, "Make room for better ideas.").locator("xpath=..");
+    await expect(headingRow).toHaveClass(/is-hovered/);
+  });
 });

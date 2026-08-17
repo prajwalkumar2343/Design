@@ -1,7 +1,9 @@
 import {
   ArrowUpRight,
-  Circle,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
   Frame,
   Hand,
   Image,
@@ -24,7 +26,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { isToolAvailable, normalizeActiveTool, SHAPE_VARIANTS, TOOL_REGISTRY, type ShapeVariantId, type ToolId } from "../editor/tools";
 import type { ActiveTool } from "../editor/model";
-import { FRAME_PRESETS, type FramePreset } from "../frame/presets";
+import { FRAME_PRESET_SECTIONS, type DeviceCategory, type FramePreset } from "../frame/presets";
 
 interface CanvasDockProps {
   zoom: number;
@@ -46,7 +48,7 @@ interface CanvasDockProps {
   onRedo: () => void;
 }
 
-const presetIcons = {
+const presetIcons: Record<FramePreset["category"], typeof Smartphone> = {
   desktop: Monitor,
   tablet: Tablet,
   mobile: Smartphone,
@@ -86,7 +88,14 @@ export function CanvasDock({
   const menuRef = useRef<HTMLDivElement>(null);
   const shapeMenuRef = useRef<HTMLDivElement>(null);
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<DeviceCategory | null>(null);
   const activeToolId = normalizeActiveTool(activeTool);
+
+  useEffect(() => {
+    if (!isFrameMenuOpen) {
+      setActiveCategory(null);
+    }
+  }, [isFrameMenuOpen]);
 
   useEffect(() => {
     if (!isFrameMenuOpen && !isShapeMenuOpen) {
@@ -106,7 +115,7 @@ export function CanvasDock({
   return (
     <div className="canvas-dock" data-canvas-control aria-label="Canvas controls">
       <div className="tool-group" role="toolbar" aria-label="Design tools">
-        {TOOL_REGISTRY.map((tool) => {
+        {TOOL_REGISTRY.filter((tool) => tool.id !== "frame").map((tool) => {
           const Icon = toolIcons[tool.icon];
           const isActive =
             tool.id === "hand"
@@ -177,50 +186,103 @@ export function CanvasDock({
 
       <div className="add-frame-control" ref={menuRef}>
         {isFrameMenuOpen ? (
-          <div className="frame-menu" role="menu" aria-label="Frame presets">
-            <div className="frame-menu-heading">
-              <div>
-                <strong>New frame</strong>
-                <span>Choose a responsive viewport</span>
-              </div>
-              <kbd>F</kbd>
-            </div>
-            {FRAME_PRESETS.map((preset) => {
-              const Icon = presetIcons[preset.id];
+          activeCategory
+            ? (() => {
+              const section = FRAME_PRESET_SECTIONS.find((candidate) => candidate.category === activeCategory);
+              if (!section) return null;
+              const SectionIcon = presetIcons[section.category];
+              const viewportCount = section.groups.reduce((count, group) => count + group.items.length, 0);
               return (
-                <button
-                  className="frame-preset"
-                  data-testid={`add-${preset.id}-frame`}
-                  key={preset.id}
-                  onClick={() => {
-                    onAddFrame(preset);
-                    onCloseFrameMenu();
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  <span className="preset-icon"><Icon size={16} strokeWidth={1.7} /></span>
-                  <span>
-                    <strong>{preset.label}</strong>
-                    <small>{preset.detail}</small>
-                  </span>
-                </button>
+                <div className="frame-menu" role="menu" aria-label="Frame presets">
+                  <button
+                    className="frame-menu-back"
+                    data-testid="frame-menu-back"
+                    onClick={() => setActiveCategory(null)}
+                    role="menuitem"
+                    type="button"
+                  >
+                    <ChevronLeft size={13} strokeWidth={1.8} aria-hidden="true" />
+                    All devices
+                  </button>
+                  <div className="frame-menu-category-title">
+                    <SectionIcon size={13} strokeWidth={1.8} aria-hidden="true" />
+                    <span>{section.title}</span>
+                    <small>{viewportCount} viewports</small>
+                  </div>
+                  {section.groups.map((group) => (
+                    <div key={group.title}>
+                      <div className="frame-menu-group-label">{group.title}</div>
+                      {group.items.map((preset) => {
+                        const Icon = presetIcons[preset.category];
+                        return (
+                          <button
+                            className="frame-preset"
+                            data-testid={`add-${preset.id}-frame`}
+                            key={preset.id}
+                            onClick={() => {
+                              onAddFrame(preset);
+                              onCloseFrameMenu();
+                            }}
+                            role="menuitem"
+                            type="button"
+                          >
+                            <span className="preset-icon"><Icon size={16} strokeWidth={1.7} /></span>
+                            <span>
+                              <strong>{preset.label}</strong>
+                              <small>{preset.detail}</small>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
               );
-            })}
-          </div>
+            })()
+            : (
+              <div className="frame-menu" role="menu" aria-label="Frame presets">
+                <div className="frame-menu-heading">
+                  <div>
+                    <strong>New frame</strong>
+                    <span>Choose a device</span>
+                  </div>
+                  <kbd>F</kbd>
+                </div>
+                {FRAME_PRESET_SECTIONS.map((section) => {
+                  const SectionIcon = presetIcons[section.category];
+                  return (
+                    <button
+                      className="frame-menu-category"
+                      data-testid={`frame-category-${section.category}`}
+                      key={section.category}
+                      onClick={() => setActiveCategory(section.category)}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <span className="preset-icon"><SectionIcon size={16} strokeWidth={1.7} /></span>
+                      <span>
+                        <strong>{section.title}</strong>
+                        <small>{section.groups.map((group) => group.title).join(" · ")}</small>
+                      </span>
+                      <ChevronRight size={14} strokeWidth={1.8} aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            )
         ) : null}
 
         <button
-          className="dock-primary"
-          data-testid="add-frame-button"
+          aria-label="Add frame"
           aria-expanded={isFrameMenuOpen}
           aria-haspopup="menu"
+          className={`dock-icon${isFrameMenuOpen ? " is-active" : ""}`}
+          data-testid="add-frame-button"
           onClick={onToggleFrameMenu}
           type="button"
         >
           <Frame size={15} strokeWidth={1.8} aria-hidden="true" />
-          Add frame
-          <ChevronDown size={13} strokeWidth={1.8} aria-hidden="true" />
+          <ChevronDown size={10} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
 

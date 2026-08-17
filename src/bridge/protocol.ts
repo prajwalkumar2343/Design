@@ -293,6 +293,8 @@ export type BridgeEventMessage = BridgeEnvelopeBase & {
   pointerId?: number;
   shiftKey?: boolean;
   altKey?: boolean;
+  metaKey?: boolean;
+  ctrlKey?: boolean;
 };
 
 export interface BridgeError {
@@ -625,7 +627,9 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
         (record.buttons === undefined || (typeof record.buttons === "number" && Number.isInteger(record.buttons) && record.buttons >= 0 && record.buttons <= 31)) &&
         (record.pointerId === undefined || (typeof record.pointerId === "number" && Number.isInteger(record.pointerId) && record.pointerId >= 0)) &&
         (record.shiftKey === undefined || typeof record.shiftKey === "boolean") &&
-        (record.altKey === undefined || typeof record.altKey === "boolean")
+        (record.altKey === undefined || typeof record.altKey === "boolean") &&
+        (record.metaKey === undefined || typeof record.metaKey === "boolean") &&
+        (record.ctrlKey === undefined || typeof record.ctrlKey === "boolean")
       )
         ? (value as BridgeEventMessage)
         : null;

@@ -11,12 +11,24 @@ export interface CommentPopoverProps {
 }
 
 export function CommentPopover({ comment, feedback, style, onClose, onSave, onDelete }: CommentPopoverProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const finalizedRef = useRef(false);
 
   useEffect(() => {
     textareaRef.current?.focus();
   }, [comment.id]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && root.contains(event.target)) return;
+      finalize(textareaRef.current?.value ?? "");
+    };
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, []);
 
   const finalize = (nextBody: string) => {
     if (finalizedRef.current) return;
@@ -41,6 +53,7 @@ export function CommentPopover({ comment, feedback, style, onClose, onSave, onDe
 
   return (
     <div
+      ref={rootRef}
       aria-label="Comment"
       className="canvas-comment-popover"
       data-canvas-control
@@ -61,6 +74,12 @@ export function CommentPopover({ comment, feedback, style, onClose, onSave, onDe
         ref={textareaRef}
         rows={5}
       />
+      <div className="comment-hint" aria-hidden="true">
+        <span>Click away to save</span>
+        <span className="comment-hint-dot" />
+        <kbd>esc</kbd>
+        <span>to dismiss</span>
+      </div>
       {feedback ? <div className="comment-feedback" data-testid="comment-feedback" role="status">{feedback}</div> : null}
     </div>
   );

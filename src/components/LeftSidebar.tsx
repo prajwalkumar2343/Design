@@ -40,6 +40,9 @@ export interface LeftSidebarProps {
   onToggleNodeLock: (nodeId: string) => void;
   onToggleNodeHidden: (frameId: string, nodeId: string) => void;
   onReorderNode: (nodeId: string, direction: "up" | "down") => void;
+  onHoverNode?: (frameId: string, nodeId: string) => void;
+  onHoverNodeEnd?: () => void;
+  hoveredLayerNode?: { frameId: string; nodeId: string } | null;
 }
 
 function EditableLabel({
@@ -105,6 +108,9 @@ function LayerRow({
   onToggleNodeLock,
   onToggleNodeHidden,
   onReorderNode,
+  onHoverNode,
+  onHoverNodeEnd,
+  hoveredNodeId,
 }: {
   frameId: string;
   tree: LayerTreeNode;
@@ -119,6 +125,9 @@ function LayerRow({
   onToggleNodeLock: (nodeId: string) => void;
   onToggleNodeHidden: (frameId: string, nodeId: string) => void;
   onReorderNode: (nodeId: string, direction: "up" | "down") => void;
+  onHoverNode?: (frameId: string, nodeId: string) => void;
+  onHoverNodeEnd?: () => void;
+  hoveredNodeId?: string | null;
 }) {
   const target = tree.target;
   const node = nodes[target.elementId];
@@ -138,9 +147,14 @@ function LayerRow({
     setEditing(false);
   };
   return (
-    <div className="layer-tree-node" data-testid={`layer-row-${frameId}-${target.elementId}`}>
+    <div
+      className="layer-tree-node"
+      data-testid={`layer-row-${frameId}-${target.elementId}`}
+      onPointerEnter={() => onHoverNode?.(frameId, target.elementId)}
+      onPointerLeave={() => onHoverNodeEnd?.()}
+    >
       <div
-        className={`layer-row${selected.has(target.elementId) ? " is-selected" : ""}${isHidden ? " is-hidden" : ""}`}
+        className={`layer-row${selected.has(target.elementId) ? " is-selected" : ""}${hoveredNodeId === target.elementId ? " is-hovered" : ""}${isHidden ? " is-hidden" : ""}`}
         style={{ paddingLeft: 8 + depth * 15 }}
       >
         <button
@@ -207,6 +221,9 @@ function LayerRow({
           onToggleNodeLock={onToggleNodeLock}
           onToggleNodeHidden={onToggleNodeHidden}
           onReorderNode={onReorderNode}
+          onHoverNode={onHoverNode}
+          onHoverNodeEnd={onHoverNodeEnd}
+          hoveredNodeId={hoveredNodeId}
         />
       )) : null}
     </div>
@@ -242,8 +259,8 @@ function PagesPanel({ pages, activePageId, frames, onCreatePage, onRenamePage, o
 }
 
 function LayersPanel({
-  frames, hierarchies, nodes, selection, onSelectNode, onRenameNode, onToggleNodeLock, onToggleNodeHidden, onReorderNode,
-}: Pick<LeftSidebarProps, "frames" | "hierarchies" | "nodes" | "selection" | "onSelectNode" | "onRenameNode" | "onToggleNodeLock" | "onToggleNodeHidden" | "onReorderNode">) {
+  frames, hierarchies, nodes, selection, onSelectNode, onRenameNode, onToggleNodeLock, onToggleNodeHidden, onReorderNode, onHoverNode, onHoverNodeEnd, hoveredLayerNode,
+}: Pick<LeftSidebarProps, "frames" | "hierarchies" | "nodes" | "selection" | "onSelectNode" | "onRenameNode" | "onToggleNodeLock" | "onToggleNodeHidden" | "onReorderNode" | "onHoverNode" | "onHoverNodeEnd" | "hoveredLayerNode">) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const expandedFrameIdsRef = useRef<Set<string>>(new Set());
@@ -275,7 +292,7 @@ function LayersPanel({
             return (
               <div className="layer-frame-group" key={frame.id}>
                 <div className="layer-frame-heading"><SquareStack size={13} /><span>{frame.name}</span><small>{snapshot.nodes.length}</small></div>
-                {tree.length === 0 ? <div className="layer-filter-empty">No matching layers</div> : tree.map((item) => <LayerRow key={item.target.elementId} frameId={frame.id} tree={item} depth={0} expanded={expanded} selected={selected} nodes={nodes} snapshot={snapshot} onToggleExpanded={(id) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onSelectNode={onSelectNode} onRenameNode={onRenameNode} onToggleNodeLock={onToggleNodeLock} onToggleNodeHidden={onToggleNodeHidden} onReorderNode={onReorderNode} />)}
+                {tree.length === 0 ? <div className="layer-filter-empty">No matching layers</div> : tree.map((item) => <LayerRow key={item.target.elementId} frameId={frame.id} tree={item} depth={0} expanded={expanded} selected={selected} nodes={nodes} snapshot={snapshot} hoveredNodeId={hoveredLayerNode?.frameId === frame.id ? hoveredLayerNode.nodeId : null} onToggleExpanded={(id) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onSelectNode={onSelectNode} onRenameNode={onRenameNode} onToggleNodeLock={onToggleNodeLock} onToggleNodeHidden={onToggleNodeHidden} onReorderNode={onReorderNode} onHoverNode={onHoverNode} onHoverNodeEnd={onHoverNodeEnd} />)}
               </div>
             );
           })}

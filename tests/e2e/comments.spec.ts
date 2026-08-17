@@ -53,4 +53,27 @@ test.describe("canvas comments", () => {
     await expect(page.getByTestId("comment-popover")).toHaveCount(0);
     await expect(page.getByTestId("comment-marker")).toHaveCount(0);
   });
+
+  test("opens a fresh empty box for a new comment and dismisses it when empty", async ({ page }) => {
+    await openEditor(page);
+    const preview = page.locator('[data-frame-id="desktop"] iframe').contentFrame();
+    const heading = preview.getByRole("heading", { name: "Make room for better ideas." });
+
+    await page.getByTestId("tool-button-comment").click();
+    await heading.click({ position: { x: 200, y: 30 } });
+    await page.getByTestId("comment-input").fill("First comment");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
+    await expect(page.getByTestId("comment-marker")).toHaveCount(1);
+
+    await page.getByTestId("tool-button-comment").click();
+    await heading.click({ position: { x: 400, y: 50 } });
+    await expect(page.getByTestId("comment-marker")).toHaveCount(2);
+    await expect(page.getByTestId("comment-input")).toBeFocused();
+    await expect(page.getByTestId("comment-input")).toHaveValue("");
+
+    await page.getByTestId("canvas-surface").click({ position: { x: 30, y: 40 } });
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
+    await expect(page.getByTestId("comment-marker")).toHaveCount(1);
+  });
 });

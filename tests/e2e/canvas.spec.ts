@@ -107,6 +107,27 @@ test.describe("infinite canvas infrastructure", () => {
     await expect.poll(() => worldTransform(page)).not.toBe(before);
   });
 
+  test("horizontal wheel gestures pan the canvas instead of zooming", async ({ page }) => {
+    await openCanvas(page);
+
+    const { point } = await findBackgroundPoint(page);
+    await page.mouse.move(point.x, point.y);
+
+    const readTransform = () => page.locator(worldSelector).evaluate((element) => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+      return { scale: matrix.a, tx: matrix.e, ty: matrix.f };
+    });
+
+    const before = await readTransform();
+    await page.mouse.wheel(160, 0);
+    await page.mouse.wheel(160, 0);
+    const after = await readTransform();
+
+    expect(after.scale).toBe(before.scale);
+    expect(after.tx).not.toBe(before.tx);
+    expect(after.ty).toBe(before.ty);
+  });
+
   test("dragging the canvas background updates the world transform", async ({ page }) => {
     await openCanvas(page);
 
@@ -144,6 +165,7 @@ test.describe("infinite canvas infrastructure", () => {
     const beforeCount = await frames.count();
     await page.getByTestId("add-frame-button").click();
     await expect(page.getByRole("menu", { name: "Frame presets" })).toBeVisible();
+    await page.getByTestId("frame-category-mobile").click();
     await page.getByTestId("add-mobile-frame").click();
 
     await expect(frames).toHaveCount(beforeCount + 1);
@@ -228,7 +250,6 @@ test.describe("infinite canvas infrastructure", () => {
 
     const selectTool = page.getByTestId("tool-button-select");
     const handTool = page.getByTestId("tool-button-hand");
-    const frameTool = page.getByTestId("tool-button-frame");
 
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("tool-button-rectangle")).toBeEnabled();
@@ -244,8 +265,8 @@ test.describe("infinite canvas infrastructure", () => {
     await page.keyboard.up(" ");
 
     await page.keyboard.press("f");
-    await expect(frameTool).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("menu", { name: "Frame presets" })).toBeVisible();
+    await expect(page.getByTestId("add-frame-button")).toHaveAttribute("aria-expanded", "true");
 
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu", { name: "Frame presets" })).toBeHidden();
@@ -287,6 +308,58 @@ test.describe("infinite canvas infrastructure", () => {
     await expect.poll(() =>
       frame.evaluate((element) => getComputedStyle(element).transform),
     ).toBe(after);
+  });
+
+  test("keeps the dragged frame tracking the pointer without snapping back to its origin", async ({ page }) => {
+    await openCanvas(page);
+
+    const frame = page.locator('[data-frame-id="tablet"]');
+    const handle = frame.getByRole("button", { name: /Move Tablet/ });
+    const box = await handle.boundingBox();
+    if (!box) {
+      throw new Error("Frame move handle has no box");
+    }
+    const start = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+    await page.evaluate(() => {
+      (window as Record<string, unknown>).__frameDragSamples = [];
+      const sample = () => {
+        const element = document.querySelector('[data-frame-id="tablet"]');
+        const rect = element?.getBoundingClientRect();
+        if (rect) {
+          (window as Record<string, unknown>).__frameDragSamples = [
+            ...((window as Record<string, unknown>).__frameDragSamples as unknown[]),
+            { x: rect.x, y: rect.y },
+          ];
+        }
+        requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+    });
+
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 10; step += 1) {
+      await page.mouse.move(start.x + step * 14, start.y + step * 9, { steps: 2 });
+    }
+    await page.mouse.up();
+
+    const samples = await page.evaluate(() =>
+      (window as Record<string, unknown>).__frameDragSamples as Array<{ x: number; y: number }>,
+    );
+    const originX = samples[0]?.x ?? 0;
+    const finalX = samples.at(-1)?.x ?? 0;
+    expect(finalX).toBeGreaterThan(originX + 60);
+
+    let furthestX = -Infinity;
+    for (const sample of samples) {
+      if (sample.x > furthestX) {
+        furthestX = sample.x;
+        continue;
+      }
+      const snapBack = furthestX - sample.x;
+      expect(snapBack).toBeLessThan(14);
+    }
   });
 
   test("keeps essential canvas controls usable on a mobile browser", async ({ page }) => {

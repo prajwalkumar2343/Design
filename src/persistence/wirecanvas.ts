@@ -418,7 +418,7 @@ function readSelection(value: unknown, path: string): SelectionState {
 }
 
 function readActiveTool(value: unknown, path: string): ActiveTool {
-  const tools = ["select", "hand", "frame", "rectangle", "text", "image", "pen", "comment", "eyedropper", "pan"];
+  const tools = ["select", "hand", "frame", "rectangle", "text", "image", "comment", "pan"];
   if (typeof value !== "string" || !tools.includes(value)) fail("invalid-field", path, "has an unknown active tool");
   return value as ActiveTool;
 }

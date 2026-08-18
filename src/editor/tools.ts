@@ -5,9 +5,7 @@ export type ToolId =
   | "rectangle"
   | "text"
   | "image"
-  | "pen"
-  | "comment"
-  | "eyedropper";
+  | "comment";
 
 export type ToolIconName =
   | "mouse-pointer-2"
@@ -16,9 +14,7 @@ export type ToolIconName =
   | "square"
   | "type"
   | "image"
-  | "pen-tool"
-  | "message-circle"
-  | "pipette";
+  | "message-circle";
 
 export type ToolAvailability = "enabled" | "planned";
 
@@ -111,30 +107,11 @@ export const TOOL_REGISTRY: readonly ToolDefinition[] = [
     pointerBehavior: "creation",
   },
   {
-    id: "pen",
-    label: "Pen",
-    description: "Draw a vector path",
-    shortcut: "P",
-    icon: "pen-tool",
-    availability: "enabled",
-    pointerBehavior: "creation",
-  },
-  {
     id: "comment",
     label: "Comment",
     description: "Add a comment",
     shortcut: "C",
     icon: "message-circle",
-    availability: "enabled",
-    pointerBehavior: "creation",
-  },
-  {
-    id: "eyedropper",
-    label: "Eyedropper",
-    description: "Pick a color",
-    shortcut: "",
-    
-    icon: "pipette",
     availability: "enabled",
     pointerBehavior: "creation",
   },

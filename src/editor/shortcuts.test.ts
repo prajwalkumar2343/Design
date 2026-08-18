@@ -24,7 +24,6 @@ describe("editor keyboard shortcuts", () => {
   it("activates the core creation tools and reserves I for images", () => {
     expect(resolveEditorShortcut({ key: "r" })).toMatchObject({ type: "activate-tool", tool: "rectangle" });
     expect(resolveEditorShortcut({ key: "t" })).toMatchObject({ type: "activate-tool", tool: "text" });
-    expect(resolveEditorShortcut({ key: "p" })).toMatchObject({ type: "activate-tool", tool: "pen" });
     expect(resolveEditorShortcut({ key: "c" })).toMatchObject({ type: "activate-tool", tool: "comment" });
     expect(resolveEditorShortcut({ key: "i" })).toMatchObject({ type: "activate-tool", tool: "image" });
     expect(resolveEditorShortcut({ key: "i", shiftKey: true })).toBeNull();

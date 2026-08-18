@@ -240,6 +240,12 @@ button:focus-visible,
   touch-action: none;
 }
 
+.shape-preview {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .canvas-input-shield {
   position: absolute;
   inset: 0;
@@ -508,32 +514,6 @@ button:focus-visible,
   background: rgba(93, 92, 226, 0.08);
   cursor: pointer;
   font-size: 10px;
-}
-
-.eyedropper-readout {
-  position: absolute;
-  right: 22px;
-  bottom: 22px;
-  z-index: 75;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  color: var(--ink-soft);
-  background: rgba(250, 250, 248, 0.96);
-  box-shadow: var(--shadow-control);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  pointer-events: none;
-}
-
-.eyedropper-swatch {
-  width: 14px;
-  height: 14px;
-  border: 1px solid rgba(20, 20, 18, 0.18);
-  border-radius: 4px;
 }
 
 .left-sidebar,
@@ -1290,6 +1270,42 @@ kbd {
   height: 22px;
   margin: 0 2px;
   background: var(--line-strong);
+}
+
+.shape-radius-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 9px;
+  border-radius: 9px;
+  color: var(--ink-soft);
+  background: transparent;
+}
+
+.shape-radius-control:hover {
+  background: rgba(20, 20, 18, 0.06);
+}
+
+.shape-radius-label {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.shape-radius-control input[type="range"] {
+  width: 92px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--selection);
+  cursor: pointer;
+}
+
+.shape-radius-value {
+  min-width: 20px;
+  color: var(--ink);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .zoom-control {

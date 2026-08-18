@@ -93,22 +93,10 @@ test.describe("sandboxed iframe bridge", () => {
     await textLayer.fill("Bridge text");
     await expect(textLayer).toHaveText("Bridge text");
 
-    await page.getByTestId("tool-button-pen").click();
-    await iframePointer(preview, "pointerdown", { x: 560, y: 410 });
-    await iframePointer(preview, "pointerup", { x: 560, y: 410 });
-    await iframePointer(preview, "pointerdown", { x: 720, y: 460 });
-    await iframePointer(preview, "pointerup", { x: 720, y: 460 });
-    await iframeKey(preview, "Enter");
-    await expect.poll(() => preview.locator('[data-design-tool-kind="path"]').count()).toBe(1);
-
     await page.getByTestId("tool-button-comment").click();
     await iframePointer(preview, "pointerdown", { x: 1080, y: 400 });
     await iframePointer(preview, "pointerup", { x: 1080, y: 400 });
     await expect(page.getByTestId("comment-marker")).toHaveCount(1);
-
-    await page.getByTestId("tool-button-eyedropper").click();
-    await preview.getByRole("heading", { name: "Make room for better ideas." }).hover();
-    await expect(page.getByTestId("eyedropper-readout")).toBeVisible();
 
     await page.getByTestId("tool-button-image").click();
     await expect(page.getByTestId("tool-button-image")).toHaveAttribute("aria-pressed", "true");
@@ -183,24 +171,39 @@ test.describe("sandboxed iframe bridge", () => {
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
   });
 
-  test("finishes a pen stroke drawn on the creation layer with Enter", async ({ page }) => {
+  test("deletes a created shape with Delete after selecting it by clicking its interior", async ({ page }) => {
     await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
-    await page.getByTestId("tool-button-pen").click();
+    if (!preview) throw new Error("The live desktop frame is unavailable");
+
+    await page.getByTestId("tool-button-rectangle").click();
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
-    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+    if (!box) throw new Error("The active frame creation layer is unavailable");
 
-    const start = { x: box.x + box.width * 0.3, y: box.y + box.height * 0.3 };
-    await page.mouse.move(start.x, start.y);
-    await page.mouse.down();
-    await page.mouse.move(start.x + 64, start.y + 40, { steps: 4 });
-    await page.mouse.up();
-    await page.keyboard.press("Enter");
+    const drawAt = async (offsetX: number) => {
+      const start = { x: box.x + box.width * 0.3 + offsetX, y: box.y + box.height * 0.3 };
+      await page.mouse.move(start.x, start.y);
+      await page.mouse.down();
+      await page.mouse.move(start.x + 120, start.y + 80, { steps: 4 });
+      await page.mouse.up();
+    };
 
-    await expect.poll(() => preview.locator('[data-design-tool-kind="path"]').count()).toBe(1);
+    await drawAt(0);
+    await page.getByTestId("tool-button-rectangle").click();
+    await drawAt(200);
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(2);
+
+    await page.keyboard.press("v");
+    const first = preview.locator('[data-design-tool-kind="rectangle"]').first();
+    const firstBox = await first.boundingBox();
+    if (!firstBox) throw new Error("The first rectangle is unavailable");
+    await page.mouse.click(firstBox.x + firstBox.width / 2, firstBox.y + firstBox.height / 2);
     await expect(page.locator("[data-testid^='node-selection-outline-']")).toHaveCount(1);
+
+    await page.keyboard.press("Delete");
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
   });
 
   test("shows an actionable error when image picking receives a non-image file", async ({ page }) => {

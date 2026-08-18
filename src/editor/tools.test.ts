@@ -16,13 +16,11 @@ describe("editor tool registry", () => {
       "rectangle",
       "text",
       "image",
-      "pen",
       "comment",
-      "eyedropper",
     ]);
   });
 
-  it("enables the registered creation tools and keeps the eyedropper menu-only", () => {
+  it("enables the registered creation tools", () => {
     expect(TOOL_REGISTRY.filter(isToolAvailable).map((tool) => tool.id)).toEqual([
       "select",
       "hand",
@@ -30,18 +28,14 @@ describe("editor tool registry", () => {
       "rectangle",
       "text",
       "image",
-      "pen",
       "comment",
-      "eyedropper",
     ]);
-    expect(TOOL_REGISTRY.find((tool) => tool.id === "eyedropper")?.shortcut).toBe("");
   });
 
   it("resolves unique keyboard shortcuts without exposing duplicate bindings", () => {
     expect(getToolForShortcut("v")?.id).toBe("select");
     expect(getToolForShortcut("H")?.id).toBe("hand");
     expect(getToolForShortcut("f")?.id).toBe("frame");
-    expect(getToolForShortcut("p")?.id).toBe("pen");
     expect(getToolForShortcut("i")?.id).toBe("image");
     expect(getToolForShortcut(" ")).toBeUndefined();
   });

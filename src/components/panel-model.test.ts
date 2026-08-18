@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildLayerTree, mixedValue, siblingIdsForNode } from "./panel-model";
+import { buildLayerTree, elementProfile, mixedValue, siblingIdsForNode } from "./panel-model";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
+import type { NodeEntity } from "../editor/model";
 
 const snapshot: BridgeHierarchySnapshot = {
   rootIds: ["root"],
@@ -29,6 +30,21 @@ describe("sidebar panel model", () => {
   it("returns safe sibling order for root and nested layers", () => {
     expect(siblingIdsForNode(snapshot.nodes[1], snapshot)).toEqual(["title", "copy"]);
     expect(siblingIdsForNode(snapshot.nodes[0], snapshot)).toEqual(["root"]);
+  });
+
+  it("classifies elements into purpose-specific profiles", () => {
+    const target = (tagName: string, role: string | null = null) => ({ tagName, role });
+    const node = (kind: NodeEntity["kind"]) => ({ kind } as NodeEntity);
+    expect(elementProfile(target("button"), undefined)).toBe("button");
+    expect(elementProfile(target("div", "button"), undefined)).toBe("button");
+    expect(elementProfile(target("h1"), undefined)).toBe("text");
+    expect(elementProfile(target("p"), undefined)).toBe("text");
+    expect(elementProfile(target("span"), undefined)).toBe("text");
+    expect(elementProfile(target("div"), node("text"))).toBe("text");
+    expect(elementProfile(target("svg"), undefined)).toBe("shape");
+    expect(elementProfile(target("img"), undefined)).toBe("image");
+    expect(elementProfile(target("main"), undefined)).toBe("generic");
+    expect(elementProfile(target("button"), node("text"))).toBe("text");
   });
 });
 

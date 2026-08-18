@@ -179,7 +179,52 @@ describe("iframe bridge protocol", () => {
       ...base,
       command: {
         command: "restore-element",
-        snapshot: { elementId: "x", kind: "rectangle", bounds: { x: 0, y: 0, width: 10, height: 10 }, text: "", alt: "", src: "", points: [], fill: "#fff", stroke: "#000", strokeWidth: 2, editable: true, style: {} },
+        snapshot: { elementId: "x", kind: "rectangle", bounds: { x: 0, y: 0, width: 10, height: 10 }, text: "", alt: "", src: "", points: [], fill: "#fff", stroke: "#000", strokeWidth: 2, radius: 0, editable: true, style: {} },
+      },
+    })).not.toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "create-element",
+        elementId: "radius-rect",
+        kind: "rectangle",
+        bounds: { x: 0, y: 0, width: 100, height: 60 },
+        radius: 12,
+      },
+    })).not.toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "create-element",
+        elementId: "radius-rect",
+        kind: "rectangle",
+        bounds: { x: 0, y: 0, width: 100, height: 60 },
+        radius: 999,
+      },
+    })).toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "set-shape-radius",
+        targetId: "rectangle-1",
+        radius: 18,
+      },
+    })).not.toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "set-shape-radius",
+        targetId: "rectangle-1",
+        radius: -1,
+      },
+    })).toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "set-inline-style",
+        targetId: "x",
+        property: "width",
+        value: "120px",
       },
     })).not.toBeNull();
   });

@@ -124,7 +124,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       type: "ready",
       capabilities: [
         "hover", "select", "pointer-events", "snapshot", "inspect", "set-inline-style", "set-text",
-        "create-element", "delete-element", "duplicate-element",
+        "create-element", "delete-element", "duplicate-element", "set-shape-radius",
       ],
     });
   }
@@ -160,6 +160,20 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return "path:" + elementPath(element);
   }
 
+  /**
+   * Resolves the editor-created element an element belongs to. SVG shapes own
+   * child geometry (rect, polygon, line), so clicks and hovers on the shape's
+   * interior must target the created root, not the child path element.
+   */
+  function createdRoot(element) {
+    let current = element;
+    while (current && current.nodeType === 1) {
+      if (current.getAttribute && current.getAttribute("data-design-tool-created") === "true") return current;
+      current = current.parentElement;
+    }
+    return null;
+  }
+
   function localBounds(element) {
     const rect = element.getBoundingClientRect();
     return {
@@ -174,8 +188,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return (element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 512);
   }
 
-  function describe(element) {
+  function describe(element, snapToCreatedRoot = true) {
     if (!(element instanceof Element)) return null;
+    if (snapToCreatedRoot) {
+      const created = createdRoot(element);
+      if (created) element = created;
+    }
     const role = element.getAttribute("role");
     const ariaLabel = element.getAttribute("aria-label");
     const name = ariaLabel || element.getAttribute("name") || textPreview(element) || element.tagName.toLowerCase();
@@ -243,11 +261,28 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return points.map((point) => point.x + "," + point.y).join(" ");
   }
 
-  function createSvgChild(svg, kind, points, fill, stroke, strokeWidth) {
+  function createSvgChild(svg, kind, points, bounds, fill, stroke, strokeWidth, radius) {
     const ns = "http://www.w3.org/2000/svg";
     const normalized = points || [];
+    const inset = Math.max(0, strokeWidth / 2);
     let child;
-    if (kind === "line" || kind === "arrow") {
+    if (kind === "rectangle") {
+      child = document.createElementNS(ns, "rect");
+      child.setAttribute("x", String(inset));
+      child.setAttribute("y", String(inset));
+      child.setAttribute("width", String(Math.max(1, bounds.width - strokeWidth)));
+      child.setAttribute("height", String(Math.max(1, bounds.height - strokeWidth)));
+      if (radius > 0) {
+        child.setAttribute("rx", String(radius));
+        child.setAttribute("ry", String(radius));
+      }
+    } else if (kind === "ellipse") {
+      child = document.createElementNS(ns, "ellipse");
+      child.setAttribute("cx", String(bounds.width / 2));
+      child.setAttribute("cy", String(bounds.height / 2));
+      child.setAttribute("rx", String(Math.max(0.5, bounds.width / 2 - inset)));
+      child.setAttribute("ry", String(Math.max(0.5, bounds.height / 2 - inset)));
+    } else if (kind === "line" || kind === "arrow") {
       child = document.createElementNS(ns, "line");
       const first = normalized[0] || { x: 0, y: 0 };
       const last = normalized[normalized.length - 1] || first;
@@ -255,19 +290,45 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       child.setAttribute("y1", String(first.y));
       child.setAttribute("x2", String(last.x));
       child.setAttribute("y2", String(last.y));
+      child.setAttribute("stroke-linecap", "round");
       if (kind === "arrow") {
         child.setAttribute("marker-end", "url(#design-tool-arrowhead)");
       }
-    } else {
-      child = document.createElementNS(ns, kind === "path" ? "polyline" : "polygon");
+    } else if (kind === "path") {
+      child = document.createElementNS(ns, "polyline");
       child.setAttribute("points", svgPointString(normalized));
-      if (kind === "path") child.setAttribute("fill", "none");
+      child.setAttribute("fill", "none");
+      child.setAttribute("stroke-linejoin", "round");
+      child.setAttribute("stroke-linecap", "round");
+    } else {
+      child = document.createElementNS(ns, "polygon");
+      child.setAttribute("points", svgPointString(normalized));
+      child.setAttribute("stroke-linejoin", "round");
+      child.setAttribute("stroke-linecap", "round");
     }
-    child.setAttribute("fill", fill || (kind === "path" || kind === "line" || kind === "arrow" ? "none" : "#d9d9d9"));
+    child.setAttribute("fill", kind === "rectangle" || kind === "ellipse" || kind === "polygon" || kind === "star"
+      ? (fill || "#d9d9d9")
+      : "none");
     child.setAttribute("stroke", stroke || "#222222");
     child.setAttribute("stroke-width", String(strokeWidth || 2));
     child.setAttribute("vector-effect", "non-scaling-stroke");
     svg.appendChild(child);
+  }
+
+  function applyShapeRadius(element, radius) {
+    const rect = element && element.getAttribute("data-design-tool-created") === "true"
+      ? element.querySelector("rect")
+      : null;
+    if (!rect) return false;
+    if (radius > 0) {
+      rect.setAttribute("rx", String(radius));
+      rect.setAttribute("ry", String(radius));
+    } else {
+      rect.removeAttribute("rx");
+      rect.removeAttribute("ry");
+    }
+    element.setAttribute("data-design-tool-radius", String(radius));
+    return true;
   }
 
   function createElementFromSpec(spec) {
@@ -280,25 +341,30 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const fill = safeColor(spec.fill, "#d9d9d9");
     const stroke = safeColor(spec.stroke, "#222222");
     const strokeWidth = isFiniteNumber(spec.strokeWidth) && spec.strokeWidth >= 0 && spec.strokeWidth <= 100 ? spec.strokeWidth : 2;
+    const radius = isFiniteNumber(spec.radius) && spec.radius >= 0 && spec.radius <= 256 ? spec.radius : 0;
     const parent = spec.parentId ? findElement(spec.parentId) : document.body;
     if (!parent || !(parent instanceof Element)) throw { code: "parent-not-found", message: "The requested parent does not exist" };
     let element;
-    if (kind === "rectangle" || kind === "ellipse") {
-      element = document.createElement("div");
-      element.style.background = fill;
-      element.style.border = strokeWidth + "px solid " + stroke;
-      if (kind === "ellipse") element.style.borderRadius = "999px";
-      styleCreatedElement(element, bounds);
-    } else if (kind === "text") {
+    if (kind === "text") {
       element = document.createElement("div");
       element.textContent = isSafeString(spec.text, MAX_TEXT_LENGTH, true) ? spec.text : "";
       element.style.color = safeColor(spec.fill, "#171717");
-      element.style.fontFamily = "Inter, ui-sans-serif, system-ui, sans-serif";
+      element.style.fontFamily = "Inter, ui-sans-serif, system-ui, -apple-system, \\\"Segoe UI\\\", Roboto, \\\"Helvetica Neue\\\", Arial, sans-serif";
       element.style.fontSize = "16px";
-      element.style.lineHeight = "1.35";
+      element.style.fontWeight = "400";
+      element.style.lineHeight = "1.5";
+      element.style.letterSpacing = "0.01em";
       element.style.whiteSpace = "pre-wrap";
-      element.style.padding = "4px";
-      styleCreatedElement(element, bounds);
+      element.style.overflowWrap = "break-word";
+      element.style.textAlign = "left";
+      element.style.padding = "4px 6px";
+      element.style.position = "fixed";
+      element.style.left = bounds.x + "px";
+      element.style.top = bounds.y + "px";
+      element.style.width = bounds.width + "px";
+      element.style.height = "auto";
+      element.style.boxSizing = "border-box";
+      element.style.zIndex = "10";
       if (spec.editable !== false) {
         element.contentEditable = "true";
         element.setAttribute("spellcheck", "false");
@@ -312,29 +378,33 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       element.style.background = "transparent";
       styleCreatedElement(element, bounds);
     } else {
-      if (!safePoints(spec.points)) throw { code: "invalid-path", message: "A vector shape needs at least two safe points" };
+      if (kind !== "rectangle" && kind !== "ellipse" && !safePoints(spec.points)) {
+        throw { code: "invalid-path", message: "A vector shape needs at least two safe points" };
+      }
       element = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       element.setAttribute("viewBox", "0 0 " + bounds.width + " " + bounds.height);
       element.setAttribute("aria-label", kind);
+      element.setAttribute("shape-rendering", "geometricPrecision");
       styleCreatedElement(element, bounds);
       element.style.overflow = "visible";
       if (kind === "arrow") {
         const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
         const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         marker.setAttribute("id", "design-tool-arrowhead");
-        marker.setAttribute("markerWidth", "8");
-        marker.setAttribute("markerHeight", "8");
-        marker.setAttribute("refX", "7");
-        marker.setAttribute("refY", "4");
+        marker.setAttribute("markerUnits", "userSpaceOnUse");
+        marker.setAttribute("markerWidth", "10");
+        marker.setAttribute("markerHeight", "10");
+        marker.setAttribute("refX", "9");
+        marker.setAttribute("refY", "5");
         marker.setAttribute("orient", "auto");
         const tip = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        tip.setAttribute("d", "M0,0 L8,4 L0,8 Z");
+        tip.setAttribute("d", "M1,1 L9,5 L1,9 L3.2,5 Z");
         tip.setAttribute("fill", stroke);
         marker.appendChild(tip);
         defs.appendChild(marker);
         element.appendChild(defs);
       }
-      createSvgChild(element, kind, normalizePoints(spec.points, bounds), fill, stroke, strokeWidth);
+      createSvgChild(element, kind, normalizePoints(spec.points || [], bounds), bounds, fill, stroke, strokeWidth, radius);
     }
     element.setAttribute("data-design-element-id", spec.elementId);
     element.setAttribute("data-design-tool-created", "true");
@@ -344,6 +414,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     element.setAttribute("data-design-tool-fill", fill);
     element.setAttribute("data-design-tool-stroke", stroke);
     element.setAttribute("data-design-tool-stroke-width", String(strokeWidth));
+    element.setAttribute("data-design-tool-radius", String(radius));
     element.setAttribute("data-design-tool-editable", spec.editable === false ? "false" : "true");
     if (isRecord(spec.style)) {
       for (const [property, value] of Object.entries(spec.style)) {
@@ -380,6 +451,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       fill: element.getAttribute("data-design-tool-fill") || "#d9d9d9",
       stroke: element.getAttribute("data-design-tool-stroke") || "#222222",
       strokeWidth: Number(element.getAttribute("data-design-tool-stroke-width") || 2),
+      radius: Math.max(0, Math.min(256, Number(element.getAttribute("data-design-tool-radius") || 0))),
       editable: element.getAttribute("data-design-tool-editable") !== "false",
       style,
     };
@@ -398,6 +470,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       fill: snapshot.fill,
       stroke: snapshot.stroke,
       strokeWidth: snapshot.strokeWidth,
+      radius: snapshot.radius,
       editable: snapshot.editable,
       style: snapshot.style,
     };
@@ -451,7 +524,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         truncated = true;
         return null;
       }
-      const target = describe(element);
+      const target = describe(element, false);
       if (!target) return null;
       const node = { ...target, parentId, childIds: [] };
       nodes.push(node);
@@ -742,6 +815,27 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         target,
         undo: { command: "delete-element", targetId: target.elementId },
         replay: createCommandFromSnapshot(snapshotValue),
+      };
+    }
+    if (command.command === "set-shape-radius") {
+      if (!isFiniteNumber(command.radius) || command.radius < 0 || command.radius > 256) {
+        throw { code: "invalid-radius", message: "The shape radius must be between 0 and 256" };
+      }
+      const element = findElement(command.targetId);
+      if (!element || element.getAttribute("data-design-tool-created") !== "true") {
+        throw { code: "target-not-found", message: "The requested shape no longer exists" };
+      }
+      const previousRadius = Math.max(0, Math.min(256, Number(element.getAttribute("data-design-tool-radius") || 0)));
+      if (!applyShapeRadius(element, command.radius)) {
+        throw { code: "shape-radius-not-supported", message: "Only created rectangles support a corner radius" };
+      }
+      return {
+        kind: "command",
+        command: "set-shape-radius",
+        targetId: command.targetId,
+        previousRadius,
+        radius: command.radius,
+        undo: { command: "set-shape-radius", targetId: command.targetId, radius: previousRadius },
       };
     }
     throw { code: "unsupported-command", message: "The requested bridge command is not supported" };

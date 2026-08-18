@@ -66,7 +66,6 @@ test.describe("canvas comments", () => {
     await expect(page.getByTestId("comment-popover")).toHaveCount(0);
     await expect(page.getByTestId("comment-marker")).toHaveCount(1);
 
-    await page.getByTestId("tool-button-comment").click();
     await heading.click({ position: { x: 400, y: 50 } });
     await expect(page.getByTestId("comment-marker")).toHaveCount(2);
     await expect(page.getByTestId("comment-input")).toBeFocused();

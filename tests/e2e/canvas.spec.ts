@@ -254,7 +254,6 @@ test.describe("infinite canvas infrastructure", () => {
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("tool-button-rectangle")).toBeEnabled();
     await expect(page.getByTestId("tool-button-text")).toBeEnabled();
-    await expect(page.getByTestId("tool-button-pen")).toBeEnabled();
 
     await page.keyboard.press("h");
     await expect(handTool).toHaveAttribute("aria-pressed", "true");
@@ -275,8 +274,86 @@ test.describe("infinite canvas infrastructure", () => {
     await expect(page.getByTestId("tool-button-rectangle")).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("i");
     await expect(page.getByTestId("tool-button-image")).toHaveAttribute("aria-pressed", "true");
-    await page.getByTestId("tool-button-eyedropper").click();
-    await expect(page.getByTestId("tool-button-eyedropper")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("toggles a tool back to select when its button is clicked again", async ({ page }) => {
+    await openCanvas(page);
+
+    const selectTool = page.getByTestId("tool-button-select");
+    const rectangleTool = page.getByTestId("tool-button-rectangle");
+    const handTool = page.getByTestId("tool-button-hand");
+
+    await expect(selectTool).toHaveAttribute("aria-pressed", "true");
+    await rectangleTool.click();
+    await expect(rectangleTool).toHaveAttribute("aria-pressed", "true");
+    await rectangleTool.click();
+    await expect(rectangleTool).toHaveAttribute("aria-pressed", "false");
+    await expect(selectTool).toHaveAttribute("aria-pressed", "true");
+
+    await handTool.click();
+    await expect(handTool).toHaveAttribute("aria-pressed", "true");
+    await handTool.click();
+    await expect(handTool).toHaveAttribute("aria-pressed", "false");
+    await expect(selectTool).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("closing the frame menu with its button again returns to select", async ({ page }) => {
+    await openCanvas(page);
+
+    const addFrameButton = page.getByTestId("add-frame-button");
+    await addFrameButton.click();
+    await expect(addFrameButton).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("menu", { name: "Frame presets" })).toBeVisible();
+    await addFrameButton.click();
+    await expect(addFrameButton).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("tool-button-select")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("auto-deselects a shape tool after drawing and returns to select", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    const rectangleTool = page.getByTestId("tool-button-rectangle");
+    const selectTool = page.getByTestId("tool-button-select");
+    await rectangleTool.click();
+    await expect(rectangleTool).toHaveAttribute("aria-pressed", "true");
+
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.25, y: box.y + box.height * 0.25 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 120, start.y + 80, { steps: 4 });
+    await page.mouse.up();
+
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
+    await expect(rectangleTool).toHaveAttribute("aria-pressed", "false");
+    await expect(selectTool).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("creation-mode-status")).toHaveCount(0);
+  });
+
+  test("keeps the text tool selected after creating a text layer", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+
+    const textTool = page.getByTestId("tool-button-text");
+    await textTool.click();
+    await expect(textTool).toHaveAttribute("aria-pressed", "true");
+
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.3, y: box.y + box.height * 0.3 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 60, start.y + 24, { steps: 3 });
+    await page.mouse.up();
+
+    await expect(textTool).toHaveAttribute("aria-pressed", "true");
   });
 
   test("undoes and redoes a frame move through the editor shortcuts", async ({ page }) => {
@@ -377,5 +454,147 @@ test.describe("infinite canvas infrastructure", () => {
       scrollWidth: document.documentElement.scrollWidth,
     }));
     expect(documentSize.scrollWidth).toBe(documentSize.clientWidth);
+  });
+
+  test("previews a shape live while dragging and commits a crisp SVG rectangle", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    await page.getByTestId("tool-button-rectangle").click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.3, y: box.y + box.height * 0.3 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 60, start.y + 40, { steps: 3 });
+
+    const shapePreview = frame.getByTestId("shape-preview");
+    await expect(shapePreview).toBeVisible();
+    const midBox = await shapePreview.boundingBox();
+
+    await page.mouse.move(start.x + 160, start.y + 110, { steps: 5 });
+    await expect(shapePreview).toBeVisible();
+    const grownBox = await shapePreview.boundingBox();
+    expect(grownBox && midBox && grownBox.width > midBox.width).toBe(true);
+
+    await page.mouse.up();
+    await expect(shapePreview).toHaveCount(0);
+    await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
+    const rectangle = preview.locator('[data-design-tool-kind="rectangle"]');
+    await expect(rectangle).toHaveAttribute("shape-rendering", "geometricPrecision");
+    await expect(rectangle.locator("rect")).toHaveCount(1);
+  });
+
+  test("draws an arrow from the shape menu with a live preview and a refined arrowhead", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    await page.getByTestId("tool-button-rectangle").click();
+    await page.getByTestId("shape-menu-button").click();
+    await page.getByTestId("shape-menu-arrow").click();
+
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.35, y: box.y + box.height * 0.45 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 140, start.y + 60, { steps: 6 });
+    await expect(frame.getByTestId("shape-preview")).toBeVisible();
+    await page.mouse.up();
+
+    await expect.poll(() => preview.locator('[data-design-tool-kind="arrow"]').count()).toBe(1);
+    const arrow = preview.locator('[data-design-tool-kind="arrow"]');
+    await expect(arrow.locator("marker")).toHaveCount(1);
+    await expect(arrow.locator("line")).toHaveAttribute("stroke-linecap", "round");
+  });
+
+  test("keeps lines and arrows following the drag direction in either direction", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    await page.getByTestId("tool-button-rectangle").click();
+    await page.getByTestId("shape-menu-button").click();
+    await page.getByTestId("shape-menu-arrow").click();
+
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.7, y: box.y + box.height * 0.6 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x - 180, start.y - 90, { steps: 6 });
+    await page.mouse.up();
+
+    await expect.poll(() => preview.locator('[data-design-tool-kind="arrow"]').count()).toBe(1);
+    const points = JSON.parse((await preview.locator('[data-design-tool-kind="arrow"]').getAttribute("data-design-tool-points")) || "[]") as Array<{ x: number; y: number }>;
+    expect(points).toHaveLength(2);
+    expect(points[1].x).toBeLessThan(points[0].x);
+    expect(points[1].y).toBeLessThan(points[0].y);
+  });
+
+  test("creates text that reads horizontally with a proper wrapping width", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    await page.getByTestId("tool-button-text").click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.35, y: box.y + box.height * 0.4 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.up();
+
+    const textLayer = preview.locator('[data-design-tool-kind="text"]');
+    await expect(textLayer).toHaveAttribute("contenteditable", "true");
+    const bounds = await textLayer.boundingBox();
+    expect(bounds && bounds.width).toBeGreaterThan(150);
+    expect(bounds && bounds.height).toBeLessThan(100);
+    await expect(textLayer).toHaveCSS("white-space", "pre-wrap");
+    await expect(textLayer).toHaveCSS("line-height", "24px");
+  });
+
+  test("adjusts the corner radius with the slider on draw and on a selected rectangle", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    await page.getByTestId("tool-button-rectangle").click();
+    const radiusSlider = page.getByTestId("shape-radius-slider");
+    await expect(radiusSlider).toBeVisible();
+    await radiusSlider.fill("16");
+
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.3, y: box.y + box.height * 0.3 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 160, start.y + 100, { steps: 4 });
+    await page.mouse.up();
+
+    const rectangle = preview.locator('[data-design-tool-kind="rectangle"]');
+    await expect.poll(() => rectangle.count()).toBe(1);
+    await expect(rectangle).toHaveAttribute("data-design-tool-radius", "16");
+    await expect(rectangle.locator("rect")).toHaveAttribute("rx", "16");
+
+    await expect(radiusSlider).toBeVisible();
+    await expect(radiusSlider).toHaveValue("16");
+    await radiusSlider.fill("24");
+    await expect(rectangle.locator("rect")).toHaveAttribute("rx", "24");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => rectangle.locator("rect").getAttribute("rx")).toBe("16");
   });
 });

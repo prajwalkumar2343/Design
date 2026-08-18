@@ -42,6 +42,9 @@ export interface IframeBridgeController {
   duplicateElement: (
     command: Extract<BridgeCommand, { command: "duplicate-element" }>,
   ) => Promise<BridgeCommandAck>;
+  setShapeRadius: (
+    command: Extract<BridgeCommand, { command: "set-shape-radius" }>,
+  ) => Promise<BridgeCommandAck>;
 }
 
 export interface BridgeTransportHandlers {
@@ -172,6 +175,10 @@ export class IframeBridgeTransport {
   }
 
   duplicateElement(command: Extract<BridgeCommand, { command: "duplicate-element" }>): Promise<BridgeCommandAck> {
+    return this.sendCommand(command);
+  }
+
+  setShapeRadius(command: Extract<BridgeCommand, { command: "set-shape-radius" }>): Promise<BridgeCommandAck> {
     return this.sendCommand(command);
   }
 

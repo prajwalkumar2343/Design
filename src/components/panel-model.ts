@@ -1,9 +1,51 @@
-import type { BridgeHierarchyNode, BridgeHierarchySnapshot } from "../bridge/protocol";
+import type { BridgeElementTarget, BridgeHierarchyNode, BridgeHierarchySnapshot } from "../bridge/protocol";
 import type { NodeEntity } from "../editor/model";
 
 export interface LayerTreeNode {
   target: BridgeHierarchyNode;
   children: LayerTreeNode[];
+}
+
+export type ElementProfileId = "button" | "text" | "shape" | "image" | "generic";
+
+const TEXT_TAG_NAMES = new Set([
+  "p",
+  "span",
+  "a",
+  "li",
+  "label",
+  "strong",
+  "em",
+  "small",
+  "blockquote",
+  "cite",
+  "code",
+  "pre",
+  "figcaption",
+  "dt",
+  "dd",
+  "legend",
+  "time",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+]);
+
+/** Classifies an element so the properties panel can show purpose-specific controls. */
+export function elementProfile(
+  target: Pick<BridgeElementTarget, "tagName" | "role">,
+  node: NodeEntity | undefined,
+): ElementProfileId {
+  if (node?.kind === "text") return "text";
+  const tagName = target.tagName.toLowerCase();
+  if (tagName === "button" || target.role === "button") return "button";
+  if (tagName === "img") return "image";
+  if (tagName === "svg") return "shape";
+  if (TEXT_TAG_NAMES.has(tagName)) return "text";
+  return "generic";
 }
 
 export function layerDisplayName(

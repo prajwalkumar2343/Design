@@ -140,6 +140,7 @@ export type BridgeCommand =
       fill?: string;
       stroke?: string;
       strokeWidth?: number;
+      radius?: number;
       editable?: boolean;
       style?: Record<string, string>;
     }
@@ -155,6 +156,11 @@ export type BridgeCommand =
       command: "duplicate-element";
       targetId: string;
       elementId: string;
+    }
+  | {
+      command: "set-shape-radius";
+      targetId: string;
+      radius: number;
     };
 
 export type BridgeCreationKind =
@@ -179,6 +185,7 @@ export interface BridgeCreatedElementSnapshot {
   fill: string;
   stroke: string;
   strokeWidth: number;
+  radius: number;
   editable: boolean;
   style: Record<string, string>;
 }
@@ -202,6 +209,11 @@ export type BridgeUndoCommand =
   | {
       command: "restore-element";
       snapshot: BridgeCreatedElementSnapshot;
+    }
+  | {
+      command: "set-shape-radius";
+      targetId: string;
+      radius: number;
     };
 
 export type BridgeCommandAck =
@@ -241,6 +253,14 @@ export type BridgeCommandAck =
       targetId: string;
       undo: BridgeUndoCommand;
       replay: BridgeCommand;
+    }
+  | {
+      kind: "command";
+      command: "set-shape-radius";
+      targetId: string;
+      previousRadius: number;
+      radius: number;
+      undo: BridgeUndoCommand;
     };
 
 export type BridgeResponseResult =
@@ -444,6 +464,10 @@ function isCreationKind(value: unknown): value is BridgeCreationKind {
   ].includes(value);
 }
 
+function isShapeRadius(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0 && value <= 256;
+}
+
 function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElementSnapshot {
   return isRecord(value) &&
     isValidString(value.elementId, { maxLength: 512 }) &&
@@ -456,6 +480,7 @@ function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElement
     isValidString(value.fill, { maxLength: 4096, allowEmpty: true }) &&
     isValidString(value.stroke, { maxLength: 4096, allowEmpty: true }) &&
     isFiniteNumber(value.strokeWidth) && value.strokeWidth >= 0 && value.strokeWidth <= 100 &&
+    isShapeRadius(value.radius) &&
     typeof value.editable === "boolean" &&
     isStringRecord(value.style, 4096);
 }
@@ -490,6 +515,9 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
     return isValidString(value.targetId, { maxLength: 512 }) &&
       isValidString(value.elementId, { maxLength: 512 });
   }
+  if (value.command === "set-shape-radius") {
+    return isValidString(value.targetId, { maxLength: 512 }) && isShapeRadius(value.radius);
+  }
   if (value.command === "create-element") {
     return isValidString(value.elementId, { maxLength: 512 }) &&
       isCreationKind(value.kind) &&
@@ -502,6 +530,7 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
       (value.fill === undefined || isValidString(value.fill, { maxLength: 4096, allowEmpty: true })) &&
       (value.stroke === undefined || isValidString(value.stroke, { maxLength: 4096, allowEmpty: true })) &&
       (value.strokeWidth === undefined || (isFiniteNumber(value.strokeWidth) && value.strokeWidth >= 0 && value.strokeWidth <= 100)) &&
+      (value.radius === undefined || isShapeRadius(value.radius)) &&
       (value.editable === undefined || typeof value.editable === "boolean") &&
       (value.style === undefined || isStringRecord(value.style, 4096));
   }
@@ -572,6 +601,13 @@ function isCommandAck(value: unknown): value is BridgeCommandAck {
     return isElementTarget(value.target) &&
       isBridgeCommand(value.undo) && value.undo.command === "delete-element" &&
       isBridgeCommand(value.replay) && value.replay.command === "create-element";
+  }
+  if (value.command === "set-shape-radius") {
+    return isShapeRadius(value.previousRadius) &&
+      isShapeRadius(value.radius) &&
+      isRecord(value.undo) &&
+      isBridgeCommand(value.undo) &&
+      value.undo.command === "set-shape-radius";
   }
   return false;
 }

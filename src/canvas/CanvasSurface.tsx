@@ -59,6 +59,7 @@ import { prependTranslationTransform } from "../editor/position";
 import { BriefFrameView } from "../frame/BriefFrameView";
 import { FrameView } from "../frame/FrameView";
 import { createFrameFromPreset, type FramePreset } from "../frame/presets";
+import { normalizedBounds, shapeDragPoints, shapeLabel } from "../frame/shape-geometry";
 import { useBrainstormSessionController } from "./brainstorm-session-controller";
 import {
   BrowserPersistenceAdapter,
@@ -124,8 +125,7 @@ type PointerOperation =
   | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string; start: Point; briefStart: Point };
 
 type CreationOperation =
-  | { type: "box"; tool: "rectangle" | "text" | "image"; frameId: string; pointerId: number; start: Point; last: Point }
-  | { type: "pen"; frameId: string; pointerId: number; points: Point[] };
+  | { type: "box"; tool: "rectangle" | "text" | "image"; frameId: string; pointerId: number; start: Point; last: Point };
 
 interface PendingImagePlacement {
   frameId: string;
@@ -143,56 +143,23 @@ function createElementId(prefix: string): string {
   return `${prefix}-${random}`;
 }
 
-function normalizedBounds(start: Point, end: Point, minimum = 16): Rect {
-  const x = Math.min(start.x, end.x);
-  const y = Math.min(start.y, end.y);
-  return {
-    x,
-    y,
-    width: Math.max(minimum, Math.abs(end.x - start.x)),
-    height: Math.max(minimum, Math.abs(end.y - start.y)),
-  };
-}
-
 function isCreationTool(tool: ToolId): boolean {
-  return tool === "rectangle" || tool === "text" || tool === "image" || tool === "pen" || tool === "comment";
+  return tool === "rectangle" || tool === "text" || tool === "image" || tool === "comment";
 }
 
 function creationToolLabel(tool: ToolId, shape: ShapeVariantId): string {
-  if (tool === "rectangle") return shape[0].toUpperCase() + shape.slice(1);
+  if (tool === "rectangle") return shapeLabel(shape);
   return tool[0].toUpperCase() + tool.slice(1);
 }
 
-function shapePoints(shape: ShapeVariantId, bounds: Rect): Point[] {
-  if (shape === "line" || shape === "arrow") {
-    return [{ x: bounds.x, y: bounds.y }, { x: bounds.x + bounds.width, y: bounds.y + bounds.height }];
-  }
-  if (shape === "polygon") {
-    return [
-      { x: bounds.x + bounds.width / 2, y: bounds.y },
-      { x: bounds.x + bounds.width, y: bounds.y + bounds.height * 0.38 },
-      { x: bounds.x + bounds.width * 0.82, y: bounds.y + bounds.height },
-      { x: bounds.x + bounds.width * 0.18, y: bounds.y + bounds.height },
-      { x: bounds.x, y: bounds.y + bounds.height * 0.38 },
-    ];
-  }
-  if (shape === "star") {
-    const cx = bounds.x + bounds.width / 2;
-    const cy = bounds.y + bounds.height / 2;
-    const outer = Math.min(bounds.width, bounds.height) / 2;
-    const inner = outer * 0.42;
-    return Array.from({ length: 10 }, (_, index) => {
-      const radius = index % 2 === 0 ? outer : inner;
-      const angle = -Math.PI / 2 + index * Math.PI / 5;
-      return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
-    });
-  }
-  return [
-    { x: bounds.x, y: bounds.y },
-    { x: bounds.x + bounds.width, y: bounds.y },
-    { x: bounds.x + bounds.width, y: bounds.y + bounds.height },
-    { x: bounds.x, y: bounds.y + bounds.height },
-  ];
+/**
+ * A text drag that never moved produces the shared 16px minimum box. Give
+ * click-created text a real wrapping width so it reads horizontally instead of
+ * collapsing into a single-character column.
+ */
+function textPlacementBounds(bounds: Rect): Rect {
+  if (bounds.width <= 16) return { ...bounds, width: 240 };
+  return bounds;
 }
 
 
@@ -329,7 +296,7 @@ export function CanvasSurface({
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
-  const [sampledColor, setSampledColor] = useState<string | null>(null);
+  const [shapeRadius, setShapeRadius] = useState(0);
   const [creationError, setCreationError] = useState<string | null>(null);
   const [persistenceVersion, setPersistenceVersion] = useState(0);
   const [persistenceFeedback, setPersistenceFeedback] = useState<{
@@ -349,8 +316,10 @@ export function CanvasSurface({
   const activeTool = normalizeActiveTool(editorState.activeTool);
   const activeToolRef = useRef<ToolId>(activeTool);
   const activeShapeRef = useRef<ShapeVariantId>(activeShape);
+  const shapeRadiusRef = useRef(shapeRadius);
   activeToolRef.current = activeTool;
   activeShapeRef.current = activeShape;
+  shapeRadiusRef.current = shapeRadius;
   const creationMode = isCreationTool(activeTool);
 
   const setSelectedFrameId = useCallback(
@@ -489,13 +458,6 @@ export function CanvasSurface({
       setInteractionMode("idle");
       return;
     }
-    if (tool === "pen") {
-      const current = creationRef.current;
-      creationRef.current = current?.type === "pen" && current.frameId === frameId
-        ? { ...current, pointerId, points: [...current.points, point] }
-        : { type: "pen", frameId, pointerId, points: [point] };
-      return;
-    }
     creationRef.current = {
       type: "box",
       tool: tool as "rectangle" | "text" | "image",
@@ -509,13 +471,6 @@ export function CanvasSurface({
   const moveCreationPointer = useCallback((frameId: string, point: Point, pointerId: number) => {
     const operation = creationRef.current;
     if (!operation || operation.frameId !== frameId || operation.pointerId !== pointerId) return;
-    if (operation.type === "pen") {
-      const previous = operation.points.at(-1);
-      if (!previous || previous.x !== point.x || previous.y !== point.y) {
-        operation.points = [...operation.points, point];
-      }
-      return;
-    }
     creationRef.current = { ...operation, last: point };
   }, []);
 
@@ -538,11 +493,12 @@ export function CanvasSurface({
       command: "create-element",
       elementId: createElementId(kind),
       kind,
-      bounds,
-      ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapePoints(shape, bounds) }),
+      bounds: kind === "text" ? textPlacementBounds(bounds) : bounds,
+      ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapeDragPoints(shape, operation.start, point) }),
       fill: kind === "text" ? "#171717" : "#d9d9d9",
       stroke: kind === "text" ? "#171717" : "#222222",
       strokeWidth: 2,
+      radius: shapeRadiusRef.current,
     }, kind === "text" ? "Create text" : `Create ${shape}`);
   }, [openImagePicker]);
 
@@ -552,29 +508,6 @@ export function CanvasSurface({
     creationRef.current = null;
     pendingImageRef.current = null;
     setInteractionMode("idle");
-  }, []);
-
-  const finishPenStroke = useCallback((frameId: string) => {
-    const operation = creationRef.current;
-    creationRef.current = null;
-    setInteractionMode("idle");
-    if (operation?.type === "pen" && operation.points.length >= 2) {
-      const minX = Math.min(...operation.points.map((point) => point.x));
-      const minY = Math.min(...operation.points.map((point) => point.y));
-      const maxX = Math.max(...operation.points.map((point) => point.x));
-      const maxY = Math.max(...operation.points.map((point) => point.y));
-      const bounds = { x: minX, y: minY, width: Math.max(16, maxX - minX), height: Math.max(16, maxY - minY) };
-      void createLiveElementRef.current(frameId, {
-        command: "create-element",
-        elementId: createElementId("path"),
-        kind: "path",
-        bounds,
-        points: operation.points,
-        fill: "none",
-        stroke: "#222222",
-        strokeWidth: 2,
-      }, "Create path");
-    }
   }, []);
 
   const handleBridgeEvent = useCallback(
@@ -590,12 +523,7 @@ export function CanvasSurface({
       const currentShape = activeShapeRef.current;
       const isCreationToolActive = isCreationTool(currentTool);
       if (message.event === "pointerdown" && isCreationToolActive) {
-        if (currentTool === "pen") {
-          const current = creationRef.current;
-          creationRef.current = current?.type === "pen" && current.frameId === frameId
-            ? { ...current, pointerId: message.pointerId ?? current.pointerId, points: [...current.points, message.point] }
-            : { type: "pen", frameId, pointerId: message.pointerId ?? 0, points: [message.point] };
-        } else if (currentTool === "comment") {
+        if (currentTool === "comment") {
           addCommentRef.current(frameId, message.point);
         } else {
           creationRef.current = { type: "box", tool: currentTool as "rectangle" | "text" | "image", frameId, pointerId: message.pointerId ?? 0, start: message.point, last: message.point };
@@ -624,11 +552,12 @@ export function CanvasSurface({
             command: "create-element" as const,
             elementId: createElementId(kind),
             kind,
-            bounds,
-            ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapePoints(currentShape, bounds) }),
+            bounds: kind === "text" ? textPlacementBounds(bounds) : bounds,
+            ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapeDragPoints(currentShape, operation.start, message.point) }),
             fill: kind === "text" ? "#171717" : "#d9d9d9",
             stroke: kind === "text" ? "#171717" : "#222222",
             strokeWidth: 2,
+            radius: shapeRadiusRef.current,
           };
           void createLiveElementRef.current(frameId, command, kind === "text" ? "Create text" : `Create ${currentShape}`);
         }
@@ -637,14 +566,6 @@ export function CanvasSurface({
       if (message.event === "keydown") {
         if (currentTool === "select" && (message.key === "Delete" || message.key === "Backspace")) {
           void deleteSelectedNodesRef.current();
-          return;
-        }
-        if (currentTool === "pen" && (message.key === "Enter" || message.key === "Escape")) {
-          if (message.key === "Enter") finishPenStroke(frameId);
-          else {
-            creationRef.current = null;
-            setInteractionMode("idle");
-          }
           return;
         }
         if (!frameTextEditRef.current.has(frameId) && (message.metaKey || message.ctrlKey)) {
@@ -708,7 +629,7 @@ export function CanvasSurface({
         return;
       }
       if (message.event === "text-edit-start" || message.event === "text-cancel") return;
-      if (message.event === "select" && currentTool !== "select" && currentTool !== "eyedropper") return;
+      if (message.event === "select" && currentTool !== "select") return;
 
       const surfaceRect = surface.getBoundingClientRect();
       const iframeRect = iframe.getBoundingClientRect();
@@ -801,24 +722,12 @@ export function CanvasSurface({
         { history: "skip" },
       );
     },
-    [bridgeControllersRef, editorStore, finishPenStroke, toOverlayTarget],
+    [bridgeControllersRef, editorStore, toOverlayTarget],
   );
 
   const handleBridgeInspection = useCallback(
     (frameId: string, inspection: BridgeInspection | null) => {
       if (!inspection) return;
-      if (activeToolRef.current === "eyedropper") {
-        const candidates = [
-          inspection.computedStyle.color,
-          inspection.computedStyle["background-color"],
-          inspection.computedStyle["border-color"],
-        ];
-        const color = candidates.find((value) => value && value !== "transparent" && !/^rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0\s*\)$/i.test(value));
-        if (color) {
-          setSampledColor(color);
-          if (navigator.clipboard) void navigator.clipboard.writeText(color).catch(() => undefined);
-        }
-      }
       setBridgeTargets((current) => {
         const key = targetStateKey(frameId, inspection.target.elementId);
         return {
@@ -988,6 +897,9 @@ export function CanvasSurface({
       }
       await refreshBridgeSnapshot(frameId);
       setCreationError(null);
+      if (command.kind !== "text" && command.kind !== "image" && command.kind !== "path") {
+        editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+      }
       return true;
     } catch (error) {
       if (!hadActiveTransaction && editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
@@ -997,6 +909,80 @@ export function CanvasSurface({
     }
   }, [bridgeControllersRef, editorStore, refreshBridgeSnapshot]);
   createLiveElementRef.current = createLiveElement;
+
+  const radiusSelection = useMemo(() => {
+    const nodeId = editorState.selection.primaryNodeId ?? editorState.selection.nodeIds[0];
+    const frameId = editorState.selection.primaryFrameId;
+    if (!nodeId || !frameId) return null;
+    const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
+    if (entry?.inspection?.attributes["data-design-tool-kind"] !== "rectangle") return null;
+    return {
+      frameId,
+      targetId: nodeId,
+      radius: Number(entry.inspection.attributes["data-design-tool-radius"] ?? 0),
+    };
+  }, [bridgeTargets, editorState.selection]);
+
+  const radiusSelectionRef = useRef(radiusSelection);
+  radiusSelectionRef.current = radiusSelection;
+  const radiusDragRef = useRef<{
+    frameId: string;
+    targetId: string;
+    previousRadius: number;
+    lastRadius: number;
+  } | null>(null);
+
+  const changeShapeRadius = useCallback((next: number) => {
+    const radius = Math.max(0, Math.min(48, Math.round(next)));
+    setShapeRadius(radius);
+    const selection = radiusSelectionRef.current;
+    if (!selection) return;
+    if (!radiusDragRef.current) {
+      radiusDragRef.current = { ...selection, previousRadius: selection.radius, lastRadius: selection.radius };
+    }
+    radiusDragRef.current.lastRadius = radius;
+    const controller = bridgeControllersRef.current.get(selection.frameId);
+    if (!controller) return;
+    void controller.setShapeRadius({ command: "set-shape-radius", targetId: selection.targetId, radius })
+      .then((ack) => {
+        if (ack.command !== "set-shape-radius") return;
+        setBridgeTargets((current) => {
+          const key = targetStateKey(selection.frameId, selection.targetId);
+          const entry = current[key];
+          if (!entry?.inspection) return current;
+          return {
+            ...current,
+            [key]: {
+              ...entry,
+              inspection: {
+                ...entry.inspection,
+                attributes: { ...entry.inspection.attributes, "data-design-tool-radius": String(ack.radius) },
+              },
+            },
+          };
+        });
+      })
+      .catch(() => undefined);
+  }, [bridgeControllersRef, setBridgeTargets]);
+
+  const commitShapeRadius = useCallback(() => {
+    const drag = radiusDragRef.current;
+    radiusDragRef.current = null;
+    if (!drag || drag.lastRadius === drag.previousRadius) return;
+    const controller = bridgeControllersRef.current.get(drag.frameId);
+    if (!controller) return;
+    const apply = (radius: number) => {
+      void controller.setShapeRadius({ command: "set-shape-radius", targetId: drag.targetId, radius })
+        .then(() => refreshSnapshotRef.current(drag.frameId))
+        .catch(() => undefined);
+    };
+    editorStore.beginTransaction("Adjust corner radius");
+    const committed = editorStore.commitTransaction({
+      undo: () => apply(drag.previousRadius),
+      redo: () => apply(drag.lastRadius),
+    });
+    if (!committed) editorStore.rollbackTransaction();
+  }, [bridgeControllersRef, editorStore]);
 
   addCommentRef.current = addComment;
 
@@ -1348,14 +1334,18 @@ export function CanvasSurface({
   }, [bridgeTargets, editorState.frames, sidebarHoveredNode, toOverlayTarget]);
 
   const setActiveTool = useCallback(
-    (tool: ToolId) => {
+    (tool: ToolId, options?: { force?: boolean }) => {
+      const current = normalizeActiveTool(editorStore.getState().activeTool);
+      const nextTool =
+        options?.force || current !== tool || tool === "select"
+          ? tool
+          : "select";
       creationRef.current = null;
       pendingImageRef.current = null;
       setCreationError(null);
       setInteractionMode("idle");
-      setSampledColor(null);
-      editorStore.execute(setActiveToolCommand(tool), { history: "skip" });
-      setIsFrameMenuOpen(tool === "frame");
+      editorStore.execute(setActiveToolCommand(nextTool), { history: "skip" });
+      setIsFrameMenuOpen(nextTool === "frame");
     },
     [editorStore],
   );
@@ -1364,9 +1354,15 @@ export function CanvasSurface({
     creationRef.current = null;
     pendingImageRef.current = null;
     setCreationError(null);
+    const current = normalizeActiveTool(editorStore.getState().activeTool);
+    if (current === "frame" && isFrameMenuOpen) {
+      editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+      setIsFrameMenuOpen(false);
+      return;
+    }
     editorStore.execute(setActiveToolCommand("frame"), { history: "skip" });
-    setIsFrameMenuOpen((current) => !current);
-  }, [editorStore]);
+    setIsFrameMenuOpen(true);
+  }, [editorStore, isFrameMenuOpen]);
 
   const liveFrameIds = useMemo(
     () =>
@@ -1902,15 +1898,6 @@ export function CanvasSurface({
         return;
       }
 
-      if (event.key === "Enter" && activeTool === "pen") {
-        const operation = creationRef.current;
-        if (operation?.type === "pen" && operation.frameId) {
-          event.preventDefault();
-          finishPenStroke(operation.frameId);
-          return;
-        }
-      }
-
       const action = resolveEditorShortcut(event);
       if (!action) {
         return;
@@ -1976,7 +1963,7 @@ export function CanvasSurface({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [activeTool, deleteSelectedNodes, duplicateSelectedNode, editorStore, finishPenStroke, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
+  }, [activeTool, deleteSelectedNodes, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
 
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;
 
@@ -2049,6 +2036,8 @@ export function CanvasSurface({
             onBridgeSnapshot={handleBridgeSnapshot}
             onBridgeController={handleBridgeController}
             isCreationMode={creationMode && frame.id === selectedFrameId}
+            creationShape={activeTool === "rectangle" ? activeShape : null}
+            creationRadius={activeTool === "rectangle" ? shapeRadius : 0}
             onCreationPointerDown={beginCreationPointer}
             onCreationPointerMove={moveCreationPointer}
             onCreationPointerUp={finishCreationPointer}
@@ -2139,7 +2128,11 @@ export function CanvasSurface({
           onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
           onSelectTool={setActiveTool}
           activeShape={activeShape}
-          onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle"); }}
+          onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle", { force: true }); }}
+          shapeRadius={radiusSelection?.radius ?? shapeRadius}
+          shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
+          onShapeRadiusChange={changeShapeRadius}
+          onShapeRadiusCommit={commitShapeRadius}
           onToggleFrameMenu={toggleFrameMenu}
           onCloseFrameMenu={() => setIsFrameMenuOpen(false)}
           onUndo={() => {
@@ -2181,12 +2174,6 @@ export function CanvasSurface({
         onChange={handleImageFile}
         type="file"
       />
-      {sampledColor ? (
-        <div className="eyedropper-readout" data-testid="eyedropper-readout" role="status">
-          <span className="eyedropper-swatch" style={{ background: sampledColor }} />
-          <span>{sampledColor}</span>
-        </div>
-      ) : null}
       {commentFeedback && selectedCommentId === null ? (
         <div className="comment-feedback-toast" data-testid="comment-feedback" data-canvas-control role="status">
           {commentFeedback}

@@ -3,7 +3,9 @@ import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEve
 import { IframeBridgeTransport, type IframeBridgeController } from "../bridge/transport";
 import type { BridgeElementTarget, BridgeEventMessage, BridgeHierarchySnapshot, BridgeInspection } from "../bridge/protocol";
 import type { CanvasFrame, Point } from "../canvas/types";
+import type { ShapeVariantId } from "../editor/tools";
 import { renderFrameDocument } from "./render-document";
+import { ShapePreview } from "./shape-geometry";
 
 interface FrameViewProps {
   frame: CanvasFrame;
@@ -22,6 +24,10 @@ interface FrameViewProps {
   onBridgeSnapshot?: (frameId: string, snapshot: BridgeHierarchySnapshot, requestSequence: number) => void;
   onBridgeController?: (frameId: string, controller: IframeBridgeController | null) => void;
   isCreationMode?: boolean;
+  /** Active vector shape while the shape tool is selected; drives the live drag preview. */
+  creationShape?: ShapeVariantId | null;
+  /** Draft corner radius applied to the live drag preview. */
+  creationRadius?: number;
   onCreationPointerDown?: (frameId: string, point: Point, pointerId: number) => void;
   onCreationPointerMove?: (frameId: string, point: Point, pointerId: number) => void;
   onCreationPointerUp?: (frameId: string, point: Point, pointerId: number) => void;
@@ -62,12 +68,15 @@ export const FrameView = memo(function FrameView({
   onBridgeSnapshot,
   onBridgeController,
   isCreationMode = false,
+  creationShape = null,
+  creationRadius = 0,
   onCreationPointerDown,
   onCreationPointerMove,
   onCreationPointerUp,
   onCreationPointerCancel,
 }: FrameViewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [creationPreview, setCreationPreview] = useState<{ start: Point; end: Point } | null>(null);
   const [initialBridgeSession] = useState(() => createBridgeSession(frame.id));
   const bridgeSessionRef = useRef(initialBridgeSession);
   if (bridgeSessionRef.current.frameId !== frame.id) {
@@ -179,6 +188,7 @@ export const FrameView = memo(function FrameView({
       deleteElement: (command) => transport.deleteElement(command),
       restoreElement: (command) => transport.restoreElement(command),
       duplicateElement: (command) => transport.duplicateElement(command),
+      setShapeRadius: (command) => transport.setShapeRadius(command),
     });
     transport.attach();
 
@@ -218,14 +228,18 @@ export const FrameView = memo(function FrameView({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    onCreationPointerDown?.(frame.id, getCreationPoint(event), event.pointerId);
+    const point = getCreationPoint(event);
+    setCreationPreview({ start: point, end: point });
+    onCreationPointerDown?.(frame.id, point, event.pointerId);
   };
 
   const handleCreationPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!event.isPrimary) return;
     event.preventDefault();
     event.stopPropagation();
-    onCreationPointerMove?.(frame.id, getCreationPoint(event), event.pointerId);
+    const point = getCreationPoint(event);
+    setCreationPreview((current) => (current ? { ...current, end: point } : current));
+    onCreationPointerMove?.(frame.id, point, event.pointerId);
   };
 
   const handleCreationPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -233,6 +247,7 @@ export const FrameView = memo(function FrameView({
     event.preventDefault();
     event.stopPropagation();
     onCreationPointerUp?.(frame.id, getCreationPoint(event), event.pointerId);
+    setCreationPreview(null);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -242,6 +257,7 @@ export const FrameView = memo(function FrameView({
     event.preventDefault();
     event.stopPropagation();
     onCreationPointerCancel?.(frame.id, event.pointerId);
+    setCreationPreview(null);
   };
 
   return (
@@ -297,7 +313,16 @@ export const FrameView = memo(function FrameView({
           onPointerMove={handleCreationPointerMove}
           onPointerUp={handleCreationPointerUp}
           role="presentation"
-        />
+        >
+          {creationPreview && creationShape ? (
+            <ShapePreview
+              end={creationPreview.end}
+              radius={creationRadius}
+              shape={creationShape}
+              start={creationPreview.start}
+            />
+          ) : null}
+        </div>
       ) : null}
       {!isSelected || isPanTool ? (
         <button

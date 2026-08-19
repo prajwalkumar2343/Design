@@ -5,7 +5,7 @@ export type NodeId = string;
 export type DocumentMode = "design" | "wireframe";
 
 import type { ToolId } from "./tools";
-import type { DeviceCategory } from "../frame/presets";
+import type { DeviceCategory, DeviceChrome } from "../frame/presets";
 import {
   createEmptyBrainstormSession,
   type BrainstormSessionState,
@@ -44,6 +44,7 @@ export interface FrameEntity {
   background: string;
   /** Device class the frame was created from; drives desktop-only affordances. */
   category?: DeviceCategory;
+  chrome?: DeviceChrome;
 }
 
 export interface NodeEntity {
@@ -93,6 +94,7 @@ export interface FrameSeed {
   mode?: DocumentMode;
   /** Device class the seed frame belongs to; drives desktop-only affordances. */
   category?: DeviceCategory;
+  chrome?: DeviceChrome;
   x: number;
   y: number;
   width: number;
@@ -197,6 +199,7 @@ export function createEditorStateFromFrameSeeds(
       height: seed.height,
       background: seed.background,
       category: seed.category,
+      chrome: seed.chrome,
     };
     state.pages[pageId].frameIds.push(seed.id);
   }

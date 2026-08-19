@@ -115,6 +115,8 @@ function applyCreateFrameCommand(state: EditorState, frame: FrameSeed): EditorSt
       width: frame.width,
       height: frame.height,
       background: frame.background,
+      category: frame.category,
+      chrome: frame.chrome,
     },
   });
 }

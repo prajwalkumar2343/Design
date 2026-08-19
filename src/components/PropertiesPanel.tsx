@@ -2,11 +2,14 @@ import {
   BoxSelect,
   ChevronDown,
   Layers3,
+  Minus,
   PanelRightClose,
   PanelRightOpen,
   Palette,
+  Plus,
   SlidersHorizontal,
   Sparkles,
+  Square,
   Type,
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -24,6 +27,10 @@ export interface PropertiesPanelProps {
   onMoveFrame: (frameId: string, position: { x: number; y: number }) => void;
   onEditNodeStyle: (property: SafeInlineStyleProperty, value: string | null) => void;
   onEditNodePosition: (frameId: string, nodeId: string, position: { x: number; y: number }) => void;
+  shapeRadius: number;
+  shapeRadiusVisible: boolean;
+  onShapeRadiusChange: (radius: number) => void;
+  onShapeRadiusCommit: () => void;
 }
 
 function formatNumber(value: number): string {
@@ -155,6 +162,87 @@ function OpacityEffectsSection({ entries, onEditNodeStyle }: Pick<PropertiesPane
   );
 }
 
+function CornerRadiusSection({
+  radius,
+  onChange,
+  onCommit,
+}: {
+  radius: number;
+  onChange: (radius: number) => void;
+  onCommit: () => void;
+}) {
+  const progress = Math.max(0, Math.min(100, (radius / 48) * 100));
+  const decrement = () => {
+    const next = Math.max(0, radius - 1);
+    if (next !== radius) {
+      onChange(next);
+      // Commit as a distinct step for button interactions
+      queueMicrotask(() => onCommit());
+    }
+  };
+  const increment = () => {
+    const next = Math.min(48, radius + 1);
+    if (next !== radius) {
+      onChange(next);
+      queueMicrotask(() => onCommit());
+    }
+  };
+  return (
+    <PropertySection title="Corner radius" icon={<Square size={13} />}>
+      <div className="corner-radius-card" aria-label="Corner radius">
+        <div className="corner-radius-head">
+          <span className="corner-radius-label">Smooth the corners</span>
+          <span className="corner-radius-value-pill">
+            <span data-testid="shape-radius-value">{radius}</span>
+            <small>px</small>
+          </span>
+        </div>
+        <div className="corner-radius-control-modern">
+          <button
+            aria-label="Decrease radius"
+            className="corner-radius-step"
+            data-testid="shape-radius-decrement"
+            onClick={decrement}
+            type="button"
+          >
+            <Minus size={14} strokeWidth={1.8} />
+          </button>
+          <div className="corner-radius-slider-wrap">
+            <div className="corner-radius-track" aria-hidden="true">
+              <div className="corner-radius-track-fill" style={{ width: `${progress}%` }} />
+            </div>
+            <input
+              aria-label="Corner radius"
+              data-testid="shape-radius-slider"
+              max={48}
+              min={0}
+              onBlur={onCommit}
+              onChange={(event) => onChange(Number(event.target.value))}
+              onPointerUp={onCommit}
+              step={1}
+              type="range"
+              value={radius}
+            />
+          </div>
+          <button
+            aria-label="Increase radius"
+            className="corner-radius-step"
+            data-testid="shape-radius-increment"
+            onClick={increment}
+            type="button"
+          >
+            <Plus size={14} strokeWidth={1.8} />
+          </button>
+        </div>
+        <div className="corner-radius-meta">
+          <span>Sharp</span>
+          <span>Rounded</span>
+        </div>
+      </div>
+    </PropertySection>
+  );
+}
+
 function NodeDesignPanel({
   entries,
   nodes,
@@ -165,7 +253,7 @@ function NodeDesignPanel({
   const profile = primary ? elementProfile(primary.target, nodes[primary.target.elementId]) : null;
   const positionProps = { entries, onEditNodeStyle, onEditNodePosition };
   return (
-    <div className="properties-scroll">
+    <>
       <div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{entries.length === 1 ? primary?.inspection?.target.name ?? "Layer" : `${entries.length} layers`}</strong><small>{entries.length === 1 ? "Selected layer" : "Mixed selection"}</small></span></div>
       {!entries.every((entry) => entry.inspection) ? <div className="property-inspecting"><Sparkles size={13} /> Inspecting live layer…</div> : null}
       {profile === "button" ? (
@@ -207,16 +295,16 @@ function NodeDesignPanel({
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
       )}
-    </div>
+    </>
   );
 }
 
 function FrameDesignPanel({ frame, selection, onUpdateFrame, onMoveFrame }: Pick<PropertiesPanelProps, "selection" | "onUpdateFrame" | "onMoveFrame"> & { frame: FrameEntity }) {
   const multiple = selection.frameIds.length > 1;
-  return <div className="properties-scroll"><div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{multiple ? `${selection.frameIds.length} frames` : frame.name}</strong><small>{multiple ? "Mixed selection" : "Responsive frame"}</small></span></div><PropertySection title="Position & size" icon={<BoxSelect size={13} />}><div className="property-grid"><PropertyField label="X" value={multiple ? "mixed" : formatNumber(frame.x)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: next, y: frame.y }); }} /><PropertyField label="Y" value={multiple ? "mixed" : formatNumber(frame.y)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: frame.x, y: next }); }} /><PropertyField label="W" value={multiple ? "mixed" : formatNumber(frame.width)} type="number" suffix="px" testId="property-frame-width" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { width: Math.max(24, next) }); }} /><PropertyField label="H" value={multiple ? "mixed" : formatNumber(frame.height)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { height: Math.max(24, next) }); }} /></div></PropertySection><PropertySection title="Fill" icon={<Palette size={13} />}><PropertyField label="Background" value={multiple ? "mixed" : frame.background} onCommit={(value) => onUpdateFrame(frame.id, { background: value })} /></PropertySection></div>;
+  return <><div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{multiple ? `${selection.frameIds.length} frames` : frame.name}</strong><small>{multiple ? "Mixed selection" : "Responsive frame"}</small></span></div><PropertySection title="Position & size" icon={<BoxSelect size={13} />}><div className="property-grid"><PropertyField label="X" value={multiple ? "mixed" : formatNumber(frame.x)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: next, y: frame.y }); }} /><PropertyField label="Y" value={multiple ? "mixed" : formatNumber(frame.y)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: frame.x, y: next }); }} /><PropertyField label="W" value={multiple ? "mixed" : formatNumber(frame.width)} type="number" suffix="px" testId="property-frame-width" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { width: Math.max(24, next) }); }} /><PropertyField label="H" value={multiple ? "mixed" : formatNumber(frame.height)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { height: Math.max(24, next) }); }} /></div></PropertySection><PropertySection title="Fill" icon={<Palette size={13} />}><PropertyField label="Background" value={multiple ? "mixed" : frame.background} onCommit={(value) => onUpdateFrame(frame.id, { background: value })} /></PropertySection></>;
 }
 
-export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition }: PropertiesPanelProps) {
+export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit }: PropertiesPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(304);
   const [dragging, setDragging] = useState<{ x: number; width: number } | null>(null);
@@ -224,5 +312,5 @@ export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpd
   const entries = useMemo(() => Object.values(bridgeTargets).filter((entry) => selection.nodeIds.includes(entry.target.elementId) && (selection.frameIds.length === 0 || selection.frameIds.includes(entry.frameId))), [bridgeTargets, selection.frameIds, selection.nodeIds]);
   const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDragging({ x: event.clientX, width }); };
   const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => { if (dragging) setWidth(Math.min(420, Math.max(260, dragging.width - (event.clientX - dragging.x)))); };
-  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner">{selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}<button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => setDragging(null)} type="button" /></div> : null}</aside>;
+  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}{selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => setDragging(null)} type="button" /></div> : null}</aside>;
 }

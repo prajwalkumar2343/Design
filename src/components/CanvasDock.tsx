@@ -40,10 +40,6 @@ interface CanvasDockProps {
   onSelectTool: (tool: ToolId) => void;
   activeShape: ShapeVariantId;
   onSelectShape: (shape: ShapeVariantId) => void;
-  shapeRadius: number;
-  shapeRadiusVisible: boolean;
-  onShapeRadiusChange: (radius: number) => void;
-  onShapeRadiusCommit: () => void;
   onToggleFrameMenu: () => void;
   onCloseFrameMenu: () => void;
   onUndo: () => void;
@@ -80,10 +76,6 @@ export function CanvasDock({
   onSelectTool,
   activeShape,
   onSelectShape,
-  shapeRadius,
-  shapeRadiusVisible,
-  onShapeRadiusChange,
-  onShapeRadiusCommit,
   onToggleFrameMenu,
   onCloseFrameMenu,
   onUndo,
@@ -185,27 +177,6 @@ export function CanvasDock({
           <ChevronDown size={10} strokeWidth={1.8} />
         </button>
       </div>
-
-      <span className="dock-divider" />
-
-      {shapeRadiusVisible ? (
-        <div className="shape-radius-control" aria-label="Corner radius">
-          <span className="shape-radius-label">Radius</span>
-          <input
-            aria-label="Corner radius"
-            data-testid="shape-radius-slider"
-            max={48}
-            min={0}
-            onPointerUp={onShapeRadiusCommit}
-            onBlur={onShapeRadiusCommit}
-            onChange={(event) => onShapeRadiusChange(Number(event.target.value))}
-            step={1}
-            type="range"
-            value={shapeRadius}
-          />
-          <span className="shape-radius-value" data-testid="shape-radius-value">{shapeRadius}</span>
-        </div>
-      ) : null}
 
       <span className="dock-divider" />
 

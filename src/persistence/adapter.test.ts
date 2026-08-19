@@ -41,4 +41,24 @@ describe("BrowserPersistenceAdapter", () => {
     expect(clickedDownload).toBe("project.wirecanvas.json");
     expect(clickedHref).toBe("blob:wirecanvas");
   });
+
+  it("downloads binary payloads such as .fig archives", () => {
+    const adapter = new BrowserPersistenceAdapter();
+    const createObjectURL = vi.fn((_: Blob) => "blob:figma");
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      void this.download;
+    });
+
+    adapter.downloadProjectFile({
+      text: new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+      filename: "project.fig",
+      mimeType: "application/octet-stream",
+    });
+
+    const blob = createObjectURL.mock.calls[0][0] as Blob;
+    expect(blob.type).toBe("application/octet-stream");
+    expect(blob.size).toBe(4);
+    expect(click).toHaveBeenCalledTimes(1);
+  });
 });

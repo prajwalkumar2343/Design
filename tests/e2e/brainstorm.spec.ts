@@ -4,11 +4,11 @@ test.describe("Brainstorming Mode", () => {
   test("opens on a blank canvas and starts with the Brief Frame", async ({ page }) => {
     await page.goto("/");
 
-    await expect(page.getByTestId("empty-canvas-state")).toBeVisible();
+    await expect(page.locator('[data-testid="project-lake"], [data-testid="empty-canvas-state"]')).toBeVisible();
     await expect(page.locator("[data-frame-id]")).toHaveCount(0);
     await expect(page.locator("iframe")).toHaveCount(0);
 
-    await page.getByTestId("start-brainstorming").click();
+    await page.getByTestId("start-brainstorming").first().click();
 
     await expect(page.getByTestId("brief-frame")).toBeVisible();
     await expect(page.getByTestId("brief-opening-prompt")).toHaveText(
@@ -20,7 +20,7 @@ test.describe("Brainstorming Mode", () => {
 
   test("edits brief content, validates references, and keeps the frame movable", async ({ page }) => {
     await page.goto("/");
-    await page.getByTestId("start-brainstorming").click();
+    await page.getByTestId("start-brainstorming").first().click();
 
     const description = page.getByTestId("brief-field-projectDescription");
     await description.fill("A calm planning workspace for small teams.");

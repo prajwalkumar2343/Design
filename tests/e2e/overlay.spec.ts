@@ -64,6 +64,32 @@ test.describe("iframe node overlays", () => {
     await expect.poll(() => heading.evaluate((element) => element.style.transform)).toBe(moved);
   });
 
+  test("selects the topmost layer when clicking inside a selected container", async ({ page }) => {
+    const { frame, preview } = await openDesktop(page);
+    const section = preview.locator("main > section");
+    const heading = preview.locator("main h1");
+
+    await section.dispatchEvent("click", { bubbles: true, clientX: 300, clientY: 500 });
+    await expect.poll(() => frame.getAttribute("data-bridge-selected-element-id")).toContain("section[1]");
+    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+
+    const headingBox = await heading.boundingBox();
+    if (!headingBox) throw new Error("The nested heading is unavailable");
+    await page.mouse.click(headingBox.x + headingBox.width / 2, headingBox.y + headingBox.height / 2);
+
+    await expect.poll(() => frame.getAttribute("data-bridge-selected-element-id")).toContain("h1[1]");
+    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+
+    const before = await heading.evaluate((element) => element.getAttribute("style") ?? "");
+    const box = await page.getByTestId("node-selection-box").boundingBox();
+    if (!box) throw new Error("The selection box is unavailable");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 48, box.y + box.height / 2 + 26, { steps: 6 });
+    await page.mouse.up();
+    await expect.poll(() => heading.evaluate((element) => element.getAttribute("style") ?? "")).not.toBe(before);
+  });
+
   test("enters inline text editing from the selected overlay and commits one undoable edit", async ({ page }) => {
     const { preview, heading } = await openDesktop(page);
     await page.getByTestId("node-selection-box").dblclick();

@@ -1,4 +1,6 @@
 import { expect, test } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { parseFig } from "openfig-core";
 
 const wireframeProject = {
   kind: "wirecanvas-project",
@@ -113,6 +115,48 @@ test.describe("WireCanvas project persistence", () => {
     await expect(page.locator('[data-frame-id="wireframe-frame"]')).toBeVisible();
     await expect(page.locator("iframe")).toHaveCount(1);
     await expect(page.getByTestId("persistence-feedback")).toContainText("imported successfully");
+  });
+
+  test("exports the canvas as a Figma .fig file with mapped frames and shapes", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("start-brainstorming").click();
+    await page.getByTestId("brief-field-projectDescription").fill("Figma export canvas");
+    await page.getByTestId("brief-field-audience").click();
+
+    await page.getByTestId("add-frame-button").click();
+    await page.getByRole("menu", { name: "Frame presets" }).waitFor();
+    await page.getByTestId("frame-category-mobile").click();
+    await page.getByTestId("add-mobile-frame").click();
+    const frame = page.locator('[data-frame-id]').filter({ has: page.locator("iframe") }).last();
+
+    await page.getByTestId("tool-button-rectangle").click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box) throw new Error("The active frame creation layer is unavailable");
+    const start = { x: box.x + box.width * 0.4, y: box.y + box.height * 0.4 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 120, start.y + 80, { steps: 4 });
+    await page.mouse.up();
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("export-figma-button").click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toBe("brainstorm-session.fig");
+    const path = await download.path();
+    if (!path) throw new Error("Figma export download has no temporary path");
+
+    const bytes = readFileSync(path);
+    expect(bytes.readUInt32LE(0)).toBe(0x04034b50);
+    const doc = parseFig(new Uint8Array(bytes));
+    expect(doc.header.prelude).toBe("fig-kiwi");
+    expect(doc.meta).toMatchObject({ file_name: "brainstorm-session" });
+    expect(doc.thumbnail && doc.thumbnail.length).toBeGreaterThan(100);
+
+    const frameNode = doc.nodes.find((child) => child.type === "FRAME");
+    expect(frameNode).toBeTruthy();
+    const children = frameNode ? (doc.childrenMap.get(`${frameNode.guid.sessionID}:${frameNode.guid.localID}`) ?? []) : [];
+    expect(children.some((child) => child.type === "ROUNDED_RECTANGLE")).toBe(true);
   });
 
   test("shows malformed-file feedback without losing current work", async ({ page }) => {

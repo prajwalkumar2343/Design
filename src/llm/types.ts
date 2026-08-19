@@ -1,4 +1,4 @@
-export type LLMProviderId = "opencode-go" | "codex-chatgpt";
+export type LLMProviderId = "opencode-go" | "codex-chatgpt" | "gemini";
 
 export type LLMRole = "system" | "user" | "assistant";
 

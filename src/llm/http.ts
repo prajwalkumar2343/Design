@@ -12,6 +12,8 @@ export interface JsonRequestOptions {
   timeoutMs?: number;
   headers?: Record<string, string>;
   fetchFn?: typeof fetch;
+  /** Non-bearer auth, e.g. Google's `x-goog-api-key`. Overrides the Bearer header. */
+  authHeader?: { name: string; value: string };
 }
 
 export interface JsonResponse {
@@ -54,6 +56,7 @@ export async function requestJson(options: JsonRequestOptions): Promise<JsonResp
     timeoutMs = DEFAULT_LLM_TIMEOUT_MS,
     headers = {},
     fetchFn = fetch,
+    authHeader,
   } = options;
 
   const controller = new AbortController();
@@ -64,14 +67,18 @@ export async function requestJson(options: JsonRequestOptions): Promise<JsonResp
   }
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
+  const authHeaders: Record<string, string> = authHeader
+    ? { [authHeader.name]: authHeader.value }
+    : { Authorization: `Bearer ${apiKey}` };
+
   let response: Response;
   try {
     response = await fetchFn(url, {
       method,
       signal: controller.signal,
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        ...authHeaders,
         ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),

@@ -16,10 +16,13 @@
     "@paper-design/shaders-react": "0.0.80",
     "@vitejs/plugin-react": "^6.0.5",
     "css-tree": "^3.2.1",
+    "kiwi-schema": "^0.5.0",
     "lucide-react": "^1.31.0",
+    "openfig-core": "^0.4.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "vite": "^8.2.1"
+    "vite": "^8.2.1",
+    "zstd-codec": "^0.1.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

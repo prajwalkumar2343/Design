@@ -1,10 +1,11 @@
-import { GripHorizontal } from "lucide-react";
+import { Globe, GripHorizontal } from "lucide-react";
 import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { IframeBridgeTransport, type IframeBridgeController } from "../bridge/transport";
 import type { BridgeElementTarget, BridgeEventMessage, BridgeHierarchySnapshot, BridgeInspection } from "../bridge/protocol";
 import type { CanvasFrame, Point } from "../canvas/types";
 import type { ShapeVariantId } from "../editor/tools";
 import { renderFrameDocument } from "./render-document";
+import { injectWireframeTheme } from "./wireframe-theme";
 import { ShapePreview } from "./shape-geometry";
 
 interface FrameViewProps {
@@ -24,9 +25,7 @@ interface FrameViewProps {
   onBridgeSnapshot?: (frameId: string, snapshot: BridgeHierarchySnapshot, requestSequence: number) => void;
   onBridgeController?: (frameId: string, controller: IframeBridgeController | null) => void;
   isCreationMode?: boolean;
-  /** Active vector shape while the shape tool is selected; drives the live drag preview. */
   creationShape?: ShapeVariantId | null;
-  /** Draft corner radius applied to the live drag preview. */
   creationRadius?: number;
   onCreationPointerDown?: (frameId: string, point: Point, pointerId: number) => void;
   onCreationPointerMove?: (frameId: string, point: Point, pointerId: number) => void;
@@ -53,6 +52,46 @@ function createBridgeSession(frameId: string) {
     channel: `frame-${frameId}-${randomPart}`,
     parentOrigin: typeof window === "undefined" ? "null" : window.location.origin,
   };
+}
+
+function DeviceChrome({ chrome, width }: { chrome: NonNullable<CanvasFrame["chrome"]>; width: number }) {
+  if (chrome.type === "none") return null;
+  // Scale cutout slightly for smaller viewports to keep proportion
+  const scale = width < 380 ? 0.9 : width > 420 ? 1.05 : 1;
+  if (chrome.type === "notch") {
+    const w = Math.round((chrome.width ?? 164) * scale);
+    const h = Math.round((chrome.height ?? 30) * scale);
+    return (
+      <div className="device-cutout device-notch" aria-hidden="true" style={{ width: w, height: h }}>
+        <span className="device-notch-speaker" />
+        <span className="device-notch-camera" />
+      </div>
+    );
+  }
+  if (chrome.type === "dynamic-island") {
+    const w = Math.round((chrome.width ?? 126) * scale);
+    const h = Math.round((chrome.height ?? 36) * scale);
+    return (
+      <div className="device-cutout device-dynamic-island" aria-hidden="true" style={{ width: w, height: h }}>
+        <span className="device-island-camera" />
+        <span className="device-island-sensors" />
+      </div>
+    );
+  }
+  if (chrome.type === "punch-hole") {
+    const d = Math.round((chrome.width ?? 12) * scale);
+    const left = chrome.punchPosition === "left" ? "24%" : "50%";
+    return (
+      <div
+        className="device-cutout device-punch-hole"
+        aria-hidden="true"
+        style={{ width: d, height: d, left, transform: left === "50%" ? "translateX(-50%)" : "none" }}
+      >
+        <span className="device-punch-lens" />
+      </div>
+    );
+  }
+  return null;
 }
 
 export const FrameView = memo(function FrameView({
@@ -189,6 +228,7 @@ export const FrameView = memo(function FrameView({
       restoreElement: (command) => transport.restoreElement(command),
       duplicateElement: (command) => transport.duplicateElement(command),
       setShapeRadius: (command) => transport.setShapeRadius(command),
+      pickElement: (command) => transport.pickElement(command),
     });
     transport.attach();
 
@@ -260,11 +300,42 @@ export const FrameView = memo(function FrameView({
     setCreationPreview(null);
   };
 
+  const isDesktopFrame = frame.category === "desktop";
+  // Fallback for legacy frames / demo seeds without explicit chrome
+  const resolvedChrome = frame.chrome ?? (
+    frame.category === "mobile"
+      ? frame.width >= 430
+        ? { type: "dynamic-island" as const, width: 136, height: 38, bezelRadius: 56 }
+        : frame.width >= 393
+          ? { type: "dynamic-island" as const, width: 126, height: 36, bezelRadius: 52 }
+          : frame.width === 375
+            ? { type: "notch" as const, width: 148, height: 28, bezelRadius: 44 }
+            : { type: "notch" as const, width: 164, height: 30, bezelRadius: 48 }
+      : frame.category === "tablet"
+        ? { type: "none" as const, bezelRadius: 18 }
+        : { type: "none" as const, bezelRadius: 5 }
+  );
+  const chrome = resolvedChrome;
+  const isDeviceFrame = chrome.type !== "none";
+  const bezelRadius = chrome.bezelRadius ?? (frame.category === "mobile" ? 28 : frame.category === "tablet" ? 18 : 5);
+  const showHomeIndicator = isDeviceFrame && frame.category === "mobile";
+  const showDeviceChrome = isDeviceFrame;
+
+  const openFullPreview = () => {
+    const previewDoc =
+      frame.mode === "wireframe" ? injectWireframeTheme(frame.srcDoc) : frame.srcDoc;
+    const blob = new Blob([previewDoc], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+  };
+
   return (
     <section
-      className="canvas-frame"
+      className={`canvas-frame${isDeviceFrame ? " device-frame" : ""}${isSelected ? " is-device-selected" : ""}`}
       data-frame-id={frame.id}
       data-selected={isSelected ? "true" : "false"}
+      data-chrome={chrome?.type ?? "none"}
+      data-category={frame.category ?? "desktop"}
       data-bridge-status={bridgeState.status}
       data-bridge-hovered-element-id={bridgeState.hoveredElementId ?? undefined}
       data-bridge-selected-element-id={bridgeState.selectedElementId ?? undefined}
@@ -276,8 +347,9 @@ export const FrameView = memo(function FrameView({
         width: frame.width,
         height: frame.height,
         transform: `translate3d(${frame.x}px, ${frame.y}px, 0)`,
-        background: frame.background,
-      }}
+        background: isDeviceFrame ? "#0a0a0c" : frame.background,
+        ["--bezel-radius" as string]: `${bezelRadius}px`,
+      } as React.CSSProperties}
     >
       <button
         className="frame-label"
@@ -290,48 +362,83 @@ export const FrameView = memo(function FrameView({
         <span>{frame.name}</span>
         <GripHorizontal size={14} strokeWidth={1.6} aria-hidden="true" />
       </button>
-      {isLive ? (
-        <iframe
-          ref={iframeRef}
-          className="frame-document"
-          title={`${frame.name} preview`}
-          srcDoc={bridgeSrcDoc}
-          sandbox="allow-scripts"
-        />
-      ) : (
-        <div className="frame-placeholder" aria-label={`${frame.name} is paused`}>
-          <span>{frame.width} × {frame.height}</span>
-        </div>
-      )}
-      {isCreationMode && isLive ? (
-        <div
-          aria-label={`Create inside ${frame.name}`}
-          className="frame-creation-layer"
-          data-testid="frame-creation-layer"
-          onPointerCancel={handleCreationPointerCancel}
-          onPointerDown={handleCreationPointerDown}
-          onPointerMove={handleCreationPointerMove}
-          onPointerUp={handleCreationPointerUp}
-          role="presentation"
-        >
-          {creationPreview && creationShape ? (
-            <ShapePreview
-              end={creationPreview.end}
-              radius={creationRadius}
-              shape={creationShape}
-              start={creationPreview.start}
+
+      <div className={`device-screen-wrap${showDeviceChrome ? " has-chrome" : ""}`}>
+        <div className="device-screen" style={{ borderRadius: isDeviceFrame ? `calc(var(--bezel-radius) - 4px)` : "4px", background: frame.background }}>
+          {isLive ? (
+            <iframe
+              ref={iframeRef}
+              className="frame-document"
+              title={`${frame.name} preview`}
+              srcDoc={bridgeSrcDoc}
+              sandbox="allow-scripts"
+            />
+          ) : (
+            <div className="frame-placeholder" aria-label={`${frame.name} is paused`}>
+              <span>{frame.width} × {frame.height}</span>
+            </div>
+          )}
+
+          {showDeviceChrome ? <DeviceChrome chrome={chrome!} width={frame.width} /> : null}
+          {showHomeIndicator ? <div className="device-home-indicator" aria-hidden="true" /> : null}
+
+          {isCreationMode && isLive ? (
+            <div
+              aria-label={`Create inside ${frame.name}`}
+              className="frame-creation-layer"
+              data-testid="frame-creation-layer"
+              onPointerCancel={handleCreationPointerCancel}
+              onPointerDown={handleCreationPointerDown}
+              onPointerMove={handleCreationPointerMove}
+              onPointerUp={handleCreationPointerUp}
+              role="presentation"
+            >
+              {creationPreview && creationShape ? (
+                <ShapePreview
+                  end={creationPreview.end}
+                  radius={creationRadius}
+                  shape={creationShape}
+                  start={creationPreview.start}
+                />
+              ) : null}
+            </div>
+          ) : null}
+
+          {!isSelected || isPanTool ? (
+            <button
+              className="frame-activation-layer"
+              aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}
+              onClick={isPanTool ? undefined : () => onSelect(frame.id)}
+              onPointerDown={isPanTool ? onStartPan : undefined}
+              type="button"
             />
           ) : null}
         </div>
+      </div>
+
+      {/* Hardware side buttons – outside screen wrap so they aren’t clipped */}
+      {isDeviceFrame ? (
+        <>
+          <div className="device-button device-button-power" aria-hidden="true" />
+          <div className="device-button device-button-volume-up" aria-hidden="true" />
+          <div className="device-button device-button-volume-down" aria-hidden="true" />
+          <div className="device-button device-button-mute" aria-hidden="true" />
+        </>
       ) : null}
-      {!isSelected || isPanTool ? (
+
+      {isDesktopFrame ? (
         <button
-          className="frame-activation-layer"
-          aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}
-          onClick={isPanTool ? undefined : () => onSelect(frame.id)}
-          onPointerDown={isPanTool ? onStartPan : undefined}
+          className="frame-preview-site"
+          aria-label={`Open ${frame.name} as a full website in a new tab`}
+          title="Open as full website"
+          onClick={(event) => {
+            event.stopPropagation();
+            openFullPreview();
+          }}
           type="button"
-        />
+        >
+          <Globe size={15} strokeWidth={1.6} aria-hidden="true" />
+        </button>
       ) : null}
     </section>
   );

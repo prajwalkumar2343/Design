@@ -3,6 +3,9 @@ import { LLMError, type LLMChatRequest, type LLMChatResult, type LLMProviderId }
 
 const PROVIDER: LLMProviderId = "opencode-go";
 
+/** Cheap default model for connection tests through the Go gateway. */
+export const DEFAULT_GO_TEST_MODEL = "deepseek-v4-flash";
+
 /** The OpenCode Go gateway family: `/responses` (OpenAI Responses API). */
 export const GO_RESPONSES_MODELS = new Set(["grok-4.5", "gpt-5.6-luna"]);
 

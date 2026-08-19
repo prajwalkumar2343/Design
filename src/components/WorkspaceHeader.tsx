@@ -1,4 +1,4 @@
-import { Cloud } from "lucide-react";
+import { Cloud, Layers } from "lucide-react";
 import type { ChangeEvent } from "react";
 
 interface WorkspaceHeaderProps {
@@ -8,7 +8,11 @@ interface WorkspaceHeaderProps {
   canExport?: boolean;
   onImportFile?: (file: File) => void | Promise<void>;
   onExport?: () => void;
+  onExportFigma?: () => void;
   persistenceFeedback?: { kind: "success" | "error"; message: string } | null;
+  onShowLake?: () => void;
+  lakeCount?: number;
+  isLakeOpen?: boolean;
 }
 
 export function WorkspaceHeader({
@@ -18,7 +22,11 @@ export function WorkspaceHeader({
   canExport = false,
   onImportFile,
   onExport,
+  onExportFigma,
   persistenceFeedback,
+  onShowLake,
+  lakeCount,
+  isLakeOpen = false,
 }: WorkspaceHeaderProps) {
   const handleImportChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -43,6 +51,22 @@ export function WorkspaceHeader({
 
       <div className="workspace-header-right">
         <div className="workspace-project-actions" aria-label="Project file actions">
+          {onShowLake ? (
+            <button
+              className={`workspace-file-button workspace-lake-button${isLakeOpen ? " is-active" : ""}`}
+              data-testid="lake-toggle-button"
+              onClick={(event) => {
+                event.stopPropagation();
+                onShowLake?.();
+              }}
+              type="button"
+              aria-label={isLakeOpen ? "Back to canvas" : "Open project lake"}
+              title={lakeCount ? `${lakeCount} projects in your lake` : "Open project lake"}
+            >
+              <Layers size={13} strokeWidth={1.8} aria-hidden="true" />
+              Lake {typeof lakeCount === "number" ? `· ${lakeCount}` : ""}
+            </button>
+          ) : null}
           <input
             accept=".wirecanvas.json,application/json"
             aria-label="Choose WireCanvas project to import"
@@ -63,17 +87,30 @@ export function WorkspaceHeader({
             Import
           </button>
           {canExport ? (
-            <button
-              className="workspace-file-button"
-              data-testid="export-project-button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onExport?.();
-              }}
-              type="button"
-            >
-              Export
-            </button>
+            <>
+              <button
+                className="workspace-file-button"
+                data-testid="export-project-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onExport?.();
+                }}
+                type="button"
+              >
+                Export
+              </button>
+              <button
+                className="workspace-file-button"
+                data-testid="export-figma-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onExportFigma?.();
+                }}
+                type="button"
+              >
+                Export .fig
+              </button>
+            </>
           ) : null}
         </div>
         <div className="workspace-presence">

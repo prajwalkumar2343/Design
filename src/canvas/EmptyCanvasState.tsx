@@ -1,3 +1,5 @@
+import { AgentConnectionPanel } from "./AgentConnectionPanel";
+
 interface EmptyCanvasStateProps {
   onStartBrainstorming: () => void;
 }
@@ -11,6 +13,7 @@ export function EmptyCanvasState({ onStartBrainstorming }: EmptyCanvasStateProps
       <button data-testid="start-brainstorming" onClick={onStartBrainstorming} type="button">
         Start brainstorming
       </button>
+      <AgentConnectionPanel />
     </section>
   );
 }

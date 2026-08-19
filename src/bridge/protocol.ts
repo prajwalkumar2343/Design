@@ -161,6 +161,11 @@ export type BridgeCommand =
       command: "set-shape-radius";
       targetId: string;
       radius: number;
+    }
+  | {
+      command: "pick-element";
+      point: BridgePoint;
+      shiftKey: boolean;
     };
 
 export type BridgeCreationKind =
@@ -261,6 +266,10 @@ export type BridgeCommandAck =
       previousRadius: number;
       radius: number;
       undo: BridgeUndoCommand;
+    }
+  | {
+      kind: "command";
+      command: "pick-element";
     };
 
 export type BridgeResponseResult =
@@ -518,6 +527,9 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
   if (value.command === "set-shape-radius") {
     return isValidString(value.targetId, { maxLength: 512 }) && isShapeRadius(value.radius);
   }
+  if (value.command === "pick-element") {
+    return isPoint(value.point) && typeof value.shiftKey === "boolean";
+  }
   if (value.command === "create-element") {
     return isValidString(value.elementId, { maxLength: 512 }) &&
       isCreationKind(value.kind) &&
@@ -609,6 +621,7 @@ function isCommandAck(value: unknown): value is BridgeCommandAck {
       isBridgeCommand(value.undo) &&
       value.undo.command === "set-shape-radius";
   }
+  if (value.command === "pick-element") return true;
   return false;
 }
 

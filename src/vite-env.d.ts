@@ -5,6 +5,8 @@ interface ImportMetaEnv {
   readonly VITE_OPENCODE_GO_BASE_URL?: string;
   readonly VITE_CODEX_CHATGPT_API_KEY?: string;
   readonly VITE_CODEX_BASE_URL?: string;
+  readonly VITE_GEMINI_API_KEY?: string;
+  readonly VITE_GEMINI_BASE_URL?: string;
 }
 
 interface ImportMeta {

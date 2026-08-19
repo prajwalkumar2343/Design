@@ -1,7 +1,7 @@
 # Agent-Native Design Tool — Product and Technical Specification
 
 Status: Active spec; Brainstorming Mode v1 shipped
-Last updated: 2026-08-14
+Last updated: 2026-08-18
 Working title: Canvas  
 
 ## 1. Product statement
@@ -139,6 +139,48 @@ direct Codex workspace writes.
 - The larger voice, source-code reconciliation, framework adapters, broad production HTML
   capabilities, publishing, and internal-LLM ideas elsewhere in this document remain
   roadmap/non-goals for this shipped slice.
+
+## 1.2 Browser capture → clipboard paste workflow
+
+Canvas pairs with a companion Manifest V3 browser extension, **Canvas Capture**, whose
+source lives entirely outside the web app in `browser-extension-source/` (no shared code
+or build step). The two sides communicate only through the OS clipboard.
+
+The extension flow: the user clicks the toolbar action on any page, hovers a section to
+highlight it, and clicks. The extension deep-clones the selected element, removes
+non-visual/executable tags (`script`, `iframe`, `object`, `embed`, `base`, `link`,
+`meta`, `noscript`, `template`, media stubs), inlines every remaining element's computed
+styles (only properties whose computed value differs from its parent, so the output
+stays compact), and writes one complete `<!doctype html>` document to the clipboard as
+both `text/html` and `text/plain`. `ArrowUp` expands the pick to the parent element;
+`Esc` cancels. Known extension limits: light-DOM only (shadow content is not
+serialized), no pseudo-element styles, no embedded web fonts, and cross-origin iframes
+are not capturable.
+
+The extension marks its `<html>` element with metadata attributes:
+
+- `data-canvas-paste-source` — source page URL
+- `data-canvas-paste-title` — source page title
+- `data-canvas-paste-width` / `data-canvas-paste-height` — rendered section size in px
+- `data-canvas-paste-background` — nearest opaque background color
+
+On the Canvas side, pressing `Cmd/Ctrl+V` (or any OS paste) on the canvas is intercepted
+by a window `paste` listener in `CanvasSurface.tsx`. `src/clipboard/paste-html.ts`
+reads and strips the metadata attributes, requires a complete document (wrapping bare
+fragments and adding a missing doctype when needed), and validates the result with the
+shared `validateCompleteHtml` admission (non-empty, ≤ 2 MB, no reserved bridge/theme
+markers). A rejected paste shows an error toast and leaves state untouched.
+
+Accepted HTML becomes one undoable **"Paste section"** transaction: a new `design`-mode
+document (revision 1), page, and frame — pasted HTML is always full-styled design
+content, never wireframe admission, and is stored verbatim in `DocumentEntity.srcDoc`
+so project export/import round-trips. The frame is sized from the captured
+section metadata (clamped to 160–2400 px, 800×600 fallback), named after the source
+page title or host, positioned at the viewport center or to the right of existing
+frames, selected, and camera-fitted. Pasting does not touch the Brainstorm session
+state. The internal node copy/paste shortcut (duplicating bridge-created elements)
+takes priority when set; otherwise OS clipboard HTML pastes a new frame. Text without
+HTML structure is ignored.
 
 ## 2. Product principles
 

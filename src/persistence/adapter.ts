@@ -5,7 +5,7 @@ export interface ProjectFileInput {
 }
 
 export interface ProjectDownloadInput {
-  text: string;
+  text: string | Uint8Array;
   filename: string;
   mimeType: string;
 }
@@ -29,7 +29,10 @@ export class BrowserPersistenceAdapter implements PersistenceAdapter, BrowserDow
   }
 
   downloadProjectFile(input: ProjectDownloadInput): void {
-    const blob = new Blob([input.text], { type: input.mimeType });
+    const payload: BlobPart = typeof input.text === "string"
+      ? input.text
+      : input.text.slice().buffer;
+    const blob = new Blob([payload], { type: input.mimeType });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;

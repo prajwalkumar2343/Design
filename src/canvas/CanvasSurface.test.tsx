@@ -1,13 +1,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BRAINSTORM_OPENING_PROMPT } from "../router/brainstorm-session";
 import { applyEditorCommand, createEmptyEditorState, startBrainstormSessionCommand } from "../editor";
 import { serializeWireCanvasProject } from "../persistence";
 import { CanvasSurface } from "./CanvasSurface";
 
 describe("CanvasSurface brainstorming entry", () => {
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch {}
+  });
+
   it("starts with no demo frames and creates the Brief Frame from the empty state", () => {
-    render(<CanvasSurface frames={[]} />);
+    render(<CanvasSurface frames={[]} disableLocalPersistence />);
 
     expect(screen.getByTestId("empty-canvas-state")).toBeTruthy();
     expect(screen.queryByTestId("brief-frame")).toBeNull();
@@ -52,6 +56,7 @@ describe("CanvasSurface brainstorming entry", () => {
         frames={[]}
         persistenceAdapter={persistenceAdapter}
         downloadAdapter={{ downloadProjectFile }}
+        disableLocalPersistence
       />,
     );
 
@@ -69,5 +74,33 @@ describe("CanvasSurface brainstorming entry", () => {
     });
     await waitFor(() => expect((screen.getByTestId("brief-field-projectDescription") as HTMLTextAreaElement).value).toBe("Imported project"));
     expect(screen.getByTestId("persistence-feedback").textContent).toContain("imported successfully");
+  });
+
+  it("shows the lake with different project kinds and continues from local memory", async () => {
+    render(<CanvasSurface frames={[]} />);
+
+    expect(screen.getByTestId("project-lake")).toBeTruthy();
+    expect(screen.getByTestId("create-kind-landing")).toBeTruthy();
+    expect(screen.getByTestId("create-kind-dashboard")).toBeTruthy();
+    expect(screen.getByTestId("start-brainstorming")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("create-kind-landing"));
+    await waitFor(() => expect(screen.queryByTestId("project-lake")).toBeNull());
+    await waitFor(() => expect(screen.getByTestId("brief-frame")).toBeTruthy());
+    // landing preset should have prefilled description
+    await waitFor(() => expect((screen.getByTestId("brief-field-projectDescription") as HTMLTextAreaElement).value).toContain("Premium landing page"));
+    // URL should now be a per-project design URL and survive refresh
+    expect(window.location.pathname).toMatch(/^\/design\//);
+    const projectUrl = window.location.pathname;
+
+    // Lake toggle should now navigate to home and show the persisted project
+    expect(screen.getByTestId("lake-toggle-button").textContent).toContain("Lake");
+    fireEvent.click(screen.getByTestId("lake-toggle-button"));
+    await waitFor(() => expect(screen.getByTestId("project-lake")).toBeTruthy());
+    expect(window.location.pathname).toBe("/");
+    expect(screen.getByTestId("project-card")).toBeTruthy();
+
+    // projectUrl is the per-project design URL — refresh on that URL would stay on the design page
+    expect(projectUrl).toMatch(/^\/design\//);
   });
 });

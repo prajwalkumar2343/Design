@@ -227,5 +227,29 @@ describe("iframe bridge protocol", () => {
         value: "120px",
       },
     })).not.toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "pick-element",
+        point: { x: 320, y: 180 },
+        shiftKey: false,
+      },
+    })).not.toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "pick-element",
+        point: { x: "north", y: 180 },
+        shiftKey: false,
+      },
+    })).toBeNull();
+    expect(parseBridgeMessage({
+      ...base,
+      command: {
+        command: "pick-element",
+        point: { x: 320, y: 180 },
+        shiftKey: "yes",
+      },
+    })).toBeNull();
   });
 });

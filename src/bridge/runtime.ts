@@ -838,6 +838,20 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         undo: { command: "set-shape-radius", targetId: command.targetId, radius: previousRadius },
       };
     }
+    if (command.command === "pick-element") {
+      if (!isPoint(command.point) || typeof command.shiftKey !== "boolean") {
+        throw { code: "invalid-pick", message: "The pick request is invalid" };
+      }
+      const element = document.elementFromPoint(command.point.x, command.point.y);
+      const target = element instanceof Element ? describe(element) : null;
+      sendEvent("select", {
+        clientX: command.point.x,
+        clientY: command.point.y,
+        target: element,
+        shiftKey: command.shiftKey,
+      }, target);
+      return { kind: "command", command: "pick-element" };
+    }
     throw { code: "unsupported-command", message: "The requested bridge command is not supported" };
   }
 

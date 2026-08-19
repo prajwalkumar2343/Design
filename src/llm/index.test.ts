@@ -4,11 +4,14 @@ import { CodexClient } from "./codex";
 import {
   CODEX_BASE_URL_ENV_KEY,
   CODEX_CHATGPT_ENV_KEY,
+  GEMINI_BASE_URL_ENV_KEY,
+  GEMINI_ENV_KEY,
   OPENCODE_GO_BASE_URL_ENV_KEY,
   OPENCODE_GO_ENV_KEY,
   resolveLLMCredentials,
 } from "./credentials";
-import { chatWith, createLLMClient } from "./index";
+import { GeminiClient } from "./gemini";
+import { chatWith, createLLMClient, defaultModelForProvider } from "./index";
 import { OpenCodeGoClient } from "./opencode-go";
 import { LLMError } from "./types";
 
@@ -17,6 +20,8 @@ const credentials = resolveLLMCredentials({
   [OPENCODE_GO_BASE_URL_ENV_KEY]: "https://go.example.test/v1",
   [CODEX_CHATGPT_ENV_KEY]: "chtk-test",
   [CODEX_BASE_URL_ENV_KEY]: "https://chatgpt.example.test/backend-api/codex",
+  [GEMINI_ENV_KEY]: "gem-test-key",
+  [GEMINI_BASE_URL_ENV_KEY]: "https://gemini.example.test/v1beta",
 });
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -38,12 +43,27 @@ describe("createLLMClient", () => {
     expect(createLLMClient("codex-chatgpt", credentials)).toBeInstanceOf(CodexClient);
   });
 
+  it("returns a GeminiClient for the gemini provider", () => {
+    expect(createLLMClient("gemini", credentials)).toBeInstanceOf(GeminiClient);
+  });
+
   it("throws missing-credentials when a provider has no key", () => {
     const empty = resolveLLMCredentials({});
     expect(() => createLLMClient("opencode-go", empty)).toThrow(LLMError);
     expect(() => createLLMClient("codex-chatgpt", empty)).toThrowError(
       expect.objectContaining({ code: "missing-credentials" }),
     );
+    expect(() => createLLMClient("gemini", empty)).toThrowError(
+      expect.objectContaining({ code: "missing-credentials" }),
+    );
+  });
+});
+
+describe("defaultModelForProvider", () => {
+  it("returns a usable default model for every provider", () => {
+    expect(defaultModelForProvider("opencode-go")).toBe("deepseek-v4-flash");
+    expect(defaultModelForProvider("codex-chatgpt")).toBe("gpt-5.6-sol");
+    expect(defaultModelForProvider("gemini")).toBe("gemini-3.7-flash");
   });
 });
 

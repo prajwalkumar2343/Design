@@ -98,6 +98,33 @@ function getSurfacePoint(
   return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
 }
 
+/**
+ * A click on the selection box of a large container must reach the element
+ * underneath so nested layers stay selectable. The overlay intercepts pointer
+ * events, so a settled click is re-dispatched into the frame document through
+ * the bridge, where the runtime reports it as a normal selection event.
+ */
+function dispatchClickThrough(
+  event: { clientX: number; clientY: number; shiftKey?: boolean },
+  surface: HTMLElement | null,
+  frameId: string,
+  zoom: number,
+  controller: { pickElement: (command: { command: "pick-element"; point: { x: number; y: number }; shiftKey: boolean }) => Promise<unknown> },
+): void {
+  const frame = surface?.querySelector(`[data-frame-id="${CSS.escape(frameId)}"]`);
+  const iframe = frame?.querySelector("iframe");
+  const rect = iframe?.getBoundingClientRect();
+  if (!rect) return;
+  void controller.pickElement({
+    command: "pick-element",
+    point: {
+      x: (event.clientX - rect.left) / zoom,
+      y: (event.clientY - rect.top) / zoom,
+    },
+    shiftKey: Boolean(event.shiftKey),
+  }).catch(() => undefined);
+}
+
   function hasOverlayStyleChanges(changes: readonly OverlayStyleChange[]): boolean {
   return changes.some((change) => {
     const properties = new Set([
@@ -411,6 +438,11 @@ export function useNodeOverlayGestures({
       if (operation.cancelled || !hasOverlayStyleChanges(operation.changes)) {
         if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
         setGestureOverlayTargets(null);
+        if (!operation.cancelled && !operation.started && operation.kind === "move") {
+          const frameId = operation.snapshots[0]?.target.frameId;
+          const controller = frameId ? bridgeControllersRef.current.get(frameId) : undefined;
+          if (controller) dispatchClickThrough(event, surfaceRef.current, frameId, cameraRef.current.zoom, controller);
+        }
         return;
       }
 
@@ -457,7 +489,7 @@ export function useNodeOverlayGestures({
       if (editorStore.hasActiveTransaction()) editorStore.commitTransaction(effect);
       refreshAfterQueue();
     },
-    [applyStyleChanges, cancelPendingLiveApply, editorStore, refreshSnapshot, refreshTarget, setInteractionMode],
+    [applyStyleChanges, bridgeControllersRef, cancelPendingLiveApply, editorStore, refreshSnapshot, refreshTarget, setInteractionMode, surfaceRef],
   );
 
   const cancelNodeGesture = useCallback(() => {

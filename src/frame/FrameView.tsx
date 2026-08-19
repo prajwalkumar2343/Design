@@ -301,10 +301,24 @@ export const FrameView = memo(function FrameView({
   };
 
   const isDesktopFrame = frame.category === "desktop";
-  const chrome = frame.chrome;
-  const isDeviceFrame = !!chrome && chrome.type !== "none";
-  const bezelRadius = chrome?.bezelRadius ?? (frame.category === "mobile" ? 28 : frame.category === "tablet" ? 18 : 5);
-  const showHomeIndicator = isDeviceFrame && frame.category === "mobile" && chrome.type !== "none";
+  // Fallback for legacy frames / demo seeds without explicit chrome
+  const resolvedChrome = frame.chrome ?? (
+    frame.category === "mobile"
+      ? frame.width >= 430
+        ? { type: "dynamic-island" as const, width: 136, height: 38, bezelRadius: 56 }
+        : frame.width >= 393
+          ? { type: "dynamic-island" as const, width: 126, height: 36, bezelRadius: 52 }
+          : frame.width === 375
+            ? { type: "notch" as const, width: 148, height: 28, bezelRadius: 44 }
+            : { type: "notch" as const, width: 164, height: 30, bezelRadius: 48 }
+      : frame.category === "tablet"
+        ? { type: "none" as const, bezelRadius: 18 }
+        : { type: "none" as const, bezelRadius: 5 }
+  );
+  const chrome = resolvedChrome;
+  const isDeviceFrame = chrome.type !== "none";
+  const bezelRadius = chrome.bezelRadius ?? (frame.category === "mobile" ? 28 : frame.category === "tablet" ? 18 : 5);
+  const showHomeIndicator = isDeviceFrame && frame.category === "mobile";
   const showDeviceChrome = isDeviceFrame;
 
   const openFullPreview = () => {

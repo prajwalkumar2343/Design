@@ -55,15 +55,22 @@ function preset(
   return { id, category, group, label, detail, width, height, chrome, hardwareNote };
 }
 
-// Chrome presets
-const notch: DeviceChrome = { type: "notch", width: 164, height: 30, bezelRadius: 48 };
-const notchMini: DeviceChrome = { type: "notch", width: 148, height: 28, bezelRadius: 44 };
-const notchLarge: DeviceChrome = { type: "notch", width: 172, height: 30, bezelRadius: 50 };
-const dynamicIsland: DeviceChrome = { type: "dynamic-island", width: 126, height: 36, bezelRadius: 52 };
-const dynamicIslandLarge: DeviceChrome = { type: "dynamic-island", width: 136, height: 38, bezelRadius: 56 };
-const dynamicIslandSmall: DeviceChrome = { type: "dynamic-island", width: 118, height: 34, bezelRadius: 50 };
+// Chrome presets — accurate per Apple HIG / physical measurements
+// iPhone X/XS/11 Pro notch: 209×30 pt at 375pt width, corner radii 6/20 pt. Scaled to viewport.
+// iPhone 13/14 notch: 20% narrower (≈160×30) — Apple reduced width for 13 generation.
+// Dynamic Island (14 Pro → 17): 126×37.33 pt pill, 19pt radius, 11pt top inset.
+// Punch-hole (Android): 12pt diameter, centered 12pt from top, as per Material guidelines.
+const notch: DeviceChrome = { type: "notch", width: 209, height: 30, bezelRadius: 48 };
+const notchMini: DeviceChrome = { type: "notch", width: 209, height: 30, bezelRadius: 44 };
+const notch13: DeviceChrome = { type: "notch", width: 160, height: 30, bezelRadius: 48 };
+const notch13Mini: DeviceChrome = { type: "notch", width: 160, height: 28, bezelRadius: 44 };
+const notchLarge: DeviceChrome = { type: "notch", width: 209, height: 30, bezelRadius: 54 };
+const notch13Large: DeviceChrome = { type: "notch", width: 160, height: 30, bezelRadius: 54 };
+const dynamicIsland: DeviceChrome = { type: "dynamic-island", width: 126, height: 37, bezelRadius: 52 };
+const dynamicIslandLarge: DeviceChrome = { type: "dynamic-island", width: 126, height: 37, bezelRadius: 56 };
+const dynamicIslandSmall: DeviceChrome = { type: "dynamic-island", width: 126, height: 37, bezelRadius: 50 };
 const punchHole: DeviceChrome = { type: "punch-hole", width: 12, height: 12, bezelRadius: 28, punchPosition: "center" };
-const punchHoleLarge: DeviceChrome = { type: "punch-hole", width: 14, height: 14, bezelRadius: 30, punchPosition: "center" };
+const punchHoleLarge: DeviceChrome = { type: "punch-hole", width: 12, height: 12, bezelRadius: 30, punchPosition: "center" };
 const noChrome: DeviceChrome = { type: "none", bezelRadius: 16 };
 const desktopChrome: DeviceChrome = { type: "none", bezelRadius: 10 };
 
@@ -77,16 +84,16 @@ export const FRAME_PRESETS: FramePreset[] = [
   preset("iphone-12-pro", "mobile", "iPhone", "iPhone 12 Pro", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Face ID"),
   preset("iphone-12-pro-max", "mobile", "iPhone", "iPhone 12 Pro Max", "428 × 926 · 6.7″", 428, 926, notchLarge, "Notch · Face ID · large"),
 
-  // Mobile · iPhone 13 (notch)
-  preset("iphone-13", "mobile", "iPhone", "iPhone 13", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Face ID"),
-  preset("iphone-13-mini", "mobile", "iPhone", "iPhone 13 mini", "375 × 812 · 5.4″", 375, 812, notchMini, "Notch · compact"),
-  preset("iphone-13-pro", "mobile", "iPhone", "iPhone 13 Pro", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Pro"),
-  preset("iphone-13-pro-max", "mobile", "iPhone", "iPhone 13 Pro Max", "428 × 926 · 6.7″", 428, 926, notchLarge, "Notch · Pro · large"),
+  // Mobile · iPhone 13 (20% narrower notch vs 12)
+  preset("iphone-13", "mobile", "iPhone", "iPhone 13", "390 × 844 · 6.1″", 390, 844, notch13, "Notch · 20% narrower"),
+  preset("iphone-13-mini", "mobile", "iPhone", "iPhone 13 mini", "375 × 812 · 5.4″", 375, 812, notch13Mini, "Notch · compact · narrower"),
+  preset("iphone-13-pro", "mobile", "iPhone", "iPhone 13 Pro", "390 × 844 · 6.1″", 390, 844, notch13, "Notch · Pro · narrower"),
+  preset("iphone-13-pro-max", "mobile", "iPhone", "iPhone 13 Pro Max", "428 × 926 · 6.7″", 428, 926, notch13Large, "Notch · Pro · large · narrower"),
 
   // Mobile · iPhone 14
-  // 14 / Plus keep notch, Pro series moves to Dynamic Island
-  preset("iphone-14", "mobile", "iPhone", "iPhone 14", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Face ID"),
-  preset("iphone-14-plus", "mobile", "iPhone", "iPhone 14 Plus", "428 × 926 · 6.7″", 428, 926, notchLarge, "Notch · Face ID · large"),
+  // 14 / Plus keep the reduced notch (same as 13), Pro series moves to Dynamic Island
+  preset("iphone-14", "mobile", "iPhone", "iPhone 14", "390 × 844 · 6.1″", 390, 844, notch13, "Notch · Face ID · narrower"),
+  preset("iphone-14-plus", "mobile", "iPhone", "iPhone 14 Plus", "428 × 926 · 6.7″", 428, 926, notch13Large, "Notch · Face ID · large · narrower"),
   preset("iphone-14-pro", "mobile", "iPhone", "iPhone 14 Pro", "393 × 852 · 6.1″", 393, 852, dynamicIsland, "Dynamic Island"),
   preset("iphone-14-pro-max", "mobile", "iPhone", "iPhone 14 Pro Max", "430 × 932 · 6.7″", 430, 932, dynamicIslandLarge, "Dynamic Island · large"),
 

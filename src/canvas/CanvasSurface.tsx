@@ -340,6 +340,8 @@ export function CanvasSurface({
   const spacePressedRef = useRef(false);
   const cameraInitializedRef = useRef(false);
   const motionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelRafRef = useRef<number | null>(null);
   const nextFrameSequenceRef = useRef(suppliedFrames.length + 1);
   const frameDragRef = useRef<{ elementKey: string; transform: string } | null>(null);
   const lastBridgeTargetRef = useRef<{
@@ -2407,39 +2409,79 @@ export function CanvasSurface({
     endPointerOperation(event);
   };
 
-  const handleWheel = (event: WheelEvent) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     if (isCanvasControlTarget(event.target)) {
       return;
+    }
+    const targetEl = event.target as Element | null;
+    if (targetEl && !event.ctrlKey && !event.metaKey) {
+      const scrollable = targetEl.closest(".sidebar-panel-content, .properties-scroll, .figma-lake-body, .figma-lake, .project-lake") as HTMLElement | null;
+      if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
+        const deltaAbsY = Math.abs(event.deltaY);
+        const deltaAbsX = Math.abs(event.deltaX);
+        const atTop = scrollable.scrollTop <= 0;
+        const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1;
+        const atLeft = scrollable.scrollLeft <= 0;
+        const atRight = scrollable.scrollLeft + scrollable.clientWidth >= scrollable.scrollWidth - 1;
+        const scrollingVertically = deltaAbsY > deltaAbsX;
+        if (scrollingVertically && !(atTop && event.deltaY < 0) && !(atBottom && event.deltaY > 0)) return;
+        if (!scrollingVertically && !(atLeft && event.deltaX < 0) && !(atRight && event.deltaX > 0) && scrollable.scrollWidth > scrollable.clientWidth) return;
+      }
     }
     event.preventDefault();
     const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
     const deltaX = event.deltaX * multiplier;
     const deltaY = event.deltaY * multiplier;
 
-    if (Math.abs(deltaX) > Math.abs(deltaY)) {
-      updateCamera(panCamera(cameraRef.current, { x: deltaX, y: deltaY }));
-      setInteractionMode("panning");
-    } else {
+    const isPinchZoom = event.ctrlKey || event.metaKey;
+
+    if (isPinchZoom) {
       const surface = surfaceRef.current;
       const pointer = surface ? getPointerPosition(event, surface) : { x: event.clientX, y: event.clientY };
-      const zoomAmount = Math.exp(-deltaY / 360);
-      const target = zoomCameraAtPoint(
-        cameraRef.current,
-        cameraRef.current.zoom * zoomAmount,
-        pointer,
-      );
-      animateZoomTo(target, pointer);
+      const zoomFactor = Math.exp(-deltaY * 0.008);
+      const nextZoom = cameraRef.current.zoom * zoomFactor;
+      const nextCamera = zoomCameraAtPoint(cameraRef.current, nextZoom, pointer);
+      cameraRef.current = nextCamera;
+      if (worldRef.current) {
+        worldRef.current.style.transform = cameraTransform(nextCamera);
+      }
+      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
+      wheelRafRef.current = requestAnimationFrame(() => {
+        wheelRafRef.current = null;
+      });
       setInteractionMode("zooming");
+    } else {
+      // Invert for natural trackpad: left swipe (positive deltaX) → frames left
+      const nextCamera = panCamera(cameraRef.current, { x: -deltaX, y: -deltaY });
+      cameraRef.current = nextCamera;
+      if (worldRef.current) {
+        worldRef.current.style.transform = cameraTransform(nextCamera);
+      }
+      setInteractionMode("panning");
     }
+
+    if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
+    wheelCommitTimeoutRef.current = setTimeout(() => {
+      setCamera(cameraRef.current);
+      wheelCommitTimeoutRef.current = null;
+    }, 40);
+
     settleInteraction();
-  };
+  }, [settleInteraction]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return;
     surface.addEventListener("wheel", handleWheel, { passive: false });
-    return () => surface.removeEventListener("wheel", handleWheel);
-  }, [animateZoomTo, settleInteraction, updateCamera]);
+    return () => {
+      surface.removeEventListener("wheel", handleWheel);
+      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
+      if (wheelCommitTimeoutRef.current) {
+        clearTimeout(wheelCommitTimeoutRef.current);
+        wheelCommitTimeoutRef.current = null;
+      }
+    };
+  }, [handleWheel]);
 
   const cancelInteraction = useCallback(() => {
     cancelNodeGesture();

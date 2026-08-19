@@ -146,44 +146,32 @@ button:focus-visible,
   border-color: var(--selection);
 }
 
-/* ── Device-accurate hardware chrome ── */
+/* ── Device-accurate hardware chrome — no outer bezel, just frame + cutout ── */
 .canvas-frame.device-frame {
-  border: none;
-  border-radius: var(--bezel-radius, 48px);
-  background: #0a0a0c;
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,.06) inset,
-    0 0 0 1px #1a1a1f,
-    0 0 0 10px #0a0a0c,
-    0 0 0 11px #1a1a1f,
-    0 18px 48px rgba(0,0,0,.22),
-    0 2px 8px rgba(0,0,0,.18);
-  overflow: visible;
-  /* keep viewport size exact; bezel is visual shadow, not layout */
+  border: 1px solid rgba(20, 20, 18, 0.14);
+  border-radius: var(--bezel-radius, 24px);
+  background: var(--paper);
+  box-shadow: var(--shadow-frame);
+  overflow: hidden;
 }
 
 .canvas-frame.device-frame::after {
-  inset: -11px;
-  border-radius: calc(var(--bezel-radius, 48px) + 2px);
+  inset: -3px;
+  border-radius: calc(var(--bezel-radius, 24px) + 3px);
   border-width: 2px;
 }
 
 .canvas-frame.device-frame[data-selected="true"] {
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,.06) inset,
-    0 0 0 1px var(--selection),
-    0 0 0 10px #0a0a0c,
-    0 0 0 11px var(--selection),
-    0 24px 64px rgba(93,92,226,.18),
-    0 2px 8px rgba(0,0,0,.18);
+  border-color: var(--selection);
+  box-shadow: 0 18px 52px rgba(20, 20, 18, 0.16), 0 0 0 1px var(--selection-soft);
 }
 
 .device-screen-wrap {
   position: absolute;
   inset: 0;
-  border-radius: calc(var(--bezel-radius, 48px) - 10px);
+  border-radius: inherit;
   overflow: hidden;
-  background: var(--paper);
+  background: transparent;
   isolation: isolate;
 }
 
@@ -199,7 +187,7 @@ button:focus-visible,
 
 .canvas-frame.device-frame .frame-document,
 .canvas-frame.device-frame .frame-placeholder {
-  border-radius: inherit;
+  border-radius: 0;
   background: inherit;
 }
 
@@ -267,9 +255,9 @@ button:focus-visible,
   margin-left: 6px;
 }
 
-/* Dynamic Island – Pro era (14 Pro → 17) */
+/* Dynamic Island – Pro era (14 Pro → 17) — 11pt from top per HIG */
 .device-dynamic-island {
-  top: 8px;
+  top: 11px;
   border-radius: 999px;
   display: flex;
   align-items: center;

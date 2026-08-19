@@ -347,7 +347,7 @@ export const FrameView = memo(function FrameView({
         width: frame.width,
         height: frame.height,
         transform: `translate3d(${frame.x}px, ${frame.y}px, 0)`,
-        background: isDeviceFrame ? "#0a0a0c" : frame.background,
+        background: frame.background,
         ["--bezel-radius" as string]: `${bezelRadius}px`,
       } as React.CSSProperties}
     >
@@ -364,7 +364,7 @@ export const FrameView = memo(function FrameView({
       </button>
 
       <div className={`device-screen-wrap${showDeviceChrome ? " has-chrome" : ""}`}>
-        <div className="device-screen" style={{ borderRadius: isDeviceFrame ? `calc(var(--bezel-radius) - 4px)` : "4px", background: frame.background }}>
+        <div className="device-screen" style={{ borderRadius: isDeviceFrame ? `var(--bezel-radius)` : "4px", background: frame.background }}>
           {isLive ? (
             <iframe
               ref={iframeRef}
@@ -415,16 +415,6 @@ export const FrameView = memo(function FrameView({
           ) : null}
         </div>
       </div>
-
-      {/* Hardware side buttons – outside screen wrap so they aren’t clipped */}
-      {isDeviceFrame ? (
-        <>
-          <div className="device-button device-button-power" aria-hidden="true" />
-          <div className="device-button device-button-volume-up" aria-hidden="true" />
-          <div className="device-button device-button-volume-down" aria-hidden="true" />
-          <div className="device-button device-button-mute" aria-hidden="true" />
-        </>
-      ) : null}
 
       {isDesktopFrame ? (
         <button

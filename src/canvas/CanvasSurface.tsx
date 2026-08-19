@@ -37,9 +37,11 @@ import {
   selectBriefFrameCommand,
   setSelectionCommand,
   switchPageCommand,
+  updateBriefFieldCommand,
 } from "../editor/commands";
 import {
   createEditorStateFromFrameSeeds,
+  createEmptyEditorState,
   selectAllFrameRenderModels,
   selectFrameRenderModels,
   type NodeEntity,
@@ -61,9 +63,19 @@ import { FrameView } from "../frame/FrameView";
 import { createFrameFromPreset, type FramePreset } from "../frame/presets";
 import { normalizedBounds, shapeDragPoints, shapeLabel } from "../frame/shape-geometry";
 import { useBrainstormSessionController } from "./brainstorm-session-controller";
+import { ProjectLake } from "./ProjectLake";
+import {
+  looksLikeHtml,
+  pasteHtmlIntoStore,
+  preparePastedHtml,
+  resolvePastedFrameSize,
+} from "../clipboard/paste-html";
 import {
   BrowserPersistenceAdapter,
+  FIGMA_FILE_MIME_TYPE,
+  FIGMA_FILE_NAME,
   importWireCanvasProject,
+  serializeFigmaProject,
   serializeWireCanvasProject,
   WIRECANVAS_FILE_MIME_TYPE,
   WIRECANVAS_FILE_NAME,
@@ -71,6 +83,30 @@ import {
   type BrowserDownloadAdapter,
   type PersistenceAdapter,
 } from "../persistence";
+import {
+  createProjectId,
+  deleteLocalProject,
+  deriveProjectName,
+  duplicateLocalProject,
+  getActiveProjectId,
+  getBriefPresetForKind,
+  getLocalProjectSummaries,
+  hydrateInitialState,
+  loadProjectIndex,
+  renameLocalProject,
+  saveProjectIndex,
+  setActiveProjectId,
+  PROJECT_KINDS,
+  type LocalProjectSummary,
+  type ProjectKind,
+} from "../persistence/local-projects";
+import { parseWireCanvasProject } from "../persistence/wirecanvas";
+import {
+  buildProjectUrl,
+  getProjectIdFromUrl,
+  navigateToHome,
+  navigateToProject,
+} from "../routing";
 import {
   NodeOverlayLayer,
   type OverlayNodeTarget,
@@ -175,6 +211,29 @@ function getFramesBounds(frames: readonly Rect[]): Rect {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
+/**
+ * Center point for a new frame: the viewport center on an empty canvas,
+ * otherwise to the right of the existing frames.
+ */
+function computeFramePlacement(
+  frames: readonly Rect[],
+  viewport: Size,
+  camera: Camera,
+  size: Size,
+): Point {
+  const viewportCenter = screenToWorld(
+    { x: viewport.width / 2, y: viewport.height / 2 },
+    camera,
+  );
+  if (frames.length === 0) {
+    return viewportCenter;
+  }
+  return {
+    x: Math.max(...frames.map((frame) => frame.x + frame.width)) + 140 + size.width / 2,
+    y: Math.min(...frames.map((frame) => frame.y)) + size.height / 2,
+  };
+}
+
 function getPointerPosition(
   event: { clientX: number; clientY: number },
   surface: HTMLElement,
@@ -215,19 +274,35 @@ export interface CanvasSurfaceProps {
   frames?: CanvasFrame[];
   persistenceAdapter?: PersistenceAdapter;
   downloadAdapter?: BrowserDownloadAdapter;
+  disableLocalPersistence?: boolean;
 }
 
 export function CanvasSurface({
   frames: suppliedFrames = [],
   persistenceAdapter,
   downloadAdapter,
+  disableLocalPersistence = false,
 }: CanvasSurfaceProps) {
+  const isDemoMode =
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("demo") === "1";
+  const shouldUseLocalMemory = !disableLocalPersistence && !isDemoMode;
+
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<HTMLDivElement>(null);
   const editorStoreRef = useRef<EditorStore | null>(null);
+  const initialHydrationRef = useRef<ReturnType<typeof hydrateInitialState> | null>(null);
   if (editorStoreRef.current === null) {
-    editorStoreRef.current = createEditorStore(
-      createEditorStateFromFrameSeeds(suppliedFrames),
-    );
+    let initialState;
+    if (suppliedFrames.length > 0) {
+      initialState = createEditorStateFromFrameSeeds(suppliedFrames);
+    } else if (shouldUseLocalMemory) {
+      const hydrated = hydrateInitialState(suppliedFrames, { disablePersistence: false });
+      initialState = hydrated.state;
+      initialHydrationRef.current = hydrated;
+    } else {
+      initialState = createEditorStateFromFrameSeeds(suppliedFrames);
+    }
+    editorStoreRef.current = createEditorStore(initialState);
   }
   const editorStore = editorStoreRef.current;
   const persistenceAdapterRef = useRef<PersistenceAdapter | null>(null);
@@ -298,11 +373,38 @@ export function CanvasSurface({
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
   const [shapeRadius, setShapeRadius] = useState(0);
   const [creationError, setCreationError] = useState<string | null>(null);
+  const [pasteFeedback, setPasteFeedback] = useState<{
+    kind: "success" | "error";
+    message: string;
+  } | null>(null);
+  const pasteFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [persistenceVersion, setPersistenceVersion] = useState(0);
   const [persistenceFeedback, setPersistenceFeedback] = useState<{
     kind: "success" | "error";
     message: string;
   } | null>(null);
+  const [localProjects, setLocalProjects] = useState<LocalProjectSummary[]>(() =>
+    shouldUseLocalMemory ? getLocalProjectSummaries() : [],
+  );
+  const [activeProjectId, setActiveProjectIdState] = useState<string | null>(() =>
+    shouldUseLocalMemory ? getActiveProjectId() : null,
+  );
+  const [showLakeOverlay, setShowLakeOverlay] = useState(false);
+  const [routeProjectId, setRouteProjectId] = useState<string | null>(() => {
+    if (!shouldUseLocalMemory) return null;
+    if (initialHydrationRef.current) return initialHydrationRef.current.urlProjectId;
+    return getProjectIdFromUrl();
+  });
+  const [routeNotFound, setRouteNotFound] = useState<boolean>(() => {
+    if (!shouldUseLocalMemory) return false;
+    if (initialHydrationRef.current) return initialHydrationRef.current.notFound;
+    const id = getProjectIdFromUrl();
+    if (!id) return false;
+    return !loadProjectIndex().some((p) => p.id === id);
+  });
+  const pendingKindRef = useRef<ProjectKind | null>(null);
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSerializedRef = useRef<string | null>(null);
   const {
     comments,
     selectedCommentId,
@@ -340,7 +442,7 @@ export function CanvasSurface({
 
   const {
     selectBriefFrame,
-    startBrainstorming,
+    startBrainstorming: startBrainstormingBase,
     updateBriefField,
     addBriefReference,
     updateBriefReference,
@@ -355,6 +457,225 @@ export function CanvasSurface({
     cameraRef,
     setCamera,
   });
+
+  const refreshLocalProjects = useCallback(() => {
+    if (!shouldUseLocalMemory) return;
+    setLocalProjects(getLocalProjectSummaries());
+    setActiveProjectIdState(getActiveProjectId());
+  }, [shouldUseLocalMemory]);
+
+  const startBrainstorming = useCallback(
+    (kindOverride?: ProjectKind) => {
+      const kind = kindOverride ?? pendingKindRef.current ?? "blank";
+      pendingKindRef.current = null;
+      if (kind !== "blank") {
+        const preset = getBriefPresetForKind(kind);
+        startBrainstormingBase();
+        try {
+          if (preset.projectDescription) {
+            editorStore.execute(updateBriefFieldCommand({ field: "projectDescription", value: preset.projectDescription }, editorStore.getState().session.revision), { label: "Apply preset: projectDescription" });
+          }
+          if (preset.audience) {
+            editorStore.execute(updateBriefFieldCommand({ field: "audience", value: preset.audience }, editorStore.getState().session.revision), { label: "Apply preset: audience" });
+          }
+          if (preset.goals) {
+            editorStore.execute(updateBriefFieldCommand({ field: "goals", value: preset.goals }, editorStore.getState().session.revision), { label: "Apply preset: goals" });
+          }
+          if (preset.visualDirection) {
+            editorStore.execute(updateBriefFieldCommand({ field: "visualDirection", value: preset.visualDirection }, editorStore.getState().session.revision), { label: "Apply preset: visualDirection" });
+          }
+        } catch {}
+        if (shouldUseLocalMemory) {
+          const idx = loadProjectIndex();
+          const active = getActiveProjectId();
+          const rec = active ? idx.find((p) => p.id === active) : undefined;
+          if (rec && rec.kind !== kind) {
+            rec.kind = kind;
+            saveProjectIndex(idx);
+            refreshLocalProjects();
+          }
+        }
+        return;
+      }
+      startBrainstormingBase();
+    },
+    [shouldUseLocalMemory, startBrainstormingBase, refreshLocalProjects, editorStore],
+  );
+
+  const handleCreateLakeProject = useCallback(
+    (kind: ProjectKind) => {
+      pendingKindRef.current = kind;
+      let createdId: string | null = null;
+      if (shouldUseLocalMemory) {
+        const id = createProjectId();
+        createdId = id;
+        const name = `${PROJECT_KINDS.find((k) => k.id === kind)?.label ?? kind} · ${new Date().toLocaleDateString()}`;
+        const blank = createEmptyEditorState();
+        const serialized = serializeWireCanvasProject(blank);
+        const record = {
+          id,
+          name: name.slice(0, 80),
+          kind,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          frameCount: 0,
+          lifecycle: "not-started" as const,
+          data: serialized,
+        };
+        const idx = loadProjectIndex();
+        idx.unshift(record);
+        saveProjectIndex(idx);
+        setActiveProjectId(id);
+        setActiveProjectIdState(id);
+        setRouteProjectId(id);
+        setRouteNotFound(false);
+        navigateToProject(id);
+        refreshLocalProjects();
+        try {
+          const next = parseWireCanvasProject(serialized);
+          editorStore.replaceState(next, { label: "New project" });
+          setPersistenceVersion((v) => v + 1);
+          bridgeControllersRef.current.clear();
+          snapshotQueuesRef.current.clear();
+          snapshotSequenceRef.current.clear();
+          setBridgeTargets({});
+          setBridgeHierarchies({});
+        } catch {}
+      }
+      setShowLakeOverlay(false);
+      if (shouldUseLocalMemory && createdId) {
+        const targetId = createdId;
+        setTimeout(() => {
+          startBrainstorming(kind);
+          setTimeout(() => {
+            try {
+              const state = editorStore.getState();
+              const serialized = serializeWireCanvasProject(state);
+              const idxNow = loadProjectIndex();
+              const recNow = idxNow.find((p) => p.id === targetId);
+              if (recNow) {
+                recNow.data = serialized;
+                recNow.updatedAt = Date.now();
+                recNow.frameCount = Object.keys(state.frames).length;
+                recNow.lifecycle = state.session.lifecycle;
+                saveProjectIndex([recNow, ...idxNow.filter((p) => p.id !== recNow.id)]);
+                refreshLocalProjects();
+              }
+            } catch {}
+          }, 80);
+        }, 30);
+      } else {
+        setTimeout(() => startBrainstorming(kind), 30);
+      }
+    },
+    [shouldUseLocalMemory, editorStore, refreshLocalProjects, startBrainstorming],
+  );
+
+  const handleOpenLakeProject = useCallback(
+    (id: string) => {
+      const idx = loadProjectIndex();
+      const rec = idx.find((p) => p.id === id);
+      if (!rec) {
+        setPersistenceFeedback({ kind: "error", message: "That project could not be found in this browser." });
+        refreshLocalProjects();
+        return;
+      }
+      try {
+        const next = parseWireCanvasProject(rec.data);
+        clearComments();
+        bridgeControllersRef.current.clear();
+        snapshotQueuesRef.current.clear();
+        snapshotSequenceRef.current.clear();
+        setBridgeTargets({});
+        setBridgeHierarchies({});
+        editorStore.replaceState(next, { label: `Open ${rec.name}` });
+        setActiveProjectId(id);
+        setActiveProjectIdState(id);
+        setRouteProjectId(id);
+        setRouteNotFound(false);
+        navigateToProject(id);
+        const filtered = idx.filter((p) => p.id !== id);
+        filtered.unshift({ ...rec, updatedAt: Date.now() });
+        saveProjectIndex(filtered);
+        refreshLocalProjects();
+        setPersistenceVersion((v) => v + 1);
+        setShowLakeOverlay(false);
+        setPersistenceFeedback({ kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` });
+        setTimeout(() => {
+          const state = editorStore.getState();
+          const rects: Array<{ x: number; y: number; width: number; height: number }> = [
+            ...Object.values(state.frames).map((f) => ({ x: f.x, y: f.y, width: f.width, height: f.height })),
+          ];
+          if (state.session.briefFrame) rects.push(state.session.briefFrame);
+          if (rects.length > 0 && surfaceRef.current) {
+            const vp = { width: surfaceRef.current.clientWidth, height: surfaceRef.current.clientHeight };
+            if (vp.width > 0 && vp.height > 0) {
+              const left = Math.min(...rects.map((r) => r.x));
+              const top = Math.min(...rects.map((r) => r.y));
+              const right = Math.max(...rects.map((r) => r.x + r.width));
+              const bottom = Math.max(...rects.map((r) => r.y + r.height));
+              const bounds = { x: left, y: top, width: right - left, height: bottom - top };
+              const nextCam = fitRect(bounds, vp, vp.width < 760 ? 18 : 148);
+              cameraRef.current = nextCam;
+              setCamera(nextCam);
+            }
+          }
+        }, 80);
+      } catch (error) {
+        setPersistenceFeedback({
+          kind: "error",
+          message: `Could not open project: ${error instanceof Error ? error.message : "parse failed"}`,
+        });
+      }
+    },
+    [clearComments, editorStore, refreshLocalProjects],
+  );
+
+  const handleDeleteLakeProject = useCallback(
+    (id: string) => {
+      const isActive = getActiveProjectId() === id || routeProjectId === id;
+      const nextIdx = deleteLocalProject(id);
+      setLocalProjects(nextIdx.map(({ data: _d, ...rest }) => rest));
+      if (isActive) {
+        const nextActive = getActiveProjectId();
+        setActiveProjectIdState(nextActive);
+        setRouteProjectId(null);
+        setRouteNotFound(false);
+        navigateToHome();
+        editorStore.replaceState(createEmptyEditorState(), { label: "Delete active project" });
+        setPersistenceVersion((v) => v + 1);
+        bridgeControllersRef.current.clear();
+        setBridgeTargets({});
+        setBridgeHierarchies({});
+        setPersistenceFeedback({ kind: "success", message: "Project deleted. Returned to home." });
+      } else {
+        setPersistenceFeedback({ kind: "success", message: "Project deleted." });
+      }
+    },
+    [editorStore, routeProjectId],
+  );
+
+  const handleDuplicateLakeProject = useCallback(
+    (id: string) => {
+      const dup = duplicateLocalProject(id);
+      if (!dup) {
+        setPersistenceFeedback({ kind: "error", message: "Could not duplicate that project." });
+        return;
+      }
+      refreshLocalProjects();
+      setPersistenceFeedback({ kind: "success", message: `Duplicated as “${dup.name}”.` });
+    },
+    [refreshLocalProjects],
+  );
+
+  const handleRenameLakeProject = useCallback(
+    (id: string, name: string) => {
+      renameLocalProject(id, name);
+      refreshLocalProjects();
+      setPersistenceFeedback({ kind: "success", message: "Project renamed." });
+    },
+    [refreshLocalProjects],
+  );
 
   const exportProject = useCallback(() => {
     if (editorStore.getState().session.lifecycle === "not-started") {
@@ -376,6 +697,32 @@ export function CanvasSurface({
     }
   }, [editorStore]);
 
+  const exportFigmaProject = useCallback(async () => {
+    if (editorStore.getState().session.lifecycle === "not-started") {
+      setPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      return;
+    }
+    try {
+      const state = editorStore.getState();
+      const bytes = await serializeFigmaProject({
+        frames: Object.values(state.frames),
+        nodes: state.nodes,
+        bridgeTargets,
+      });
+      downloadAdapterRef.current?.downloadProjectFile({
+        text: bytes,
+        filename: FIGMA_FILE_NAME,
+        mimeType: FIGMA_FILE_MIME_TYPE,
+      });
+      setPersistenceFeedback({ kind: "success", message: "Project exported as a Figma .fig file." });
+    } catch (error) {
+      setPersistenceFeedback({
+        kind: "error",
+        message: `Could not export Figma file: ${error instanceof Error ? error.message : "download failed"}`,
+      });
+    }
+  }, [bridgeTargets, editorStore]);
+
   const importProject = useCallback(async (file: File) => {
     try {
       const text = await persistenceAdapterRef.current!.readProjectFile(file);
@@ -389,6 +736,48 @@ export function CanvasSurface({
         setBridgeHierarchies({});
         setPersistenceVersion((current) => current + 1);
         setPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
+        if (shouldUseLocalMemory) {
+          const state = editorStore.getState();
+          const serialized = serializeWireCanvasProject(state);
+          const active = getActiveProjectId();
+          const idx = loadProjectIndex();
+          const existing = active ? idx.find((p) => p.id === active) : undefined;
+          if (existing) {
+            existing.data = serialized;
+            existing.updatedAt = Date.now();
+            existing.frameCount = Object.keys(state.frames).length;
+            existing.lifecycle = state.session.lifecycle;
+            saveProjectIndex([existing, ...idx.filter((p) => p.id !== existing.id)]);
+            // keep current route if already on a project, otherwise navigate to it
+            if (!getProjectIdFromUrl()) {
+              setRouteProjectId(existing.id);
+              setRouteNotFound(false);
+              navigateToProject(existing.id);
+            }
+          } else {
+            const id = createProjectId();
+            const kind: ProjectKind = "blank";
+            const name = deriveProjectName(state, kind);
+            const rec = {
+              id,
+              name: name.slice(0, 80),
+              kind,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              frameCount: Object.keys(state.frames).length,
+              lifecycle: state.session.lifecycle,
+              data: serialized,
+            };
+            idx.unshift(rec);
+            saveProjectIndex(idx);
+            setActiveProjectId(id);
+            setActiveProjectIdState(id);
+            setRouteProjectId(id);
+            setRouteNotFound(false);
+            navigateToProject(id);
+          }
+          refreshLocalProjects();
+        }
       } else {
         setPersistenceFeedback({ kind: "success", message: "This project already matches the current canvas." });
       }
@@ -400,7 +789,139 @@ export function CanvasSurface({
           : "The project could not be imported.";
       setPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
     }
-  }, [clearComments, editorStore]);
+  }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
+
+  // Continuous memory autosave — every meaningful editor change is persisted to this device
+  useEffect(() => {
+    if (!shouldUseLocalMemory) return;
+    const schedule = () => {
+      if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = window.setTimeout(() => {
+        try {
+          const state = editorStore.getState();
+          const isEmpty =
+            state.session.lifecycle === "not-started" &&
+            Object.keys(state.documents).length === 0 &&
+            Object.keys(state.frames).length === 0 &&
+            Object.keys(state.pages).length === 0;
+          if (isEmpty) return;
+          const serialized = serializeWireCanvasProject(state);
+          if (serialized === lastSerializedRef.current) return;
+          lastSerializedRef.current = serialized;
+          const active = getActiveProjectId();
+          const idx = loadProjectIndex();
+          let rec = active ? idx.find((p) => p.id === active) : undefined;
+          if (!rec) {
+            const fallbackKind: ProjectKind = pendingKindRef.current ?? "blank";
+            const name = deriveProjectName(state, fallbackKind);
+            const newId = createProjectId();
+            const newRec = {
+              id: newId,
+              name: name.slice(0, 80) || "Untitled project",
+              kind: fallbackKind,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              frameCount: Object.keys(state.frames).length,
+              lifecycle: state.session.lifecycle,
+              data: serialized,
+            };
+            idx.unshift(newRec);
+            saveProjectIndex(idx);
+            setActiveProjectId(newId);
+            setActiveProjectIdState(newId);
+            setRouteProjectId(newId);
+            setRouteNotFound(false);
+            navigateToProject(newId);
+            setLocalProjects(idx.map(({ data: _d, ...rest }) => rest));
+            return;
+          }
+          rec.data = serialized;
+          rec.updatedAt = Date.now();
+          rec.frameCount = Object.keys(state.frames).length;
+          rec.lifecycle = state.session.lifecycle;
+          const without = idx.filter((p) => p.id !== rec!.id);
+          without.unshift(rec);
+          saveProjectIndex(without);
+          setLocalProjects(without.map(({ data: _d, ...rest }) => rest));
+        } catch {}
+      }, 650);
+    };
+    const unsub = editorStore.subscribe(schedule);
+    // initial schedule in case hydrated state is already non-empty
+    schedule();
+    return () => {
+      if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+      unsub();
+    };
+  }, [editorStore, shouldUseLocalMemory]);
+
+  // Keep lake index in sync when storage changes in another tab
+  useEffect(() => {
+    if (!shouldUseLocalMemory) return;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key && e.key.startsWith("wirecanvas:")) refreshLocalProjects();
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [shouldUseLocalMemory, refreshLocalProjects]);
+
+  // Project URL routing — keep route in sync with browser history
+  useEffect(() => {
+    if (!shouldUseLocalMemory) return;
+    const onPopState = () => {
+      const nextId = getProjectIdFromUrl();
+      setRouteProjectId(nextId);
+      if (nextId) {
+        const state = loadProjectIndex().find((p) => p.id === nextId);
+        if (state) {
+          setRouteNotFound(false);
+          try {
+            const next = parseWireCanvasProject(state.data);
+            clearComments();
+            bridgeControllersRef.current.clear();
+            snapshotQueuesRef.current.clear();
+            snapshotSequenceRef.current.clear();
+            setBridgeTargets({});
+            setBridgeHierarchies({});
+            editorStore.replaceState(next, { label: `Navigate to ${state.name}` });
+            setActiveProjectId(nextId);
+            setActiveProjectIdState(nextId);
+            setPersistenceVersion((v) => v + 1);
+            // Fit camera after navigation
+            setTimeout(() => {
+              const s = editorStore.getState();
+              const rects: Array<{ x: number; y: number; width: number; height: number }> = [
+                ...Object.values(s.frames).map((f) => ({ x: f.x, y: f.y, width: f.width, height: f.height })),
+              ];
+              if (s.session.briefFrame) rects.push(s.session.briefFrame);
+              if (rects.length > 0 && surfaceRef.current) {
+                const vp = { width: surfaceRef.current.clientWidth, height: surfaceRef.current.clientHeight };
+                if (vp.width > 0 && vp.height > 0) {
+                  const left = Math.min(...rects.map((r) => r.x));
+                  const top = Math.min(...rects.map((r) => r.y));
+                  const right = Math.max(...rects.map((r) => r.x + r.width));
+                  const bottom = Math.max(...rects.map((r) => r.y + r.height));
+                  const bounds = { x: left, y: top, width: right - left, height: bottom - top };
+                  const nextCam = fitRect(bounds, vp, vp.width < 760 ? 18 : 148);
+                  cameraRef.current = nextCam;
+                  setCamera(nextCam);
+                }
+              }
+            }, 80);
+          } catch {
+            setRouteNotFound(true);
+          }
+        } else {
+          setRouteNotFound(true);
+        }
+      } else {
+        setRouteNotFound(false);
+      }
+      refreshLocalProjects();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [shouldUseLocalMemory, editorStore, clearComments, refreshLocalProjects]);
 
   const toOverlayTarget = useCallback(
     (entry: OverlayBridgeTargetState): OverlayNodeTarget | null => {
@@ -1535,19 +2056,12 @@ export function CanvasSurface({
       const usableViewport = measuredViewport.width > 0 && measuredViewport.height > 0
         ? measuredViewport
         : { width: Math.max(viewport.width, 1), height: Math.max(viewport.height, 1) };
-      const viewportCenter = screenToWorld(
-        { x: usableViewport.width / 2, y: usableViewport.height / 2 },
+      const position = computeFramePlacement(
+        renderRects,
+        usableViewport,
         cameraRef.current,
+        { width: preset.width, height: preset.height },
       );
-      const position = renderRects.length === 0
-        ? viewportCenter
-        : {
-            x:
-              Math.max(...renderRects.map((frame) => frame.x + frame.width)) +
-              140 +
-              preset.width / 2,
-            y: Math.min(...renderRects.map((frame) => frame.y)) + preset.height / 2,
-          };
       const existingIds = editorStore.getState().frames;
       const idPattern = new RegExp(`^${preset.id}-(\\d+)$`);
       let highestSequence = 0;
@@ -1575,6 +2089,69 @@ export function CanvasSurface({
       updateCamera(fitRect(frame, usableViewport, cameraFitPadding(usableViewport)));
     },
     [cancelZoomAnimation, editorState.activePageId, editorStore, renderRects, setSelectedFrameId, updateCamera, viewport],
+  );
+
+  const showPasteFeedback = useCallback(
+    (kind: "success" | "error", message: string) => {
+      if (pasteFeedbackTimerRef.current !== null) {
+        clearTimeout(pasteFeedbackTimerRef.current);
+        pasteFeedbackTimerRef.current = null;
+      }
+      setPasteFeedback({ kind, message });
+      pasteFeedbackTimerRef.current = setTimeout(() => {
+        setPasteFeedback(null);
+        pasteFeedbackTimerRef.current = null;
+      }, kind === "error" ? 5000 : 3600);
+    },
+    [],
+  );
+
+  const handlePasteClipboard = useCallback(
+    async (event: ClipboardEvent) => {
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+      if (clipboardTargetRef.current) {
+        return;
+      }
+      const transfer = event.clipboardData;
+      if (!transfer) {
+        return;
+      }
+      const html = transfer.getData("text/html");
+      const plain = transfer.getData("text/plain");
+      const candidate = html.trim().length > 0
+        ? html
+        : looksLikeHtml(plain)
+          ? plain
+          : null;
+      if (candidate === null) {
+        return;
+      }
+      event.preventDefault();
+      try {
+        const { srcDoc, metadata } = preparePastedHtml(candidate);
+        const measuredViewport = surfaceRef.current ? getViewportSize(surfaceRef.current) : viewport;
+        const usableViewport = measuredViewport.width > 0 && measuredViewport.height > 0
+          ? measuredViewport
+          : { width: Math.max(viewport.width, 1), height: Math.max(viewport.height, 1) };
+        const size = resolvePastedFrameSize(metadata);
+        const center = computeFramePlacement(renderRects, usableViewport, cameraRef.current, size);
+        const result = pasteHtmlIntoStore(editorStore, srcDoc, metadata, {
+          x: center.x - size.width / 2,
+          y: center.y - size.height / 2,
+        });
+        cancelZoomAnimation();
+        updateCamera(fitRect(result.rect, usableViewport, cameraFitPadding(usableViewport)));
+        showPasteFeedback("success", `"${result.name}" pasted onto the canvas.`);
+      } catch (error) {
+        showPasteFeedback(
+          "error",
+          error instanceof Error ? error.message : "Could not paste the copied HTML.",
+        );
+      }
+    },
+    [cancelZoomAnimation, editorStore, renderRects, showPasteFeedback, updateCamera, viewport],
   );
 
   const beginFramePointer = useCallback(
@@ -1768,6 +2345,18 @@ export function CanvasSurface({
     if (element) element.style.transform = drag.transform;
   });
 
+  // While panning, the world transform is driven imperatively (see the pan
+  // branch in handlePointerMove) so the canvas glides without re-rendering
+  // every frame. Any React re-render during the gesture would otherwise
+  // overwrite that transform with the stale committed camera and make the
+  // content snap back to its origin, so re-assert the live transform here.
+  useLayoutEffect(() => {
+    const operation = pointerRef.current;
+    if (operation?.type === "pan" && worldRef.current) {
+      worldRef.current.style.transform = cameraTransform(cameraRef.current);
+    }
+  });
+
   const handlePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (moveNodeGesture(event)) {
       return;
@@ -1785,7 +2374,11 @@ export function CanvasSurface({
     }
 
     if (operation.type === "pan") {
-      updateCamera(panCamera(cameraRef.current, delta));
+      if (worldRef.current) {
+        const nextCamera = panCamera(cameraRef.current, delta);
+        cameraRef.current = nextCamera;
+        worldRef.current.style.transform = cameraTransform(nextCamera);
+      }
       return;
     }
 
@@ -1799,6 +2392,9 @@ export function CanvasSurface({
     if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
       finalizeFrameDrag(operation);
       editorStore.commitTransaction();
+    }
+    if (operation?.type === "pan") {
+      updateCamera(cameraRef.current);
     }
     setInteractionMode("idle");
   };
@@ -1902,7 +2498,9 @@ export function CanvasSurface({
       if (!action) {
         return;
       }
-      event.preventDefault();
+      if (action.type !== "paste-selection") {
+        event.preventDefault();
+      }
       switch (action.type) {
         case "activate-tool":
           setActiveTool(action.tool);
@@ -1928,10 +2526,11 @@ export function CanvasSurface({
         }
         case "paste-selection":
           if (clipboardTargetRef.current) {
+            event.preventDefault();
             const clipboard = clipboardTargetRef.current;
             editorStore.execute(setSelectionCommand({ frameIds: [clipboard.frameId], nodeIds: [clipboard.nodeId], primaryFrameId: clipboard.frameId, primaryNodeId: clipboard.nodeId }), { history: "skip" });
+            void duplicateSelectedNode();
           }
-          void duplicateSelectedNode();
           break;
         case "duplicate-selection":
           void duplicateSelectedNode();
@@ -1965,6 +2564,21 @@ export function CanvasSurface({
     };
   }, [activeTool, deleteSelectedNodes, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
 
+  useEffect(() => {
+    const handlePaste = (event: ClipboardEvent) => {
+      void handlePasteClipboard(event);
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [handlePasteClipboard]);
+
+  useEffect(() => () => {
+    if (pasteFeedbackTimerRef.current !== null) {
+      clearTimeout(pasteFeedbackTimerRef.current);
+      pasteFeedbackTimerRef.current = null;
+    }
+  }, []);
+
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;
 
   const selectedComment = selectedCommentId
@@ -1980,6 +2594,9 @@ export function CanvasSurface({
         );
       })()
     : null;
+
+  const isHomeRoute = shouldUseLocalMemory && routeProjectId === null && !routeNotFound;
+  const isProjectRoute = shouldUseLocalMemory && routeProjectId !== null && !routeNotFound;
 
   return (
     <main
@@ -2000,11 +2617,13 @@ export function CanvasSurface({
         setSpacePressed(false);
       }}
     >
-      <div
-        className="canvas-world"
-        data-testid="canvas-world"
-        style={{ ...worldStyle, transform: cameraTransform(camera) }}
-      >
+      {!isHomeRoute ? (
+        <div
+          ref={worldRef}
+          className="canvas-world"
+          data-testid="canvas-world"
+          style={{ ...worldStyle, transform: cameraTransform(camera) }}
+        >
         {briefFrame ? (
           <BriefFrameView
             key={`brief-frame-${persistenceVersion}-${briefFrame.id}`}
@@ -2080,6 +2699,7 @@ export function CanvasSurface({
           );
         })}
       </div>
+      ) : null}
 
       {selectedComment && selectedCommentAnchor ? (
         <CommentPopover
@@ -2101,20 +2721,109 @@ export function CanvasSurface({
         />
       ) : null}
 
-      {isEmptyState ? (
-        <EmptyCanvasState onStartBrainstorming={startBrainstorming} />
+      {shouldUseLocalMemory && routeNotFound ? (
+        <div className="project-not-found" data-testid="project-not-found" data-canvas-control>
+          <div className="project-not-found-card">
+            <h2>Project not found</h2>
+            <p>
+              No local project matches <code>{routeProjectId}</code>. It may have been deleted on this device or the link is incorrect.
+            </p>
+            <div className="project-not-found-actions">
+              <button
+                onClick={() => {
+                  setRouteNotFound(false);
+                  setRouteProjectId(null);
+                  navigateToHome();
+                }}
+                type="button"
+              >
+                Go to home
+              </button>
+              <button
+                onClick={() => {
+                  if (routeProjectId) {
+                    // Offer to create a new project with that id? For now just go home
+                    setRouteNotFound(false);
+                    setRouteProjectId(null);
+                    navigateToHome();
+                  }
+                }}
+                type="button"
+                className="is-secondary"
+              >
+                Browse lake
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : shouldUseLocalMemory && routeProjectId === null ? (
+        <ProjectLake
+          projects={localProjects}
+          activeProjectId={activeProjectId}
+          onOpen={handleOpenLakeProject}
+          onCreate={handleCreateLakeProject}
+          onDelete={handleDeleteLakeProject}
+          onDuplicate={handleDuplicateLakeProject}
+          onRename={handleRenameLakeProject}
+          onStartBlank={() => startBrainstorming("blank")}
+        />
+      ) : shouldUseLocalMemory && routeProjectId !== null && !routeNotFound ? null : isEmptyState ? (
+        <EmptyCanvasState onStartBrainstorming={() => startBrainstorming()} />
+      ) : null}
+
+      {shouldUseLocalMemory && showLakeOverlay && routeProjectId !== null && !routeNotFound ? (
+        <ProjectLake
+          projects={localProjects}
+          activeProjectId={activeProjectId}
+          onOpen={handleOpenLakeProject}
+          onCreate={handleCreateLakeProject}
+          onDelete={handleDeleteLakeProject}
+          onDuplicate={handleDuplicateLakeProject}
+          onRename={handleRenameLakeProject}
+          showAsOverlay
+          onCloseLake={() => setShowLakeOverlay(false)}
+        />
       ) : null}
 
       <WorkspaceHeader
         frameCount={frames.length}
-        projectMeta={briefFrame ? `${frames.length} frames · Brainstorming` : undefined}
-        projectName={isEmptyState ? "Untitled canvas" : briefFrame ? "Project brief" : undefined}
+        projectMeta={briefFrame ? `${frames.length} frames · Brainstorming` : routeProjectId ? `Project · ${routeProjectId.slice(0, 12)}…` : undefined}
+        projectName={
+          shouldUseLocalMemory
+            ? routeProjectId
+              ? deriveProjectName(editorState, localProjects.find((p) => p.id === routeProjectId)?.kind ?? "blank")
+              : "Home"
+            : isEmptyState
+              ? "Untitled canvas"
+              : briefFrame
+                ? "Project brief"
+                : undefined
+        }
         canExport={editorState.session.lifecycle !== "not-started"}
         onImportFile={importProject}
         onExport={exportProject}
+        onExportFigma={exportFigmaProject}
         persistenceFeedback={persistenceFeedback}
+        onShowLake={
+          shouldUseLocalMemory
+            ? () => {
+                if (routeProjectId === null) {
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                } else {
+                  setRouteProjectId(null);
+                  setRouteNotFound(false);
+                  setShowLakeOverlay(false);
+                  navigateToHome();
+                  // Clear world transform side effects if any
+                  refreshLocalProjects();
+                }
+              }
+            : undefined
+        }
+        lakeCount={shouldUseLocalMemory ? localProjects.length : undefined}
+        isLakeOpen={shouldUseLocalMemory ? routeProjectId === null : showLakeOverlay}
       />
-      {showDesignChrome ? (
+      {showDesignChrome && !isHomeRoute ? (
         <CanvasDock
           zoom={camera.zoom}
           activeTool={activeTool}
@@ -2129,10 +2838,6 @@ export function CanvasSurface({
           onSelectTool={setActiveTool}
           activeShape={activeShape}
           onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle", { force: true }); }}
-          shapeRadius={radiusSelection?.radius ?? shapeRadius}
-          shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
-          onShapeRadiusChange={changeShapeRadius}
-          onShapeRadiusCommit={commitShapeRadius}
           onToggleFrameMenu={toggleFrameMenu}
           onCloseFrameMenu={() => setIsFrameMenuOpen(false)}
           onUndo={() => {
@@ -2180,7 +2885,18 @@ export function CanvasSurface({
         </div>
       ) : null}
 
-      {showDesignChrome ? (
+      {pasteFeedback ? (
+        <div
+          className={`paste-feedback-toast${pasteFeedback.kind === "error" ? " is-error" : ""}`}
+          data-canvas-control
+          data-testid="paste-feedback"
+          role={pasteFeedback.kind === "error" ? "alert" : "status"}
+        >
+          {pasteFeedback.message}
+        </div>
+      ) : null}
+
+      {showDesignChrome && !isHomeRoute ? (
         <>
           <LeftSidebar
             pages={Object.values(editorState.pages)}
@@ -2210,6 +2926,10 @@ export function CanvasSurface({
             onMoveFrame={moveFrameFromPanel}
             onEditNodeStyle={editNodeStyle}
             onEditNodePosition={editNodePosition}
+            shapeRadius={radiusSelection?.radius ?? shapeRadius}
+            shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
+            onShapeRadiusChange={changeShapeRadius}
+            onShapeRadiusCommit={commitShapeRadius}
           />
         </>
       ) : null}

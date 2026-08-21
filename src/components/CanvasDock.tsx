@@ -21,10 +21,11 @@ import {
   Type,
   Undo2,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { isToolAvailable, normalizeActiveTool, SHAPE_VARIANTS, TOOL_REGISTRY, type ShapeVariantId, type ToolId } from "../editor/tools";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { getToolsForCanvasCategory, isToolAvailable, normalizeActiveTool, SHAPE_VARIANTS, type ShapeVariantId, type ToolId } from "../editor/tools";
 import type { ActiveTool } from "../editor/model";
-import { FRAME_PRESET_SECTIONS, type DeviceCategory, type FramePreset } from "../frame/presets";
+import { getFramePresetSectionsForCanvasCategory, type DeviceCategory, type FramePreset } from "../frame/presets";
+import type { CanvasCategory } from "../persistence/local-projects";
 
 interface CanvasDockProps {
   zoom: number;
@@ -44,6 +45,8 @@ interface CanvasDockProps {
   onCloseFrameMenu: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  /** Active canvas category drives frame preset filtering (website: all, mobile: no desktop, asset: artboards) */
+  canvasCategory?: CanvasCategory;
 }
 
 const presetIcons: Record<FramePreset["category"], typeof Smartphone> = {
@@ -80,12 +83,18 @@ export function CanvasDock({
   onCloseFrameMenu,
   onUndo,
   onRedo,
+  canvasCategory = "website",
 }: CanvasDockProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const shapeMenuRef = useRef<HTMLDivElement>(null);
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<DeviceCategory | null>(null);
   const activeToolId = normalizeActiveTool(activeTool);
+  const presetSections = useMemo(
+    () => getFramePresetSectionsForCanvasCategory(canvasCategory),
+    [canvasCategory],
+  );
+  const visibleTools = useMemo(() => getToolsForCanvasCategory(canvasCategory), [canvasCategory]);
 
   useEffect(() => {
     if (!isFrameMenuOpen) {
@@ -108,10 +117,19 @@ export function CanvasDock({
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [isFrameMenuOpen, isShapeMenuOpen, onCloseFrameMenu]);
 
+  // Human copy per canvas — surfaces in Dock tooltip / menu heading
+  const frameButtonLabel = canvasCategory === "asset" ? "Add artboard" : "Add frame";
+  const frameMenuHint =
+    canvasCategory === "mobile"
+      ? "Phones & tablets · no desktop"
+      : canvasCategory === "asset"
+        ? "Artboards · SVG · logos, icons"
+        : "All devices · mobile / tablet / desktop";
+
   return (
     <div className="canvas-dock" data-canvas-control aria-label="Canvas controls">
       <div className="tool-group" role="toolbar" aria-label="Design tools">
-        {TOOL_REGISTRY.filter((tool) => tool.id !== "frame").map((tool) => {
+        {visibleTools.filter((tool) => tool.id !== "frame").map((tool) => {
           const Icon = toolIcons[tool.icon];
           const isActive =
             tool.id === "hand"
@@ -184,10 +202,11 @@ export function CanvasDock({
         {isFrameMenuOpen ? (
           activeCategory
             ? (() => {
-              const section = FRAME_PRESET_SECTIONS.find((candidate) => candidate.category === activeCategory);
+              const section = presetSections.find((candidate) => candidate.category === activeCategory);
               if (!section) return null;
               const SectionIcon = presetIcons[section.category];
               const viewportCount = section.groups.reduce((count, group) => count + group.items.length, 0);
+              const countLabel = canvasCategory === "asset" ? "artboards" : "viewports";
               return (
                 <div className="frame-menu" role="menu" aria-label="Frame presets">
                   <button
@@ -198,12 +217,12 @@ export function CanvasDock({
                     type="button"
                   >
                     <ChevronLeft size={13} strokeWidth={1.8} aria-hidden="true" />
-                    All devices
+                    {canvasCategory === "asset" ? "All artboards" : "All devices"}
                   </button>
                   <div className="frame-menu-category-title">
                     <SectionIcon size={13} strokeWidth={1.8} aria-hidden="true" />
                     <span>{section.title}</span>
-                    <small>{viewportCount} viewports</small>
+                    <small>{viewportCount} {countLabel}</small>
                   </div>
                   {section.groups.map((group) => (
                     <div key={group.title}>
@@ -239,13 +258,47 @@ export function CanvasDock({
               <div className="frame-menu" role="menu" aria-label="Frame presets">
                 <div className="frame-menu-heading">
                   <div>
-                    <strong>New frame</strong>
-                    <span>Choose a device</span>
+                    <strong>{canvasCategory === "asset" ? "New artboard" : "New frame"}</strong>
+                    <span>{frameMenuHint}</span>
                   </div>
                   <kbd>F</kbd>
                 </div>
-                {FRAME_PRESET_SECTIONS.map((section) => {
+                {presetSections.map((section) => {
                   const SectionIcon = presetIcons[section.category];
+                  // Asset has a single "Asset" section — render its items directly instead of nesting
+                  if (canvasCategory === "asset") {
+                    return (
+                      <div key={section.title}>
+                        {section.groups.map((group) => (
+                          <div key={group.title}>
+                            <div className="frame-menu-group-label">{group.title}</div>
+                            {group.items.map((preset) => {
+                              const Icon = presetIcons[preset.category];
+                              return (
+                                <button
+                                  className="frame-preset"
+                                  data-testid={`add-${preset.id}-frame`}
+                                  key={preset.id}
+                                  onClick={() => {
+                                    onAddFrame(preset);
+                                    onCloseFrameMenu();
+                                  }}
+                                  role="menuitem"
+                                  type="button"
+                                >
+                                  <span className="preset-icon"><Icon size={16} strokeWidth={1.7} /></span>
+                                  <span>
+                                    <strong>{preset.label}</strong>
+                                    <small>{preset.detail}</small>
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
                   return (
                     <button
                       className="frame-menu-category"
@@ -269,13 +322,14 @@ export function CanvasDock({
         ) : null}
 
         <button
-          aria-label="Add frame"
+          aria-label={frameButtonLabel}
           aria-expanded={isFrameMenuOpen}
           aria-haspopup="menu"
           className={`dock-icon${isFrameMenuOpen ? " is-active" : ""}`}
           data-testid="add-frame-button"
           onClick={onToggleFrameMenu}
           type="button"
+          title={frameButtonLabel}
         >
           <Frame size={15} strokeWidth={1.8} aria-hidden="true" />
           <ChevronDown size={10} strokeWidth={1.8} aria-hidden="true" />

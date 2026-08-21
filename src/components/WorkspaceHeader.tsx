@@ -1,5 +1,6 @@
-import { Cloud, Layers } from "lucide-react";
+import { Cloud, Globe, Layers, Palette, Smartphone } from "lucide-react";
 import type { ChangeEvent } from "react";
+import type { CanvasCategory } from "../persistence/local-projects";
 
 interface WorkspaceHeaderProps {
   frameCount: number;
@@ -13,6 +14,8 @@ interface WorkspaceHeaderProps {
   onShowLake?: () => void;
   lakeCount?: number;
   isLakeOpen?: boolean;
+  canvasCategory?: CanvasCategory;
+  canvasLabel?: string;
 }
 
 export function WorkspaceHeader({
@@ -27,6 +30,8 @@ export function WorkspaceHeader({
   onShowLake,
   lakeCount,
   isLakeOpen = false,
+  canvasCategory,
+  canvasLabel,
 }: WorkspaceHeaderProps) {
   const handleImportChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -47,6 +52,12 @@ export function WorkspaceHeader({
       <div className="project-identity">
         <span className="project-name">{projectName}</span>
         <span className="project-meta">{projectMeta ?? `${frameCount} frames`}</span>
+        {canvasCategory ? (
+          <span className="project-canvas-badge" data-testid={`header-canvas-${canvasCategory}`} title={`Canvas: ${canvasLabel} · agent: ${canvasCategory === "website" ? "agent.md" : canvasCategory === "mobile" ? "agent-mobile.md" : "agent-asset.md"}`}>
+            {canvasCategory === "website" ? <Globe size={11} aria-hidden="true" /> : canvasCategory === "mobile" ? <Smartphone size={11} aria-hidden="true" /> : <Palette size={11} aria-hidden="true" />}
+            {canvasLabel}
+          </span>
+        ) : null}
       </div>
 
       <div className="workspace-header-right">

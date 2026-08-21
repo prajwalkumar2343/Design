@@ -678,6 +678,27 @@ The event log and canonical HTML revision are authoritative. Codex context and f
 - Shareable read-only review links with scoped access.
 - No production publishing in the MVP.
 
+### Undo scope rules
+
+`Cmd/Ctrl+Z` / `Cmd/Ctrl+Shift+Z` (and the dock buttons) revert canvas/document edits
+only. The history stack is scoped to the design document:
+
+- Comments are a collaboration surface **outside** the undo stack. Adding, editing,
+  resolving, or deleting a comment records no history entry, so undo/redo can never make
+  a comment reappear or disappear; comment mutations surface immediate status feedback
+  only.
+- Selection and navigation changes stay out of history (`history: "skip"`), matching
+  Figma's practice of keeping navigation state consistent without polluting undo.
+- Undo/redo must be side-effect-free with respect to every other surface: undo → copy →
+  redo must leave both the document and all auxiliary state unchanged.
+
+Rationale: linear undo that blindly reverses "the latest step" is only meaningful when
+every entry belongs to one concern (Berlage, *A Selective Undo Mechanism for Graphical
+User Interfaces Based on Command Objects*, ACM ToCHI 1994); interleaving comments into
+the canvas history made `Cmd+Z` resurrect deleted annotations. Figma applies the same
+scoping in multiplayer: deleted objects live in the deleting client's undo buffer, never
+in shared document state ("How Figma's Multiplayer Technology Works", Figma Blog 2019).
+
 ## 14. Safety, privacy, and recovery
 
 - Project-local execution is sandboxed by default.

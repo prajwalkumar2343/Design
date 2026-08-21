@@ -15,9 +15,9 @@ const inspection: BridgeInspection = {
     locked: false,
   },
   text: "",
-  attributes: {},
-  inlineStyle: { "background-color": "rgb(217, 217, 217)" },
-  computedStyle: { "background-color": "rgb(217, 217, 217)", "backdrop-filter": "none" },
+  attributes: { "data-design-tool-kind": "rectangle", "data-design-tool-fill": "#d9d9d9" },
+  inlineStyle: {},
+  computedStyle: { "background-color": "rgb(217, 217, 217)" },
 };
 
 const entry: OverlayBridgeTargetState = {
@@ -47,6 +47,7 @@ const baseProps = {
   onMoveFrame: vi.fn(),
   onEditNodeStyle: vi.fn(),
   onEditNodePosition: vi.fn(),
+  onApplyGlassEffect: vi.fn(),
   shapeRadius: 0,
   shapeRadiusVisible: false,
   onShapeRadiusChange: vi.fn(),
@@ -55,7 +56,7 @@ const baseProps = {
 
 describe("PropertiesPanel glass effect", () => {
   it("shows the glass control for shapes and starts at Off", () => {
-    render(<PropertiesPanel {...baseProps} onApplyGlassEffect={vi.fn()} />);
+    render(<PropertiesPanel {...baseProps} />);
     expect(screen.getByTestId("glass-level-slider")).toBeTruthy();
     expect(screen.getByTestId("glass-level-value").textContent).toBe("Off");
   });
@@ -81,12 +82,12 @@ describe("PropertiesPanel glass effect", () => {
     expect(onApplyGlassEffect).toHaveBeenLastCalledWith(0);
   });
 
-  it("restores the slider from an existing glass effect", () => {
+  it("restores the slider from an applied glass effect", () => {
     const glassy: OverlayBridgeTargetState = {
       ...entry,
       inspection: {
         ...inspection,
-        inlineStyle: { ...inspection.inlineStyle, "backdrop-filter": "blur(15px) saturate(160%)" },
+        attributes: { ...inspection.attributes, "data-design-tool-glass": "50" },
       },
     };
     render(
@@ -97,5 +98,36 @@ describe("PropertiesPanel glass effect", () => {
       />,
     );
     expect(screen.getByTestId("glass-level-value").textContent).toBe("50%");
+  });
+});
+
+describe("PropertiesPanel color field", () => {
+  it("applies a palette swatch to the shape fill with one gesture", () => {
+    const onEditNodeStyle = vi.fn();
+    render(<PropertiesPanel {...baseProps} onEditNodeStyle={onEditNodeStyle} />);
+    fireEvent.click(screen.getByTestId("color-swatch-Fill"));
+    expect(screen.getByTestId("color-popover-Fill")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("color-option-#e5484d"));
+    expect(onEditNodeStyle).toHaveBeenCalledWith("background-color", "#e5484d");
+    expect(screen.queryByTestId("color-popover-Fill")).toBeNull();
+  });
+
+  it("marks the active swatch when the fill matches", () => {
+    const filled: OverlayBridgeTargetState = {
+      ...entry,
+      inspection: {
+        ...inspection,
+        inlineStyle: {},
+        computedStyle: { "background-color": "rgb(229, 72, 77)" },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        bridgeTargets={{ "frame-1:rect-1": filled }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("color-swatch-Fill"));
+    expect((screen.getByTestId("color-option-#e5484d") as HTMLButtonElement).className).toContain("is-active");
   });
 });

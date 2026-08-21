@@ -13,12 +13,13 @@ import {
   Square,
   Type,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SafeInlineStyleProperty } from "../bridge/protocol";
 import {
   MAX_GLASS_LEVEL,
   clampGlassLevel,
-  glassLevelFromBackdrop,
+  glassLevelFromAttribute,
+  parseCssColor,
 } from "../editor/effects";
 import type { FrameEntity, NodeEntity, SelectionState } from "../editor/model";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
@@ -102,6 +103,93 @@ function PropertySection({ title, icon, children }: { title: string; icon: React
   return <section className="property-section"><div className="property-section-title"><span>{icon}{title}</span><ChevronDown size={13} /></div>{children}</section>;
 }
 
+/** A curated, gesture-friendly palette — no color wheel required. */
+const COLOR_SWATCHES = [
+  "#ffffff", "#ebebe8", "#d9d9d9", "#a8a8a1", "#666661", "#161615",
+  "#f6b1a4", "#e5484d", "#ffab6b", "#e8792e",
+  "#ffe9a8", "#f2ce4b", "#d9a514",
+  "#b5e0a5", "#6cbf5d", "#2f9e57", "#1d6b40",
+  "#bcd9f5", "#6faee0", "#3b74c2", "#24488f",
+  "#e3cdf6", "#b98ae4", "#7a4fb0",
+];
+
+function ColorField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string | null;
+  onCommit: (value: string) => void;
+}) {
+  const isMixed = value === "mixed";
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(isMixed || value === null ? "" : value);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => setDraft(isMixed || value === null ? "" : value), [isMixed, value]);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !wrapRef.current?.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+  const commit = (next: string) => {
+    onCommit(next);
+    setOpen(false);
+  };
+  return (
+    <span className="color-field" ref={wrapRef}>
+      <span className="color-field-label">{label}</span>
+      <button
+        type="button"
+        className="color-swatch-button"
+        data-testid={`color-swatch-${label}`}
+        aria-label={`${label} color`}
+        aria-expanded={open}
+        style={{ background: isMixed || !value ? "transparent" : value }}
+        onClick={() => setOpen((current) => !current)}
+      />
+      <input
+        aria-label={label}
+        value={draft}
+        placeholder={isMixed ? "Mixed" : "—"}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          const next = draft.trim();
+          if (!next || next === value) return;
+          commit(next);
+        }}
+        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+      />
+      {open ? (
+        <span className="color-popover" data-testid={`color-popover-${label}`}>
+          <span className="color-swatch-grid">
+            {COLOR_SWATCHES.map((color) => {
+              const current = parseCssColor(value ?? undefined);
+              const option = parseCssColor(color);
+              const isActive = current !== null && option !== null &&
+                current.r === option.r && current.g === option.g && current.b === option.b;
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  className={`color-swatch${isActive ? " is-active" : ""}`}
+                  data-testid={`color-option-${color}`}
+                  style={{ background: color }}
+                  aria-label={color}
+                  onClick={() => commit(color)}
+                />
+              );
+            })}
+          </span>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function styleValue(entries: OverlayBridgeTargetState[], property: string): string | null {
   return mixedValue(entries.map((entry) => entry.inspection?.inlineStyle[property] ?? entry.inspection?.computedStyle[property] ?? ""));
 }
@@ -149,7 +237,7 @@ function TypographySection({ entries, onEditNodeStyle }: Pick<PropertiesPanelPro
         <PropertyField label="Family" value={styleValue(entries, "font-family")} onCommit={(value) => onEditNodeStyle("font-family", value)} />
         <div className="property-grid"><PropertyField label="Size" value={styleValue(entries, "font-size")} onCommit={(value) => onEditNodeStyle("font-size", value)} /><PropertyField label="Weight" value={styleValue(entries, "font-weight")} onCommit={(value) => onEditNodeStyle("font-weight", value)} /></div>
         <PropertyField label="Line height" value={styleValue(entries, "line-height")} onCommit={(value) => onEditNodeStyle("line-height", value)} />
-        <div className="property-grid"><PropertyField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Align" value={styleValue(entries, "text-align")} onCommit={(value) => onEditNodeStyle("text-align", value)} /></div>
+        <div className="property-grid"><ColorField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Align" value={styleValue(entries, "text-align")} onCommit={(value) => onEditNodeStyle("text-align", value)} /></div>
       </div>
     </PropertySection>
   );
@@ -159,7 +247,7 @@ function FillBorderSection({ entries, onEditNodeStyle }: Pick<PropertiesPanelPro
   return (
     <PropertySection title="Fill & border" icon={<Palette size={13} />}>
       <div className="property-grid property-grid-single">
-        <PropertyField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+        <ColorField label="Fill" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
         <div className="property-grid"><PropertyField label="Border" value={styleValue(entries, "border-color")} onCommit={(value) => onEditNodeStyle("border-color", value)} /><PropertyField label="Width" value={styleValue(entries, "border-width")} onCommit={(value) => onEditNodeStyle("border-width", value)} /></div>
         <PropertyField label="Radius" value={styleValue(entries, "border-radius")} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
       </div>
@@ -184,9 +272,8 @@ function GlassSection({
 }) {
   const currentLevel = useMemo(() => {
     for (const entry of entries) {
-      const value = entry.inspection?.inlineStyle["backdrop-filter"] ?? entry.inspection?.computedStyle["backdrop-filter"];
-      const parsed = glassLevelFromBackdrop(value);
-      if (parsed !== null) return parsed;
+      const parsed = glassLevelFromAttribute(entry.inspection?.attributes["data-design-tool-glass"]);
+      if (parsed !== null && parsed > 0) return parsed;
     }
     return 0;
   }, [entries]);
@@ -360,7 +447,7 @@ function NodeDesignPanel({
           {glassSection}
           <PropertySection title="Button style" icon={<Palette size={13} />}>
             <div className="property-grid property-grid-single">
-              <PropertyField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+              <ColorField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
               <PropertyField label="Radius" value={styleValue(entries, "border-radius")} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
               <div className="property-grid"><PropertyField label="Border" value={styleValue(entries, "border-color")} onCommit={(value) => onEditNodeStyle("border-color", value)} /><PropertyField label="Width" value={styleValue(entries, "border-width")} onCommit={(value) => onEditNodeStyle("border-width", value)} /></div>
             </div>

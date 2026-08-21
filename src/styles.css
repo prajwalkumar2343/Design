@@ -32,10 +32,10 @@ body,
   height: 100%;
   margin: 0;
   overflow: clip;
+  overscroll-behavior: none;
 }
 
 body {
-  overscroll-behavior: none;
   user-select: none;
 }
 
@@ -83,7 +83,10 @@ button:focus-visible,
     radial-gradient(circle, rgba(18, 18, 17, 0.13) 0.7px, transparent 0.85px);
   background-position: -1px -1px, -1px -1px, 0 0;
   background-size: 80px 80px, 80px 80px, 16px 16px;
+  background-attachment: fixed;
+  transform: translateZ(0);
   contain: strict;
+  isolation: isolate;
 }
 
 .canvas-surface[data-interaction="panning"],
@@ -105,6 +108,11 @@ button:focus-visible,
   width: 1px;
   height: 1px;
   transform-origin: 0 0;
+}
+
+.canvas-surface[data-interaction="panning"] .canvas-world,
+.canvas-surface[data-interaction="zooming"] .canvas-world,
+.canvas-surface[data-interaction="moving-frame"] .canvas-world {
   will-change: transform;
 }
 
@@ -119,7 +127,6 @@ button:focus-visible,
   box-shadow: var(--shadow-frame);
   transform-origin: 0 0;
   transform: translateZ(0);
-  will-change: transform;
   transition:
     border-color var(--duration-fast) ease,
     box-shadow var(--duration-fast) ease;
@@ -289,9 +296,11 @@ button:focus-visible,
   box-shadow: inset 0 1px 1px rgba(255,255,255,.06);
 }
 
-/* Punch-hole – Android center */
+/* Punch-hole – Android center — 3.0–4.0mm physical (16–19 CSS px) · 11px top inset
+   Standard ≈4.6% of viewport width for phones (≈18px at 390px), absolute ~18px for tablets.
+   Per-model diameters in presets.ts (e.g. Galaxy S24 16px/3.4mm, Fold cover 15px/3.7mm, Pixel 9 19px/3.9mm, Xiaomi 15 16px/3.0mm). */
 .device-punch-hole {
-  top: 10px;
+  top: 11px;
   border-radius: 50%;
   background: #000;
   box-shadow:
@@ -643,8 +652,31 @@ button:focus-visible,
   }
 }
 
+.canvas-comment-preview {
+  position: absolute;
+  z-index: 40;
+  max-width: 280px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  color: var(--ink);
+  background: rgba(253, 253, 252, 0.92);
+  box-shadow:
+    0 0 0 1px rgba(23, 22, 26, 0.08),
+    0 8px 24px rgba(20, 20, 18, 0.14);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+  transform-origin: 0 0;
+  animation: comment-popover-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .canvas-comment-popover {
+  .canvas-comment-popover,
+  .canvas-comment-preview {
     animation-name: comment-popover-fade;
   }
 }

@@ -7,6 +7,7 @@ import {
   easeOutCubic,
   fitRect,
   panCamera,
+  revealCamera,
   screenToWorld,
   worldToScreen,
   zoomCameraAtPoint,
@@ -25,7 +26,7 @@ describe('camera coordinates', () => {
 
   it('creates the CSS transform for the world layer', () => {
     expect(cameraTransform({ x: -12, y: 8, zoom: 2 })).toBe(
-      'translate(24px, -16px) scale(2)',
+      'translate3d(24px, -16px, 0) scale(2)',
     );
   });
 });
@@ -137,5 +138,55 @@ describe('fitRect', () => {
       fitRect({ x: 0, y: 0, width: 100_000, height: 100_000 }, viewport)
         .zoom,
     ).toBe(MIN_ZOOM);
+  });
+});
+
+describe('revealCamera', () => {
+  const viewport = { width: 800, height: 600 };
+
+  it('keeps the camera when the rect is already fully visible', () => {
+    const camera = { x: -50, y: -50, zoom: 1 };
+    const rect = { x: 0, y: 0, width: 400, height: 300 };
+
+    expect(revealCamera(camera, viewport, rect)).toBeNull();
+  });
+
+  it('returns a camera that frames an off-screen rect', () => {
+    const camera = { x: 0, y: 0, zoom: 1 };
+    const rect = { x: 2000, y: 1500, width: 400, height: 300 };
+
+    const next = revealCamera(camera, viewport, rect);
+
+    expect(next).not.toBeNull();
+    const revealed = worldToScreen({ x: rect.x + rect.width, y: rect.y + rect.height }, next!);
+    expect(revealed.x).toBeLessThanOrEqual(viewport.width);
+    expect(revealed.y).toBeLessThanOrEqual(viewport.height);
+    expect(worldToScreen({ x: rect.x, y: rect.y }, next!).x).toBeGreaterThanOrEqual(0);
+  });
+
+  it('reframes when only part of the rect is visible', () => {
+    const camera = { x: 0, y: 0, zoom: 1 };
+    // Right edge (x 900) sits beyond the 800px visible width.
+    const rect = { x: 700, y: 100, width: 200, height: 200 };
+
+    expect(revealCamera(camera, viewport, rect)).not.toBeNull();
+  });
+
+  it('accounts for zoom when deciding visibility', () => {
+    // At zoom 2 the visible world region is 400x300, so the rect overflows.
+    const zoomed = revealCamera({ x: 0, y: 0, zoom: 2 }, viewport, { x: 350, y: 0, width: 100, height: 100 });
+    expect(zoomed).not.toBeNull();
+    // At zoom 0.5 the visible region is 1600x1200, so it fits comfortably.
+    const panned = revealCamera({ x: 0, y: 0, zoom: 0.5 }, viewport, { x: 350, y: 0, width: 100, height: 100 });
+    expect(panned).toBeNull();
+  });
+
+  it('applies padding to the fitted result', () => {
+    const rect = { x: 5000, y: 5000, width: 800, height: 600 };
+
+    const padded = revealCamera({ x: 0, y: 0, zoom: 1 }, viewport, rect, 100)!;
+    const unpadded = revealCamera({ x: 0, y: 0, zoom: 1 }, viewport, rect)!;
+
+    expect(padded.zoom).toBeLessThan(unpadded.zoom);
   });
 });

@@ -79,7 +79,10 @@ function DeviceChrome({ chrome, width }: { chrome: NonNullable<CanvasFrame["chro
     );
   }
   if (chrome.type === "punch-hole") {
-    const d = Math.round((chrome.width ?? 12) * scale);
+    // Punch holes are absolute physical size (~3.0–4.0mm) → CSS px already encodes density
+    // per-model in presets.ts (≈4.6% width for phones, absolute ~18px for tablets), so do not
+    // apply viewport-proportion scaling like notches/islands. Use exact diameter.
+    const d = Math.round(chrome.width ?? 18);
     const left = chrome.punchPosition === "left" ? "24%" : "50%";
     return (
       <div

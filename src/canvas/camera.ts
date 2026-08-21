@@ -16,7 +16,7 @@ export function screenToWorld(point: Point, camera: Camera): Point {
 }
 
 export function cameraTransform(camera: Camera): string {
-  return `translate(${-camera.x * camera.zoom}px, ${-camera.y * camera.zoom}px) scale(${camera.zoom})`;
+  return `translate3d(${-camera.x * camera.zoom}px, ${-camera.y * camera.zoom}px, 0) scale(${camera.zoom})`;
 }
 
 /** Moves the canvas by a screen-space pointer delta. */
@@ -88,4 +88,25 @@ export function fitRect(rect: Rect, viewport: Size, padding = 0): Camera {
     y: rect.y + rect.height / 2 - viewport.height / (2 * zoom),
     zoom,
   };
+}
+
+/**
+ * Camera that brings `focusRect` fully into view, or `null` when every corner
+ * of the rect is already visible so the camera can stay where it is.
+ */
+export function revealCamera(
+  current: Camera,
+  viewport: Size,
+  focusRect: Rect,
+  padding = 0,
+): Camera | null {
+  const visibleWidth = viewport.width / current.zoom;
+  const visibleHeight = viewport.height / current.zoom;
+  const fullyVisible =
+    focusRect.x >= current.x &&
+    focusRect.y >= current.y &&
+    focusRect.x + focusRect.width <= current.x + visibleWidth &&
+    focusRect.y + focusRect.height <= current.y + visibleHeight;
+  if (fullyVisible) return null;
+  return fitRect(focusRect, viewport, padding);
 }

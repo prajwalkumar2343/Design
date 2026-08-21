@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
+import { useLiquidGlass } from "../glass/useLiquidGlass";
 import type { FrameRenderModel, NodeEntity, PageEntity, SelectionState } from "../editor/model";
 import { buildLayerTree, countLayerNodes, type LayerIconKind, type LayerTreeNode } from "./panel-model";
 
@@ -62,50 +63,33 @@ export interface LeftSidebarProps {
   hoveredLayerNode?: { frameId: string; nodeId: string } | null;
 }
 
-function EditableLabel({
-  value,
-  onSave,
-  className,
-  testId,
-  editSignal = 0,
+function PageRenameInput({
+  page,
+  onCommit,
+  onCancel,
 }: {
-  value: string;
-  onSave: (value: string) => void;
-  className?: string;
-  testId?: string;
-  editSignal?: number;
+  page: PageEntity;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-  useEffect(() => setDraft(value), [value]);
-  useEffect(() => { if (editSignal > 0) setEditing(true); }, [editSignal]);
+  const [draft, setDraft] = useState(page.name);
   const save = () => {
     const next = draft.trim();
-    if (next && next !== value) onSave(next);
-    setEditing(false);
+    if (next && next !== page.name) onCommit(next);
+    onCancel();
   };
-  if (!editing) {
-    return (
-      <button
-        className={className ?? "sidebar-label-button"}
-        onDoubleClick={() => setEditing(true)}
-        type="button"
-      >
-        {value}
-      </button>
-    );
-  }
   return (
     <input
       autoFocus
       className="sidebar-inline-input"
-      data-testid={testId}
+      data-testid={`page-rename-input-${page.id}`}
+      aria-label={`Rename ${page.name}`}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={save}
       onKeyDown={(event) => {
         if (event.key === "Enter") save();
-        if (event.key === "Escape") setEditing(false);
+        if (event.key === "Escape") onCancel();
       }}
     />
   );
@@ -182,7 +166,7 @@ function LayerRow({
         </button>
         <button
           className="layer-select-button"
-          aria-pressed={selected.has(target.elementId)}
+          aria-pressed={isSelected}
           onClick={(event) => onSelectNode(frameId, target.elementId, event.shiftKey)}
           type="button"
         >
@@ -244,7 +228,7 @@ function LayerRow({
 }
 
 function PagesPanel({ pages, activePageId, frames, onCreatePage, onRenamePage, onSwitchPage }: Pick<LeftSidebarProps, "pages" | "activePageId" | "frames" | "onCreatePage" | "onRenamePage" | "onSwitchPage">) {
-  const [renameSignals, setRenameSignals] = useState<Record<string, number>>({});
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   return (
     <section className="sidebar-panel-content" aria-label="Pages panel">
       <div className="sidebar-panel-heading">
@@ -255,13 +239,19 @@ function PagesPanel({ pages, activePageId, frames, onCreatePage, onRenamePage, o
       <div className="page-list">
         {pages.map((page) => {
           const frameCount = frames.filter((frame) => frame.pageId === page.id).length;
+          const startRename = () => setRenamingId(page.id);
+          const stopRename = () => setRenamingId(null);
           return (
             <div className={`page-row${page.id === activePageId ? " is-active" : ""}`} key={page.id}>
-              <button className="page-select-button" aria-current={page.id === activePageId ? "page" : undefined} onClick={() => onSwitchPage(page.id)} type="button">
-                <span className="page-icon"><FolderOpen size={14} /></span>
-                <span className="page-copy"><strong><EditableLabel value={page.name} editSignal={renameSignals[page.id] ?? 0} onSave={(name) => onRenamePage(page.id, name)} /></strong><small>{frameCount} {frameCount === 1 ? "frame" : "frames"}</small></span>
-              </button>
-              <button className="page-more-button" aria-label={`Rename ${page.name}`} data-testid={`page-rename-${page.id}`} onClick={() => setRenameSignals((current) => ({ ...current, [page.id]: (current[page.id] ?? 0) + 1 }))} type="button"><MoreHorizontal size={14} /></button>
+              {renamingId === page.id ? (
+                <PageRenameInput page={page} onCommit={(name) => { onRenamePage(page.id, name); stopRename(); }} onCancel={stopRename} />
+              ) : (
+                <button className="page-select-button" aria-current={page.id === activePageId ? "page" : undefined} onClick={() => onSwitchPage(page.id)} type="button">
+                  <span className="page-icon" aria-hidden="true"><FolderOpen size={14} /></span>
+                  <span className="page-copy"><strong>{page.name}</strong><small aria-hidden="true">{frameCount} {frameCount === 1 ? "frame" : "frames"}</small></span>
+                </button>
+              )}
+              <button className="page-more-button" aria-label={`Rename ${page.name}`} data-testid={`page-rename-${page.id}`} onClick={startRename} type="button"><MoreHorizontal size={14} /></button>
             </div>
           );
         })}
@@ -332,6 +322,8 @@ export function LeftSidebar(props: LeftSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(276);
   const [dragStart, setDragStart] = useState<{ x: number; width: number } | null>(null);
+  const railGlassRef = useLiquidGlass<HTMLDivElement>({ radius: 13, bezel: 14, scale: 40, blur: 8, saturation: 1.6 });
+  const panelGlassRef = useLiquidGlass<HTMLDivElement>({ radius: 13, bezel: 22, scale: 56, blur: 6, saturation: 1.6 });
   const onResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -349,17 +341,17 @@ export function LeftSidebar(props: LeftSidebarProps) {
   ];
   return (
     <aside className={`left-sidebar${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="left-sidebar" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width + 48 }}>
-      <nav className="sidebar-rail" aria-label="Navigation panels">
+      <nav ref={railGlassRef} className="sidebar-rail" aria-label="Navigation panels">
         <button className="sidebar-collapse-button" data-testid="left-sidebar-toggle" aria-label={collapsed ? "Expand left sidebar" : "Collapse left sidebar"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button>
         <span className="sidebar-rail-divider" />
         {tabs.map(({ id, label, icon: Icon }) => <button key={id} className={`sidebar-rail-tab${tab === id ? " is-active" : ""}`} data-testid={`sidebar-tab-${id}`} aria-label={label} aria-pressed={tab === id} onClick={() => { setTab(id); setCollapsed(false); }} type="button"><Icon size={16} /></button>)}
       </nav>
-      {!collapsed ? <div className="left-sidebar-panel" style={{ width }}>
+      {!collapsed ? <div ref={panelGlassRef} className="left-sidebar-panel" style={{ width }}>
         <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label }) => <button key={id} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} type="button">{label}</button>)}</div>
         {tab === "pages" ? <PagesPanel {...props} /> : null}
         {tab === "layers" ? <LayersPanel {...props} /> : null}
         {tab === "assets" ? <AssetsPanel /> : null}
-        <button className="sidebar-resize-handle" aria-label="Resize left sidebar" onPointerDown={onResizePointerDown} onPointerMove={onResizePointerMove} onPointerUp={onResizePointerUp} type="button" />
+        <button className="sidebar-resize-handle" aria-label="Resize left sidebar" onPointerDown={onResizePointerDown} onPointerMove={onResizePointerMove} onPointerUp={onResizePointerUp} onPointerCancel={onResizePointerUp} onLostPointerCapture={onResizePointerUp} type="button" />
       </div> : null}
     </aside>
   );

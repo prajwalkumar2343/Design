@@ -4,8 +4,11 @@ import {
   DEFAULT_BRIEF_FRAME_SIZE,
   type BrainstormSessionState,
   type BriefContent,
+  type BriefField,
   type BriefFieldUpdate,
+  type BriefListField,
   type BriefReference,
+  type BriefTextField,
   type ConfirmedDecision,
   type StartBrainstormSessionOptions,
   type BrainstormSessionTransitionTarget,
@@ -121,6 +124,92 @@ function requirePositiveFinite(value: number, label: string): void {
   }
 }
 
+function requireString(value: unknown, label: string): string {
+  if (typeof value !== "string") {
+    throw new BrainstormSessionReducerError("invalid-input", `${label} must be a string`);
+  }
+  return value;
+}
+
+function requireStringArray(value: unknown, label: string): readonly string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new BrainstormSessionReducerError(
+      "invalid-input",
+      `${label} must be an array of strings`,
+    );
+  }
+  return value as readonly string[];
+}
+
+/** Matches the import contract: empty URLs are allowed, otherwise http(s) only. */
+function requireReferenceUrl(value: unknown, label: string): string {
+  const url = requireString(value, label);
+  if (url && !/^https?:\/\//i.test(url)) {
+    throw new BrainstormSessionReducerError(
+      "invalid-input",
+      `${label} must be an http:// or https:// URL`,
+    );
+  }
+  return url;
+}
+
+function validateReferencePayload(reference: BriefReference, label: string): void {
+  requireStableId(reference.id, `${label} id`);
+  requireString(reference.label, `${label} label`);
+  requireReferenceUrl(reference.url, `${label} url`);
+  requireString(reference.note, `${label} note`);
+}
+
+function validateDecisionPayload(decision: ConfirmedDecision, label: string): void {
+  requireStableId(decision.id, `${label} id`);
+  requireString(decision.statement, `${label} statement`);
+  requireString(decision.rationale, `${label} rationale`);
+}
+
+const BRIEF_TEXT_FIELDS: readonly BriefTextField[] = [
+  "projectDescription",
+  "audience",
+  "visualDirection",
+];
+
+const BRIEF_LIST_FIELDS: readonly BriefListField[] = [
+  "goals",
+  "successCriteria",
+  "requiredFeatures",
+  "requiredContent",
+  "constraints",
+  "openQuestions",
+];
+
+function isBriefTextField(field: BriefField): field is BriefTextField {
+  return (BRIEF_TEXT_FIELDS as readonly string[]).includes(field);
+}
+
+function isBriefListField(field: BriefField): field is BriefListField {
+  return (BRIEF_LIST_FIELDS as readonly string[]).includes(field);
+}
+
+/**
+ * Validates untrusted brief content against the canonical field set. Explicit
+ * allowlists keep inherited keys such as `__proto__` from passing through
+ * object spreads, and type checks keep malformed payloads from corrupting
+ * session state mid-mutation.
+ */
+function validateBriefContent(content: BriefContent): void {
+  for (const field of BRIEF_TEXT_FIELDS) {
+    requireString(content[field], `Brief field ${field}`);
+  }
+  for (const field of BRIEF_LIST_FIELDS) {
+    requireStringArray(content[field], `Brief field ${field}`);
+  }
+  content.references.forEach((reference, index) =>
+    validateReferencePayload(reference, `Brief reference ${index}`),
+  );
+  content.confirmedDecisions.forEach((decision, index) =>
+    validateDecisionPayload(decision, `Confirmed decision ${index}`),
+  );
+}
+
 function checkBrainstormRevision(
   session: BrainstormSessionState,
   expectedRevision: number | undefined,
@@ -215,6 +304,8 @@ export function applyBrainstormSessionAction(
       requireFinite(position.y, "Brief Frame y");
       requirePositiveFinite(size.width, "Brief Frame width");
       requirePositiveFinite(size.height, "Brief Frame height");
+      if (options.name !== undefined) requireString(options.name, "Brief Frame name");
+      if (options.content) validateBriefContent(options.content);
       const content = options.content ? cloneBriefContent(options.content) : createEmptyBriefContent();
       const briefFrame = {
         id: options.briefFrameId,
@@ -241,19 +332,26 @@ export function applyBrainstormSessionAction(
       const session = requireBrainstormSession(state);
       const briefFrame = requireBriefFrame(state);
       checkBrainstormRevision(session, action.expectedRevision);
-      const current = briefFrame.content[action.update.field];
-      if (current === undefined) {
+      const update = action.update;
+      // Explicit field allowlists reject unknown and inherited keys (e.g.
+      // `__proto__`) before any spread can turn them into own properties.
+      if (isBriefTextField(update.field)) {
+        requireString(update.value, `Brief field ${update.field}`);
+      } else if (isBriefListField(update.field)) {
+        requireStringArray(update.value, `Brief field ${update.field}`);
+      } else {
         throw new BrainstormSessionReducerError(
           "invalid-input",
-          `Unknown Brief field: ${action.update.field}`,
+          `Unknown Brief field: ${String(update.field)}`,
         );
       }
-      if (briefValuesEqual(current, action.update.value)) return state;
+      const current = briefFrame.content[update.field];
+      if (briefValuesEqual(current, update.value)) return state;
       const content = {
         ...briefFrame.content,
-        [action.update.field]: Array.isArray(action.update.value)
-          ? [...action.update.value]
-          : action.update.value,
+        [update.field]: Array.isArray(update.value)
+          ? [...update.value]
+          : update.value,
       } as BriefContent;
       return updateBriefContent(state, content);
     }
@@ -262,7 +360,7 @@ export function applyBrainstormSessionAction(
       const session = requireBrainstormSession(state);
       const briefFrame = requireBriefFrame(state);
       checkBrainstormRevision(session, action.expectedRevision);
-      requireStableId(action.reference.id, "Brief reference id");
+      validateReferencePayload(action.reference, "Brief reference");
       if (briefFrame.content.references.some((reference) => reference.id === action.reference.id)) {
         throw new BrainstormSessionReducerError(
           "duplicate-reference-id",
@@ -286,6 +384,9 @@ export function applyBrainstormSessionAction(
           `Unknown brief reference: ${action.referenceId}`,
         );
       }
+      if (action.patch.label !== undefined) requireString(action.patch.label, "Brief reference label");
+      if (action.patch.url !== undefined) requireReferenceUrl(action.patch.url, "Brief reference url");
+      if (action.patch.note !== undefined) requireString(action.patch.note, "Brief reference note");
       const nextReference = { ...reference, ...action.patch };
       if (nextReference.label === reference.label && nextReference.url === reference.url && nextReference.note === reference.note) return state;
       return updateBriefContent(state, {
@@ -309,7 +410,7 @@ export function applyBrainstormSessionAction(
       const session = requireBrainstormSession(state);
       const briefFrame = requireBriefFrame(state);
       checkBrainstormRevision(session, action.expectedRevision);
-      requireStableId(action.decision.id, "Confirmed decision id");
+      validateDecisionPayload(action.decision, "Confirmed decision");
       if (briefFrame.content.confirmedDecisions.some((decision) => decision.id === action.decision.id)) {
         throw new BrainstormSessionReducerError(
           "duplicate-decision-id",
@@ -333,6 +434,8 @@ export function applyBrainstormSessionAction(
           `Unknown confirmed decision: ${action.decisionId}`,
         );
       }
+      if (action.patch.statement !== undefined) requireString(action.patch.statement, "Confirmed decision statement");
+      if (action.patch.rationale !== undefined) requireString(action.patch.rationale, "Confirmed decision rationale");
       const nextDecision = { ...decision, ...action.patch };
       if (nextDecision.statement === decision.statement && nextDecision.rationale === decision.rationale) return state;
       return updateBriefContent(state, {

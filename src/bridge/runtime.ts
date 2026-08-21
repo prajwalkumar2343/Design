@@ -419,7 +419,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     if (isRecord(spec.style)) {
       for (const [property, value] of Object.entries(spec.style)) {
         if (!SAFE_STYLE_PROPERTIES.has(property) || !isSafeStyleValue(value)) continue;
-        element.style.setProperty(property, value);
+        element.style.setProperty(property, value, "important");
       }
     }
     parent.appendChild(element);
@@ -692,7 +692,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         if (window.CSS && typeof window.CSS.supports === "function" && !window.CSS.supports(command.property, command.value)) {
           throw { code: "invalid-style", message: "The value is not valid for the requested style property" };
         }
-        element.style.setProperty(command.property, command.value);
+        // Applied as !important so Canvas-owned edits stay authoritative over
+        // the injected wireframe theme's blanket resets (transform, shadow…).
+        element.style.setProperty(command.property, command.value, "important");
       }
       const value = element.style.getPropertyValue(command.property) || null;
       return {

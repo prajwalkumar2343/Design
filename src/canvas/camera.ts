@@ -93,6 +93,10 @@ export function fitRect(rect: Rect, viewport: Size, padding = 0): Camera {
 /**
  * Camera that brings `focusRect` fully into view, or `null` when every corner
  * of the rect is already visible so the camera can stay where it is.
+ *
+ * When the rect fits within the viewport at the current zoom, the camera pans
+ * minimally (zoom preserved) instead of refitting, so revealing a layer that
+ * barely overflows never triggers a dramatic zoom change.
  */
 export function revealCamera(
   current: Camera,
@@ -108,5 +112,19 @@ export function revealCamera(
     focusRect.x + focusRect.width <= current.x + visibleWidth &&
     focusRect.y + focusRect.height <= current.y + visibleHeight;
   if (fullyVisible) return null;
+  const fitsAtCurrentZoom =
+    focusRect.width <= Math.max(0, visibleWidth - padding * 2) &&
+    focusRect.height <= Math.max(0, visibleHeight - padding * 2);
+  if (fitsAtCurrentZoom) {
+    const minX = focusRect.x + focusRect.width - (visibleWidth - padding);
+    const maxX = focusRect.x - padding;
+    const minY = focusRect.y + focusRect.height - (visibleHeight - padding);
+    const maxY = focusRect.y - padding;
+    return {
+      ...current,
+      x: Math.min(Math.max(current.x, minX), maxX),
+      y: Math.min(Math.max(current.y, minY), maxY),
+    };
+  }
   return fitRect(focusRect, viewport, padding);
 }

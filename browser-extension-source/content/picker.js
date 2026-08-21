@@ -62,7 +62,7 @@
     function pick(x, y) {
       const candidates = document.elementsFromPoint(x, y);
       for (const candidate of candidates) {
-        if (!candidate || candidate.id === "canvas-capture-overlay") {
+        if (!candidate || candidate.id === "canvas-capture-overlay" || candidate.id === "canvas-capture-toast") {
           continue;
         }
         if (candidate.nodeType === Node.ELEMENT_NODE) {

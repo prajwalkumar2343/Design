@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { isToolAvailable, normalizeActiveTool, SHAPE_VARIANTS, TOOL_REGISTRY, type ShapeVariantId, type ToolId } from "../editor/tools";
+import { useLiquidGlass } from "../glass/useLiquidGlass";
 import type { ActiveTool } from "../editor/model";
 import { FRAME_PRESET_SECTIONS, type DeviceCategory, type FramePreset } from "../frame/presets";
 
@@ -83,6 +84,8 @@ export function CanvasDock({
 }: CanvasDockProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const shapeMenuRef = useRef<HTMLDivElement>(null);
+  const dockGlassRef = useLiquidGlass<HTMLDivElement>({ radius: 14, bezel: 14, scale: 40, blur: 8, saturation: 1.75 });
+  const menuGlassRef = useLiquidGlass<HTMLDivElement>({ radius: 14, bezel: 16, scale: 44, blur: 10, saturation: 1.6 });
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<DeviceCategory | null>(null);
   const activeToolId = normalizeActiveTool(activeTool);
@@ -109,7 +112,7 @@ export function CanvasDock({
   }, [isFrameMenuOpen, isShapeMenuOpen, onCloseFrameMenu]);
 
   return (
-    <div className="canvas-dock" data-canvas-control aria-label="Canvas controls">
+    <div ref={dockGlassRef} className="canvas-dock" data-canvas-control aria-label="Canvas controls">
       <div className="tool-group" role="toolbar" aria-label="Design tools">
         {TOOL_REGISTRY.filter((tool) => tool.id !== "frame").map((tool) => {
           const Icon = toolIcons[tool.icon];
@@ -189,7 +192,7 @@ export function CanvasDock({
               const SectionIcon = presetIcons[section.category];
               const viewportCount = section.groups.reduce((count, group) => count + group.items.length, 0);
               return (
-                <div className="frame-menu" role="menu" aria-label="Frame presets">
+                <div ref={menuGlassRef} className="frame-menu" role="menu" aria-label="Frame presets">
                   <button
                     className="frame-menu-back"
                     data-testid="frame-menu-back"
@@ -236,7 +239,7 @@ export function CanvasDock({
               );
             })()
             : (
-              <div className="frame-menu" role="menu" aria-label="Frame presets">
+              <div ref={menuGlassRef} className="frame-menu" role="menu" aria-label="Frame presets">
                 <div className="frame-menu-heading">
                   <div>
                     <strong>New frame</strong>

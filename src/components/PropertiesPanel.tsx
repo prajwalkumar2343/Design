@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SafeInlineStyleProperty } from "../bridge/protocol";
+import { useLiquidGlass } from "../glass/useLiquidGlass";
 import type { FrameEntity, NodeEntity, SelectionState } from "../editor/model";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
 import { elementProfile, mixedValue } from "./panel-model";
@@ -76,7 +77,13 @@ function PropertyField({
           placeholder={placeholder ?? (isMixed ? "Mixed" : "—")}
           disabled={disabled}
           onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => { if (draft.trim() !== "") onCommit(draft.trim()); }}
+          onBlur={() => {
+            const next = draft.trim();
+            if (next === "") return;
+            // Blurring without a real edit must not push a no-op undo step.
+            if (!isMixed && next === value) return;
+            onCommit(next);
+          }}
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
         />
         {suffix ? <small>{suffix}</small> : null}
@@ -271,11 +278,14 @@ function NodeDesignPanel({
               <div className="property-grid"><PropertyField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Size" value={styleValue(entries, "font-size")} onCommit={(value) => onEditNodeStyle("font-size", value)} /></div>
             </div>
           </PropertySection>
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
       ) : profile === "text" ? (
         <>
           <PositionSizeSection {...positionProps} includeHeight={false} />
           <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
       ) : profile === "shape" ? (
         <>
@@ -308,9 +318,11 @@ export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpd
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(304);
   const [dragging, setDragging] = useState<{ x: number; width: number } | null>(null);
+  const glassRef = useLiquidGlass<HTMLDivElement>({ radius: 13, bezel: 22, scale: 56, blur: 6, saturation: 1.6 });
   const selectedFrame = selection.primaryFrameId ? frames[selection.primaryFrameId] : null;
   const entries = useMemo(() => Object.values(bridgeTargets).filter((entry) => selection.nodeIds.includes(entry.target.elementId) && (selection.frameIds.length === 0 || selection.frameIds.includes(entry.frameId))), [bridgeTargets, selection.frameIds, selection.nodeIds]);
   const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDragging({ x: event.clientX, width }); };
   const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => { if (dragging) setWidth(Math.min(420, Math.max(260, dragging.width - (event.clientX - dragging.x)))); };
-  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}{selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => setDragging(null)} type="button" /></div> : null}</aside>;
+  const stopResizing = () => setDragging(null);
+  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div ref={glassRef} className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}{selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopResizing} onPointerCancel={stopResizing} onLostPointerCapture={stopResizing} type="button" /></div> : null}</aside>;
 }

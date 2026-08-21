@@ -33,11 +33,18 @@ async function backgroundPoint(page: import("@playwright/test").Page) {
 }
 
 function layerButton(page: import("@playwright/test").Page, name: string) {
-  return page.locator(".layer-name").filter({ hasText: name }).first().locator("xpath=..");
+  // Match exactly: container rows now carry descriptive names that can contain
+  // a descendant's label as a substring.
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.locator(".layer-name").filter({ hasText: new RegExp(`^${escaped}$`) }).first().locator("xpath=..");
 }
 
 test.describe("contextual sidebars", () => {
   test("keeps wheel scrolling inside each sidebar and preserves canvas wheel behavior", async ({ page }) => {
+    // Purpose-built panels fit without scrolling at full height; use a shorter
+    // viewport so both sidebars genuinely overflow and wheel containment can
+    // be observed.
+    await page.setViewportSize({ width: 1440, height: 620 });
     await openEditor(page);
 
     const left = page.locator(".sidebar-panel-content");

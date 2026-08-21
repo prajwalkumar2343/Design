@@ -1,5 +1,6 @@
 import { Cloud, Layers } from "lucide-react";
 import type { ChangeEvent } from "react";
+import { useLiquidGlass } from "../glass/useLiquidGlass";
 
 interface WorkspaceHeaderProps {
   frameCount: number;
@@ -28,6 +29,7 @@ export function WorkspaceHeader({
   lakeCount,
   isLakeOpen = false,
 }: WorkspaceHeaderProps) {
+  const glassRef = useLiquidGlass<HTMLElement>({ radius: 13, bezel: 16, scale: 44, blur: 10, saturation: 1.7 });
   const handleImportChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -35,7 +37,7 @@ export function WorkspaceHeader({
   };
 
   return (
-    <header className="workspace-header" data-canvas-control aria-label="Project header">
+    <header ref={glassRef} className="workspace-header" data-canvas-control aria-label="Project header">
       <div className="workspace-brand" aria-label="Canvas home">
         <span className="workspace-mark" aria-hidden="true">
           <span />

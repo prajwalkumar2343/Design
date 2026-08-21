@@ -269,6 +269,13 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+function isActivatableControlTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("button, a, select, summary, [role='button'], [role='switch'], [role='tab']") !== null
+  );
+}
+
 export interface CanvasSurfaceProps {
   frames?: CanvasFrame[];
   persistenceAdapter?: PersistenceAdapter;
@@ -386,7 +393,7 @@ export function CanvasSurface({
   const interactionModeRef = useRef<NodeInteractionMode>(interactionMode);
   useEffect(() => { interactionModeRef.current = interactionMode; }, [interactionMode]);
   const hoverRafRef = useRef<number | null>(null);
-  const pendingHoverRef = useRef<OverlayNodeTarget | null | undefined>(undefined);
+  const pendingHoverRef = useRef<{ frameId: string; target: BridgeElementTarget } | null | undefined>(undefined);
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
@@ -402,6 +409,7 @@ export function CanvasSurface({
     kind: "success" | "error";
     message: string;
   } | null>(null);
+  const persistenceFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [localProjects, setLocalProjects] = useState<LocalProjectSummary[]>(() =>
     shouldUseLocalMemory ? getLocalProjectSummaries() : [],
   );
@@ -596,7 +604,7 @@ export function CanvasSurface({
       const idx = loadProjectIndex();
       const rec = idx.find((p) => p.id === id);
       if (!rec) {
-        setPersistenceFeedback({ kind: "error", message: "That project could not be found in this browser." });
+        showPersistenceFeedback({ kind: "error", message: "That project could not be found in this browser." });
         refreshLocalProjects();
         return;
       }
@@ -620,7 +628,7 @@ export function CanvasSurface({
         refreshLocalProjects();
         setPersistenceVersion((v) => v + 1);
         setShowLakeOverlay(false);
-        setPersistenceFeedback({ kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` });
+        showPersistenceFeedback({ kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` });
         setTimeout(() => {
           const state = editorStore.getState();
           const rects: Array<{ x: number; y: number; width: number; height: number }> = [
@@ -642,7 +650,7 @@ export function CanvasSurface({
           }
         }, 80);
       } catch (error) {
-        setPersistenceFeedback({
+        showPersistenceFeedback({
           kind: "error",
           message: `Could not open project: ${error instanceof Error ? error.message : "parse failed"}`,
         });
@@ -667,9 +675,9 @@ export function CanvasSurface({
         bridgeControllersRef.current.clear();
         setBridgeTargets({});
         setBridgeHierarchies({});
-        setPersistenceFeedback({ kind: "success", message: "Project deleted. Returned to home." });
+        showPersistenceFeedback({ kind: "success", message: "Project deleted. Returned to home." });
       } else {
-        setPersistenceFeedback({ kind: "success", message: "Project deleted." });
+        showPersistenceFeedback({ kind: "success", message: "Project deleted." });
       }
     },
     [editorStore, routeProjectId],
@@ -679,11 +687,11 @@ export function CanvasSurface({
     (id: string) => {
       const dup = duplicateLocalProject(id);
       if (!dup) {
-        setPersistenceFeedback({ kind: "error", message: "Could not duplicate that project." });
+        showPersistenceFeedback({ kind: "error", message: "Could not duplicate that project." });
         return;
       }
       refreshLocalProjects();
-      setPersistenceFeedback({ kind: "success", message: `Duplicated as “${dup.name}”.` });
+      showPersistenceFeedback({ kind: "success", message: `Duplicated as “${dup.name}”.` });
     },
     [refreshLocalProjects],
   );
@@ -692,14 +700,14 @@ export function CanvasSurface({
     (id: string, name: string) => {
       renameLocalProject(id, name);
       refreshLocalProjects();
-      setPersistenceFeedback({ kind: "success", message: "Project renamed." });
+      showPersistenceFeedback({ kind: "success", message: "Project renamed." });
     },
     [refreshLocalProjects],
   );
 
   const exportProject = useCallback(() => {
     if (editorStore.getState().session.lifecycle === "not-started") {
-      setPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      showPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
       return;
     }
     try {
@@ -708,9 +716,9 @@ export function CanvasSurface({
         filename: WIRECANVAS_FILE_NAME,
         mimeType: WIRECANVAS_FILE_MIME_TYPE,
       });
-      setPersistenceFeedback({ kind: "success", message: "Project exported as a .wirecanvas.json file." });
+      showPersistenceFeedback({ kind: "success", message: "Project exported as a .wirecanvas.json file." });
     } catch (error) {
-      setPersistenceFeedback({
+      showPersistenceFeedback({
         kind: "error",
         message: `Could not export project: ${error instanceof Error ? error.message : "download failed"}`,
       });
@@ -719,7 +727,7 @@ export function CanvasSurface({
 
   const exportFigmaProject = useCallback(async () => {
     if (editorStore.getState().session.lifecycle === "not-started") {
-      setPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      showPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
       return;
     }
     try {
@@ -734,9 +742,9 @@ export function CanvasSurface({
         filename: FIGMA_FILE_NAME,
         mimeType: FIGMA_FILE_MIME_TYPE,
       });
-      setPersistenceFeedback({ kind: "success", message: "Project exported as a Figma .fig file." });
+      showPersistenceFeedback({ kind: "success", message: "Project exported as a Figma .fig file." });
     } catch (error) {
-      setPersistenceFeedback({
+      showPersistenceFeedback({
         kind: "error",
         message: `Could not export Figma file: ${error instanceof Error ? error.message : "download failed"}`,
       });
@@ -755,7 +763,7 @@ export function CanvasSurface({
         setBridgeTargets({});
         setBridgeHierarchies({});
         setPersistenceVersion((current) => current + 1);
-        setPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
+        showPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
         if (shouldUseLocalMemory) {
           const state = editorStore.getState();
           const serialized = serializeWireCanvasProject(state);
@@ -799,7 +807,7 @@ export function CanvasSurface({
           refreshLocalProjects();
         }
       } else {
-        setPersistenceFeedback({ kind: "success", message: "This project already matches the current canvas." });
+        showPersistenceFeedback({ kind: "success", message: "This project already matches the current canvas." });
       }
     } catch (error) {
       const message = error instanceof WireCanvasCodecError
@@ -807,7 +815,7 @@ export function CanvasSurface({
         : error instanceof Error
           ? error.message
           : "The project could not be imported.";
-      setPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
+      showPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
     }
   }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
 
@@ -1206,27 +1214,25 @@ export function CanvasSurface({
         };
         // Batch bridge target updates — hover is high frequency, avoid React thrash
         if (message.event === "hover") {
-          const nextHover = toOverlayTarget({ frameId, target: message.target, inspection: null });
-          pendingHoverRef.current = nextHover;
+          pendingHoverRef.current = { frameId, target: message.target };
           if (hoverRafRef.current === null) {
             hoverRafRef.current = requestAnimationFrame(() => {
               hoverRafRef.current = null;
               const pending = pendingHoverRef.current;
               pendingHoverRef.current = undefined;
               if (pending !== undefined) {
-                setHoveredOverlayTarget(pending);
-                // Also update bridgeTargets for hover, but throttled
+                setHoveredOverlayTarget(
+                  pending ? toOverlayTarget({ frameId: pending.frameId, target: pending.target, inspection: null }) : null,
+                );
                 if (pending) {
                   setBridgeTargets((current) => {
-                    const key = targetStateKey(frameId, pending.frameId === frameId ? pending.nodeId : message.target!.elementId);
-                    // Use message.target for key to avoid mismatch
-                    const k = targetStateKey(frameId, message.target!.elementId);
+                    const key = targetStateKey(pending.frameId, pending.target.elementId);
                     return {
                       ...current,
-                      [k]: {
-                        frameId,
-                        target: message.target!,
-                        inspection: current[k]?.inspection ?? null,
+                      [key]: {
+                        frameId: pending.frameId,
+                        target: pending.target,
+                        inspection: current[key]?.inspection ?? null,
                       },
                     };
                   });
@@ -1746,11 +1752,20 @@ export function CanvasSurface({
     ) => {
       const applicable = changes.filter(({ frameId }) => bridgeControllersRef.current.has(frameId));
       if (applicable.length === 0) return;
+      // Skip edits that would not change anything so blur/commit on untouched
+      // fields never pushes no-op entries onto the undo stack.
+      const meaningful = applicable.filter(({ frameId, targetId, property, value }) => {
+        const entry = bridgeTargets[targetStateKey(frameId, targetId)];
+        const current = entry?.inspection?.inlineStyle[property];
+        if (value === null) return current !== undefined && current !== "";
+        return value !== current;
+      });
+      if (meaningful.length === 0) return;
       editorStore.beginTransaction(label);
       mutateState?.();
       const applied: Array<{ frameId: string; command: Extract<import("../bridge/protocol").BridgeCommand, { command: "set-inline-style" }>; undo: Extract<import("../bridge/protocol").BridgeUndoCommand, { command: "set-inline-style" }> }> = [];
       try {
-        for (const change of applicable) {
+        for (const change of meaningful) {
           const command = { command: "set-inline-style", targetId: change.targetId, property: change.property, value: change.value } as const;
           const controller = bridgeControllersRef.current.get(change.frameId);
           if (!controller) continue;
@@ -1783,7 +1798,7 @@ export function CanvasSurface({
       if (!editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") })) return;
       void refreshAffectedFrames();
     },
-    [applyLocalBridgeStyle, bridgeControllersRef, editorStore, refreshBridgeSnapshot],
+    [applyLocalBridgeStyle, bridgeControllersRef, bridgeTargets, editorStore, refreshBridgeSnapshot],
   );
 
   const createPage = useCallback(() => {
@@ -2181,6 +2196,21 @@ export function CanvasSurface({
         setPasteFeedback(null);
         pasteFeedbackTimerRef.current = null;
       }, kind === "error" ? 5000 : 3600);
+    },
+    [],
+  );
+
+  const showPersistenceFeedback = useCallback(
+    (feedback: { kind: "success" | "error"; message: string }) => {
+      if (persistenceFeedbackTimerRef.current !== null) {
+        clearTimeout(persistenceFeedbackTimerRef.current);
+        persistenceFeedbackTimerRef.current = null;
+      }
+      setPersistenceFeedback(feedback);
+      persistenceFeedbackTimerRef.current = setTimeout(() => {
+        setPersistenceFeedback(null);
+        persistenceFeedbackTimerRef.current = null;
+      }, feedback.kind === "error" ? 5000 : 3600);
     },
     [],
   );
@@ -2596,10 +2626,15 @@ export function CanvasSurface({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isTypingTarget(event.target) && event.target !== imageInputRef.current) {
+      if (isTypingTarget(event.target)) {
         return;
       }
+      // Space/Enter activate the focused control; only hijack them for canvas use otherwise.
+      const activatableControl = isActivatableControlTarget(event.target);
       if (isSpaceShortcut(event.key)) {
+        if (activatableControl) {
+          return;
+        }
         if (!event.repeat) {
           event.preventDefault();
           spacePressedRef.current = true;
@@ -2609,6 +2644,9 @@ export function CanvasSurface({
       }
 
       if (event.key === "Enter" && activeTool === "select" && editorStore.getState().selection.nodeIds.length > 0) {
+        if (activatableControl) {
+          return;
+        }
         event.preventDefault();
         startSelectedTextEdit();
         return;
@@ -2671,7 +2709,9 @@ export function CanvasSurface({
       if (!isSpaceShortcut(event.key)) {
         return;
       }
-      event.preventDefault();
+      if (!isActivatableControlTarget(event.target)) {
+        event.preventDefault();
+      }
       spacePressedRef.current = false;
       setSpacePressed(false);
     };
@@ -2697,6 +2737,15 @@ export function CanvasSurface({
       clearTimeout(pasteFeedbackTimerRef.current);
       pasteFeedbackTimerRef.current = null;
     }
+    if (persistenceFeedbackTimerRef.current !== null) {
+      clearTimeout(persistenceFeedbackTimerRef.current);
+      persistenceFeedbackTimerRef.current = null;
+    }
+    if (hoverRafRef.current !== null) {
+      cancelAnimationFrame(hoverRafRef.current);
+      hoverRafRef.current = null;
+    }
+    pendingHoverRef.current = undefined;
   }, []);
 
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;

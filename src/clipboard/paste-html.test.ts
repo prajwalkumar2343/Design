@@ -50,6 +50,30 @@ describe("preparePastedHtml", () => {
     expect(metadata.background).toBeNull();
   });
 
+  it("strips metadata written with single-quoted or unquoted attributes", () => {
+    const singleQuoted = `<!doctype html><html lang='en' ${PASTE_META_SOURCE_ATTR}='https%3A%2F%2Fexample.com%2Fa'><head></head><body><p>x</p></body></html>`;
+    expect(preparePastedHtml(singleQuoted).srcDoc).not.toContain("data-canvas-paste-");
+    expect(preparePastedHtml(singleQuoted).metadata.sourceUrl).toBe("https://example.com/a");
+
+    const unquoted = `<!doctype html><html ${PASTE_META_TITLE_ATTR}=Secret><head></head><body><p>x</p></body></html>`;
+    expect(preparePastedHtml(unquoted).srcDoc).not.toContain("data-canvas-paste-");
+    expect(preparePastedHtml(unquoted).metadata.title).toBe("Secret");
+  });
+
+  it("strips metadata carried on body, head, or fragment elements", () => {
+    // Only <html> metadata is read, but attributes anywhere must be stripped
+    // before the document is stored or exported.
+    const onBody = `<!doctype html><html><head></head><body ${PASTE_META_SOURCE_ATTR}="https%3A%2F%2Fexample.com%2Fb"><p>x</p></body></html>`;
+    const preparedBody = preparePastedHtml(onBody);
+    expect(preparedBody.metadata.sourceUrl).toBeNull();
+    expect(preparedBody.srcDoc).not.toContain("data-canvas-paste-");
+
+    const fragment = `<section ${PASTE_META_SOURCE_ATTR}="https%3A%2F%2Fexample.com%2Ff">Hello</section>`;
+    const preparedFragment = preparePastedHtml(fragment);
+    expect(preparedFragment.metadata.sourceUrl).toBeNull();
+    expect(preparedFragment.srcDoc).not.toContain("data-canvas-paste-");
+  });
+
   it("wraps an HTML fragment into a complete document", () => {
     const { srcDoc } = preparePastedHtml('<div class="card">Hello</div>');
     expect(srcDoc).toMatch(/^<!doctype html><html/i);

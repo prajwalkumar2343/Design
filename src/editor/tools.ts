@@ -1,3 +1,5 @@
+import type { CanvasCategory } from "../persistence/local-projects";
+
 export type ToolId =
   | "select"
   | "hand"
@@ -139,4 +141,40 @@ export function isToolAvailable(tool: ToolDefinition): boolean {
 /** The store used `pan` before the professional tool registry introduced `hand`. */
 export function normalizeActiveTool(tool: ToolId | "pan"): ToolId {
   return tool === "pan" ? "hand" : tool;
+}
+
+// ---------------------------------------------------------------------------
+// Canvas category aware helpers
+// Each canvas (website / mobile / asset) will have a slightly different tool
+// palette and a different agent.md hardness spec (see CANVAS_AGENT_FILES).
+// Tools overlap heavily — the divergence is in defaults, presets, and
+// agent harness, not the core manipulation model.
+// ---------------------------------------------------------------------------
+
+/**
+ * Tools per canvas category.
+ * - website: all tools, full device family (mobile + tablet + desktop)
+ * - mobile: same tools but frame presets are mobile+tablet only (no desktop)
+ * - asset: vector-first — frame becomes artboard, shape/text/image primary
+ */
+export function getToolsForCanvasCategory(canvas: CanvasCategory): readonly ToolDefinition[] {
+  switch (canvas) {
+    case "website":
+      return TOOL_REGISTRY;
+    case "mobile":
+      // Mobile keeps the same gestures; the Dock will filter desktop
+      // frame presets away. Subtle copy difference is surfaced in the UI
+      // via getFramePresetSectionsForCanvasCategory.
+      return TOOL_REGISTRY;
+    case "asset":
+      // Asset is artboard / SVG centric — hand/select/shape/text/image are
+      // primary; comment stays for review. Frame now maps to ASSET_PRESETS.
+      return TOOL_REGISTRY;
+    default:
+      return TOOL_REGISTRY;
+  }
+}
+
+export function isToolVisibleForCanvas(toolId: ToolId, canvas: CanvasCategory): boolean {
+  return getToolsForCanvasCategory(canvas).some((t) => t.id === toolId);
 }

@@ -21,6 +21,17 @@ async function drag(page: Page, locator: Locator, dx: number, dy: number) {
   await page.mouse.up();
 }
 
+/**
+ * Waits until the overlay selection actually switched to `fixtureId`. A fresh
+ * click selects asynchronously through the iframe bridge, and the previous
+ * selection's box already satisfies a bare visibility assertion.
+ */
+async function waitForSelectionOf(page: Page, fixtureId: string) {
+  await expect(
+    page.locator(`[data-testid="node-selection-outline-id:${fixtureId}"]`),
+  ).toBeVisible();
+}
+
 test.describe("iframe node overlays", () => {
   test("shows a subtle hover outline and selected handles", async ({ page }) => {
     await page.goto("/?demo=1");
@@ -168,7 +179,7 @@ test.describe("iframe node overlays", () => {
       body.appendChild(fixture);
     });
     await image.click();
-    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+    await waitForSelectionOf(page, "resize-image-fixture");
 
     const before = await image.evaluate((element) => element.getBoundingClientRect().toJSON());
     await drag(page, page.getByTestId("node-resize-handle-e"), 70, 0);
@@ -213,7 +224,7 @@ test.describe("iframe node overlays", () => {
       body.appendChild(fixture);
     });
     await text.click();
-    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+    await waitForSelectionOf(page, "resize-text-fixture");
 
     const before = await text.evaluate((element) => element.getBoundingClientRect().toJSON());
     await drag(page, page.getByTestId("node-resize-handle-e"), -110, 0);

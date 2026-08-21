@@ -184,4 +184,74 @@ describe("continuous Codex voice stream", () => {
     await expect(stream.start({ mimeType: "audio/webm", initialContext: context() }))
       .rejects.toBeInstanceOf(ContinuousVoiceStreamError);
   });
+
+  it("keeps a cancelled lifecycle when the start transport rejects late", async () => {
+    const lifecycle: VoiceStreamLifecycleEvent[] = [];
+    let abortStart: () => void = () => {};
+    const transport = new FakeVoiceTransport();
+    transport.start = async (request: StartVoiceStreamRequest, options?: { signal?: AbortSignal }) => {
+      transport.calls.push({ type: "start", request });
+      await new Promise<void>((resolve, reject) => {
+        abortStart = () => reject(new Error("start aborted"));
+        options?.signal?.addEventListener("abort", () => abortStart(), { once: true });
+      });
+      return { streamId: request.streamId, acceptedMimeType: request.mimeType };
+    };
+    const stream = new ContinuousVoiceStream({
+      transport,
+      now: () => 500,
+      createStreamId: () => "voice-1",
+      onLifecycleEvent: (event) => lifecycle.push(event),
+    });
+
+    const pending = stream.start({ mimeType: "audio/webm", initialContext: context() });
+    await stream.cancel("user");
+    await expect(pending).rejects.toThrow("start aborted");
+
+    expect(stream.getPhase()).toBe("stopped");
+    expect(lifecycle.filter((event) => event.type === "failed")).toHaveLength(0);
+    expect(lifecycle.at(-1)).toMatchObject({ type: "cancelled", reason: "user" });
+  });
+
+  it("does not fail a restarted stream when a stale drain settles with an error", async () => {
+    const lifecycle: VoiceStreamLifecycleEvent[] = [];
+    let releaseAppend: () => void = () => {};
+    const transport = new FakeVoiceTransport();
+    // Ignores the abort signal entirely, like a misbehaving transport, and
+    // fails only the stale first-generation chunk when finally released.
+    // Keyed on streamId (not sequence) because sequences restart per generation.
+    transport.appendAudio = async (request: AppendVoiceAudioRequest) => {
+      transport.calls.push({ type: "audio", request });
+      if (request.streamId === "voice-1") {
+        if (transport.appendGate) await transport.appendGate;
+        if (transport.appendError) throw transport.appendError;
+      }
+      return { streamId: request.streamId, acceptedSequence: request.sequence };
+    };
+    const stream = new ContinuousVoiceStream({
+      transport,
+      now: () => 500,
+      createStreamId: () => `voice-${transport.calls.filter((call) => call.type === "start").length + 1}`,
+      onLifecycleEvent: (event) => lifecycle.push(event),
+    });
+
+    transport.appendGate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+    transport.appendError = new Error("stale transport exploded");
+    await stream.start({ mimeType: "audio/webm", initialContext: context() });
+    const staleChunk = stream.appendAudio(new Uint8Array([1]));
+    await stream.cancel("user");
+
+    // Restart while the stale append is still parked on the gate; the stale
+    // call still fails with the transport error when released.
+    const secondStreamId = await stream.start({ mimeType: "audio/webm", initialContext: context() });
+    const healthy = stream.appendAudio(new Uint8Array([2]));
+    releaseAppend();
+    await expect(staleChunk).rejects.toThrow("stale transport exploded");
+    await healthy;
+    await stream.stop();
+
+    expect(secondStreamId).toBe("voice-2");
+    expect(stream.getPhase()).toBe("stopped");
+    expect(lifecycle.filter((event) => event.type === "failed")).toHaveLength(0);
+  });
 });

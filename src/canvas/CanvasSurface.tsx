@@ -25,6 +25,7 @@ import type {
   BridgeCreationKind,
   BridgeHierarchySnapshot,
   BridgeInspection,
+  BridgeUndoCommand,
   SafeInlineStyleProperty,
 } from "../bridge/protocol";
 import type { IframeBridgeController } from "../bridge/transport";
@@ -46,6 +47,10 @@ import {
   selectFrameRenderModels,
   type NodeEntity,
 } from "../editor/model";
+import {
+  GLASS_SURFACE_SHADOW,
+  glassSurfaceBackground,
+} from "../editor/effects";
 import {
   isSpaceShortcut,
   normalizeActiveTool,
@@ -84,12 +89,15 @@ import {
   type PersistenceAdapter,
 } from "../persistence";
 import {
+  CANVAS_AGENT_FILES,
+  CANVAS_CATEGORIES,
   createProjectId,
   deleteLocalProject,
   deriveProjectName,
   duplicateLocalProject,
   getActiveProjectId,
   getBriefPresetForKind,
+  getCanvasCategoryForKind,
   getLocalProjectSummaries,
   hydrateInitialState,
   loadProjectIndex,
@@ -97,6 +105,7 @@ import {
   saveProjectIndex,
   setActiveProjectId,
   PROJECT_KINDS,
+  type CanvasCategory,
   type LocalProjectSummary,
   type ProjectKind,
 } from "../persistence/local-projects";
@@ -269,6 +278,26 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+const GLASS_VECTOR_KINDS = new Set(["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"]);
+
+/** Created SVG shapes paint through their geometry child, not CSS backgrounds. */
+function isCreatedVector(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
+  const kind = entry.inspection?.attributes["data-design-tool-kind"];
+  return kind !== undefined && GLASS_VECTOR_KINDS.has(kind);
+}
+
+/** Editor-created layers take the dedicated shape commands; foreign content cannot. */
+function isCreatedTarget(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
+  return entry.inspection?.attributes["data-design-tool-created"] === "true";
+}
+
+function isActivatableControlTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof Element &&
+    target.closest("button, a, select, summary, [role='button'], [role='switch'], [role='tab']") !== null
+  );
+}
+
 export interface CanvasSurfaceProps {
   frames?: CanvasFrame[];
   persistenceAdapter?: PersistenceAdapter;
@@ -386,7 +415,7 @@ export function CanvasSurface({
   const interactionModeRef = useRef<NodeInteractionMode>(interactionMode);
   useEffect(() => { interactionModeRef.current = interactionMode; }, [interactionMode]);
   const hoverRafRef = useRef<number | null>(null);
-  const pendingHoverRef = useRef<OverlayNodeTarget | null | undefined>(undefined);
+  const pendingHoverRef = useRef<{ frameId: string; target: BridgeElementTarget } | null | undefined>(undefined);
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
@@ -402,6 +431,7 @@ export function CanvasSurface({
     kind: "success" | "error";
     message: string;
   } | null>(null);
+  const persistenceFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [localProjects, setLocalProjects] = useState<LocalProjectSummary[]>(() =>
     shouldUseLocalMemory ? getLocalProjectSummaries() : [],
   );
@@ -422,6 +452,7 @@ export function CanvasSurface({
     return !loadProjectIndex().some((p) => p.id === id);
   });
   const pendingKindRef = useRef<ProjectKind | null>(null);
+  const [pendingCanvasCategory, setPendingCanvasCategory] = useState<CanvasCategory | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSerializedRef = useRef<string | null>(null);
   const {
@@ -433,7 +464,7 @@ export function CanvasSurface({
     updateComment,
     deleteComment,
     clearComments,
-  } = useComments(editorStore);
+  } = useComments();
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
   const activeTool = normalizeActiveTool(editorState.activeTool);
   const activeToolRef = useRef<ToolId>(activeTool);
@@ -488,6 +519,7 @@ export function CanvasSurface({
     (kindOverride?: ProjectKind) => {
       const kind = kindOverride ?? pendingKindRef.current ?? "blank";
       pendingKindRef.current = null;
+      setPendingCanvasCategory(null);
       if (kind !== "blank") {
         const preset = getBriefPresetForKind(kind);
         startBrainstormingBase();
@@ -522,9 +554,26 @@ export function CanvasSurface({
     [shouldUseLocalMemory, startBrainstormingBase, refreshLocalProjects, editorStore],
   );
 
+  // Derived canvas category for the active project — drives Dock presets, tool palette, and future agent.md.
+  const activeCanvasCategory: CanvasCategory = useMemo(() => {
+    if (pendingCanvasCategory) return pendingCanvasCategory;
+    if (pendingKindRef.current) return getCanvasCategoryForKind(pendingKindRef.current);
+    if (shouldUseLocalMemory) {
+      const lookupId = activeProjectId ?? routeProjectId;
+      if (lookupId) {
+        const rec = localProjects.find((p) => p.id === lookupId) ?? loadProjectIndex().find((p) => p.id === lookupId);
+        if (rec) return getCanvasCategoryForKind(rec.kind);
+      }
+    }
+    // Infer from first project kind if available, else website default (covers demo/disabled persistence).
+    if (localProjects.length > 0) return getCanvasCategoryForKind(localProjects[0]!.kind);
+    return "website";
+  }, [pendingCanvasCategory, persistenceVersion, localProjects, activeProjectId, routeProjectId, shouldUseLocalMemory]);
+
   const handleCreateLakeProject = useCallback(
     (kind: ProjectKind) => {
       pendingKindRef.current = kind;
+      setPendingCanvasCategory(getCanvasCategoryForKind(kind));
       let createdId: string | null = null;
       if (shouldUseLocalMemory) {
         const id = createProjectId();
@@ -596,7 +645,7 @@ export function CanvasSurface({
       const idx = loadProjectIndex();
       const rec = idx.find((p) => p.id === id);
       if (!rec) {
-        setPersistenceFeedback({ kind: "error", message: "That project could not be found in this browser." });
+        showPersistenceFeedback({ kind: "error", message: "That project could not be found in this browser." });
         refreshLocalProjects();
         return;
       }
@@ -620,7 +669,7 @@ export function CanvasSurface({
         refreshLocalProjects();
         setPersistenceVersion((v) => v + 1);
         setShowLakeOverlay(false);
-        setPersistenceFeedback({ kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` });
+        showPersistenceFeedback({ kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` });
         setTimeout(() => {
           const state = editorStore.getState();
           const rects: Array<{ x: number; y: number; width: number; height: number }> = [
@@ -642,7 +691,7 @@ export function CanvasSurface({
           }
         }, 80);
       } catch (error) {
-        setPersistenceFeedback({
+        showPersistenceFeedback({
           kind: "error",
           message: `Could not open project: ${error instanceof Error ? error.message : "parse failed"}`,
         });
@@ -667,9 +716,9 @@ export function CanvasSurface({
         bridgeControllersRef.current.clear();
         setBridgeTargets({});
         setBridgeHierarchies({});
-        setPersistenceFeedback({ kind: "success", message: "Project deleted. Returned to home." });
+        showPersistenceFeedback({ kind: "success", message: "Project deleted. Returned to home." });
       } else {
-        setPersistenceFeedback({ kind: "success", message: "Project deleted." });
+        showPersistenceFeedback({ kind: "success", message: "Project deleted." });
       }
     },
     [editorStore, routeProjectId],
@@ -679,11 +728,11 @@ export function CanvasSurface({
     (id: string) => {
       const dup = duplicateLocalProject(id);
       if (!dup) {
-        setPersistenceFeedback({ kind: "error", message: "Could not duplicate that project." });
+        showPersistenceFeedback({ kind: "error", message: "Could not duplicate that project." });
         return;
       }
       refreshLocalProjects();
-      setPersistenceFeedback({ kind: "success", message: `Duplicated as “${dup.name}”.` });
+      showPersistenceFeedback({ kind: "success", message: `Duplicated as “${dup.name}”.` });
     },
     [refreshLocalProjects],
   );
@@ -692,14 +741,14 @@ export function CanvasSurface({
     (id: string, name: string) => {
       renameLocalProject(id, name);
       refreshLocalProjects();
-      setPersistenceFeedback({ kind: "success", message: "Project renamed." });
+      showPersistenceFeedback({ kind: "success", message: "Project renamed." });
     },
     [refreshLocalProjects],
   );
 
   const exportProject = useCallback(() => {
     if (editorStore.getState().session.lifecycle === "not-started") {
-      setPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      showPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
       return;
     }
     try {
@@ -708,9 +757,9 @@ export function CanvasSurface({
         filename: WIRECANVAS_FILE_NAME,
         mimeType: WIRECANVAS_FILE_MIME_TYPE,
       });
-      setPersistenceFeedback({ kind: "success", message: "Project exported as a .wirecanvas.json file." });
+      showPersistenceFeedback({ kind: "success", message: "Project exported as a .wirecanvas.json file." });
     } catch (error) {
-      setPersistenceFeedback({
+      showPersistenceFeedback({
         kind: "error",
         message: `Could not export project: ${error instanceof Error ? error.message : "download failed"}`,
       });
@@ -719,7 +768,7 @@ export function CanvasSurface({
 
   const exportFigmaProject = useCallback(async () => {
     if (editorStore.getState().session.lifecycle === "not-started") {
-      setPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      showPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
       return;
     }
     try {
@@ -734,9 +783,9 @@ export function CanvasSurface({
         filename: FIGMA_FILE_NAME,
         mimeType: FIGMA_FILE_MIME_TYPE,
       });
-      setPersistenceFeedback({ kind: "success", message: "Project exported as a Figma .fig file." });
+      showPersistenceFeedback({ kind: "success", message: "Project exported as a Figma .fig file." });
     } catch (error) {
-      setPersistenceFeedback({
+      showPersistenceFeedback({
         kind: "error",
         message: `Could not export Figma file: ${error instanceof Error ? error.message : "download failed"}`,
       });
@@ -755,7 +804,7 @@ export function CanvasSurface({
         setBridgeTargets({});
         setBridgeHierarchies({});
         setPersistenceVersion((current) => current + 1);
-        setPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
+        showPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
         if (shouldUseLocalMemory) {
           const state = editorStore.getState();
           const serialized = serializeWireCanvasProject(state);
@@ -799,7 +848,7 @@ export function CanvasSurface({
           refreshLocalProjects();
         }
       } else {
-        setPersistenceFeedback({ kind: "success", message: "This project already matches the current canvas." });
+        showPersistenceFeedback({ kind: "success", message: "This project already matches the current canvas." });
       }
     } catch (error) {
       const message = error instanceof WireCanvasCodecError
@@ -807,7 +856,7 @@ export function CanvasSurface({
         : error instanceof Error
           ? error.message
           : "The project could not be imported.";
-      setPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
+      showPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
     }
   }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
 
@@ -1206,27 +1255,25 @@ export function CanvasSurface({
         };
         // Batch bridge target updates — hover is high frequency, avoid React thrash
         if (message.event === "hover") {
-          const nextHover = toOverlayTarget({ frameId, target: message.target, inspection: null });
-          pendingHoverRef.current = nextHover;
+          pendingHoverRef.current = { frameId, target: message.target };
           if (hoverRafRef.current === null) {
             hoverRafRef.current = requestAnimationFrame(() => {
               hoverRafRef.current = null;
               const pending = pendingHoverRef.current;
               pendingHoverRef.current = undefined;
               if (pending !== undefined) {
-                setHoveredOverlayTarget(pending);
-                // Also update bridgeTargets for hover, but throttled
+                setHoveredOverlayTarget(
+                  pending ? toOverlayTarget({ frameId: pending.frameId, target: pending.target, inspection: null }) : null,
+                );
                 if (pending) {
                   setBridgeTargets((current) => {
-                    const key = targetStateKey(frameId, pending.frameId === frameId ? pending.nodeId : message.target!.elementId);
-                    // Use message.target for key to avoid mismatch
-                    const k = targetStateKey(frameId, message.target!.elementId);
+                    const key = targetStateKey(pending.frameId, pending.target.elementId);
                     return {
                       ...current,
-                      [k]: {
-                        frameId,
-                        target: message.target!,
-                        inspection: current[k]?.inspection ?? null,
+                      [key]: {
+                        frameId: pending.frameId,
+                        target: pending.target,
+                        inspection: current[key]?.inspection ?? null,
                       },
                     };
                   });
@@ -1746,11 +1793,20 @@ export function CanvasSurface({
     ) => {
       const applicable = changes.filter(({ frameId }) => bridgeControllersRef.current.has(frameId));
       if (applicable.length === 0) return;
+      // Skip edits that would not change anything so blur/commit on untouched
+      // fields never pushes no-op entries onto the undo stack.
+      const meaningful = applicable.filter(({ frameId, targetId, property, value }) => {
+        const entry = bridgeTargets[targetStateKey(frameId, targetId)];
+        const current = entry?.inspection?.inlineStyle[property];
+        if (value === null) return current !== undefined && current !== "";
+        return value !== current;
+      });
+      if (meaningful.length === 0) return;
       editorStore.beginTransaction(label);
       mutateState?.();
       const applied: Array<{ frameId: string; command: Extract<import("../bridge/protocol").BridgeCommand, { command: "set-inline-style" }>; undo: Extract<import("../bridge/protocol").BridgeUndoCommand, { command: "set-inline-style" }> }> = [];
       try {
-        for (const change of applicable) {
+        for (const change of meaningful) {
           const command = { command: "set-inline-style", targetId: change.targetId, property: change.property, value: change.value } as const;
           const controller = bridgeControllersRef.current.get(change.frameId);
           if (!controller) continue;
@@ -1783,7 +1839,65 @@ export function CanvasSurface({
       if (!editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") })) return;
       void refreshAffectedFrames();
     },
-    [applyLocalBridgeStyle, bridgeControllersRef, editorStore, refreshBridgeSnapshot],
+    [applyLocalBridgeStyle, bridgeControllersRef, bridgeTargets, editorStore, refreshBridgeSnapshot],
+  );
+
+  type ShapeEffectAction =
+    | { frameId: string; targetId: string; kind: "glass"; level: number | null }
+    | { frameId: string; targetId: string; kind: "fill"; color: string | null };
+
+  // Shape effects target the SVG geometry itself, so they run as dedicated
+  // bridge commands with their own undoable transaction.
+  const runBridgeShapeEdits = useCallback(
+    async (actions: readonly ShapeEffectAction[], label: string) => {
+      const applicable = actions.filter((action) => bridgeControllersRef.current.has(action.frameId));
+      if (applicable.length === 0) return;
+      editorStore.beginTransaction(label);
+      const applied: Array<{ frameId: string; undo: BridgeUndoCommand; redo: BridgeCommand }> = [];
+      try {
+        for (const action of applicable) {
+          const controller = bridgeControllersRef.current.get(action.frameId);
+          if (!controller) continue;
+          const ack = action.kind === "glass"
+            ? await controller.setShapeGlass({ command: "set-shape-glass", targetId: action.targetId, level: action.level })
+            : await controller.setShapeFill({ command: "set-shape-fill", targetId: action.targetId, color: action.color });
+          if (!("undo" in ack)) throw new Error("shape acknowledgement invalid");
+          applied.push({ frameId: action.frameId, undo: ack.undo, redo: action.kind === "glass"
+            ? { command: "set-shape-glass", targetId: action.targetId, level: action.level }
+            : { command: "set-shape-fill", targetId: action.targetId, color: action.color } });
+        }
+      } catch {
+        for (const appliedAction of [...applied].reverse()) {
+          const controller = bridgeControllersRef.current.get(appliedAction.frameId);
+          const undo = appliedAction.undo;
+          if (!controller) continue;
+          if (undo.command === "set-shape-glass") await controller.setShapeGlass(undo).catch(() => undefined);
+          else if (undo.command === "set-shape-fill") await controller.setShapeFill(undo).catch(() => undefined);
+        }
+        editorStore.rollbackTransaction();
+        return;
+      }
+      const affectedFrameIds = Array.from(new Set(applied.map(({ frameId }) => frameId)));
+      const refreshAffectedFrames = () => Promise.all(
+        affectedFrameIds.map((frameId) => refreshBridgeSnapshot(frameId).catch(() => undefined)),
+      );
+      const replay = (direction: "undo" | "redo") => {
+        const requests = applied.map(({ frameId, undo, redo }) => {
+          const controller = bridgeControllersRef.current.get(frameId);
+          if (!controller) return undefined;
+          const next = direction === "undo" ? undo : redo;
+          if (next.command === "set-shape-glass") return controller.setShapeGlass(next);
+          if (next.command === "set-shape-fill") return controller.setShapeFill(next);
+          return undefined;
+        });
+        void Promise.all(requests)
+          .then(() => Promise.all(affectedFrameIds.map((frameId) => refreshBridgeSnapshot(frameId).catch(() => undefined))))
+          .catch(() => undefined);
+      };
+      if (!editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") })) return;
+      void refreshAffectedFrames();
+    },
+    [bridgeControllersRef, editorStore, refreshBridgeSnapshot],
   );
 
   const createPage = useCallback(() => {
@@ -1846,11 +1960,60 @@ export function CanvasSurface({
 
   const editNodeStyle = useCallback((property: SafeInlineStyleProperty, value: string | null) => {
     const state = editorStore.getState();
-    const changes = Object.values(bridgeTargets)
-      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)))
-      .map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
+    const entries = Object.values(bridgeTargets)
+      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+    // SVG shapes paint through their geometry child, so fills route to the
+    // dedicated shape command instead of an invisible background style.
+    if (property === "background-color" || property === "background") {
+      const vectors = entries.filter((entry) => isCreatedVector(entry));
+      if (vectors.length > 0) {
+        void runBridgeShapeEdits(
+          vectors.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "fill" as const, color: value })),
+          "Change shape fill",
+        );
+      }
+      const others = entries.filter((entry) => !isCreatedVector(entry));
+      if (others.length > 0) {
+        const changes = others.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
+        void runBridgeStyleEdit(changes, `Change ${property}`);
+      }
+      return;
+    }
+    const changes = entries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
     void runBridgeStyleEdit(changes, `Change ${property}`);
-  }, [bridgeTargets, editorStore, runBridgeStyleEdit]);
+  }, [bridgeTargets, editorStore, runBridgeShapeEdits, runBridgeStyleEdit]);
+
+  // Glass effect asset: the element's own surface becomes the glass slab.
+  // Created layers run the dedicated shape command (vectors restyle their
+  // geometry fill, surfaces get a sheen gradient) so the applied level is
+  // tracked on the element; foreign content falls back to plain CSS edits.
+  const applyGlassEffect = useCallback((level: number) => {
+    const state = editorStore.getState();
+    const selected = Object.values(bridgeTargets)
+      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+    if (selected.length === 0) return;
+    const label = level > 0 ? `Apply glass ${level}%` : "Remove glass";
+    const glassLevel = level > 0 ? level : null;
+    const createdEntries = selected.filter((entry) => isCreatedTarget(entry));
+    if (createdEntries.length > 0) {
+      void runBridgeShapeEdits(
+        createdEntries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "glass" as const, level: glassLevel })),
+        label,
+      );
+    }
+    const surfaceEntries = selected.filter((entry) => !isCreatedTarget(entry));
+    if (surfaceEntries.length > 0) {
+      const changes = surfaceEntries.flatMap((entry) => {
+        const currentFill = entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null;
+        return [
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background" as const, value: level > 0 ? glassSurfaceBackground(currentFill, level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? GLASS_SURFACE_SHADOW : null },
+        ];
+      });
+      void runBridgeStyleEdit(changes, label);
+    }
+  }, [bridgeTargets, editorStore, runBridgeShapeEdits, runBridgeStyleEdit]);
 
   const editNodePosition = useCallback((frameId: string, nodeId: string, position: { x: number; y: number }) => {
     const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
@@ -2181,6 +2344,21 @@ export function CanvasSurface({
         setPasteFeedback(null);
         pasteFeedbackTimerRef.current = null;
       }, kind === "error" ? 5000 : 3600);
+    },
+    [],
+  );
+
+  const showPersistenceFeedback = useCallback(
+    (feedback: { kind: "success" | "error"; message: string }) => {
+      if (persistenceFeedbackTimerRef.current !== null) {
+        clearTimeout(persistenceFeedbackTimerRef.current);
+        persistenceFeedbackTimerRef.current = null;
+      }
+      setPersistenceFeedback(feedback);
+      persistenceFeedbackTimerRef.current = setTimeout(() => {
+        setPersistenceFeedback(null);
+        persistenceFeedbackTimerRef.current = null;
+      }, feedback.kind === "error" ? 5000 : 3600);
     },
     [],
   );
@@ -2596,10 +2774,15 @@ export function CanvasSurface({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isTypingTarget(event.target) && event.target !== imageInputRef.current) {
+      if (isTypingTarget(event.target)) {
         return;
       }
+      // Space/Enter activate the focused control; only hijack them for canvas use otherwise.
+      const activatableControl = isActivatableControlTarget(event.target);
       if (isSpaceShortcut(event.key)) {
+        if (activatableControl) {
+          return;
+        }
         if (!event.repeat) {
           event.preventDefault();
           spacePressedRef.current = true;
@@ -2609,6 +2792,9 @@ export function CanvasSurface({
       }
 
       if (event.key === "Enter" && activeTool === "select" && editorStore.getState().selection.nodeIds.length > 0) {
+        if (activatableControl) {
+          return;
+        }
         event.preventDefault();
         startSelectedTextEdit();
         return;
@@ -2671,7 +2857,9 @@ export function CanvasSurface({
       if (!isSpaceShortcut(event.key)) {
         return;
       }
-      event.preventDefault();
+      if (!isActivatableControlTarget(event.target)) {
+        event.preventDefault();
+      }
       spacePressedRef.current = false;
       setSpacePressed(false);
     };
@@ -2697,6 +2885,15 @@ export function CanvasSurface({
       clearTimeout(pasteFeedbackTimerRef.current);
       pasteFeedbackTimerRef.current = null;
     }
+    if (persistenceFeedbackTimerRef.current !== null) {
+      clearTimeout(persistenceFeedbackTimerRef.current);
+      persistenceFeedbackTimerRef.current = null;
+    }
+    if (hoverRafRef.current !== null) {
+      cancelAnimationFrame(hoverRafRef.current);
+      hoverRafRef.current = null;
+    }
+    pendingHoverRef.current = undefined;
   }, []);
 
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;
@@ -2831,7 +3028,24 @@ export function CanvasSurface({
               style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y }}
               type="button"
             >
-              <span>{comment.status === "resolved" ? "✓" : "•"}</span>
+              {comment.status === "resolved" ? (
+                <svg aria-hidden="true" fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M3.5 8.6l3 3 6-6.8"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2.2"
+                  />
+                </svg>
+              ) : (
+                <svg aria-hidden="true" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
             </button>
           );
         })}
@@ -2935,7 +3149,14 @@ export function CanvasSurface({
 
       <WorkspaceHeader
         frameCount={frames.length}
-        projectMeta={briefFrame ? `${frames.length} frames · Brainstorming` : routeProjectId ? `Project · ${routeProjectId.slice(0, 12)}…` : undefined}
+        projectMeta={(() => {
+          const canvasDef = CANVAS_CATEGORIES.find((c) => c.id === activeCanvasCategory)!;
+          const agentFile = CANVAS_AGENT_FILES[activeCanvasCategory];
+          if (briefFrame) return `${frames.length} frames · ${canvasDef.label} · ${agentFile} · Brainstorming`;
+          if (routeProjectId) return `${canvasDef.label} · ${agentFile} · ${routeProjectId.slice(0, 12)}…`;
+          if (isEmptyState) return undefined;
+          return `${canvasDef.label} · ${agentFile}`;
+        })()}
         projectName={
           shouldUseLocalMemory
             ? routeProjectId
@@ -2947,6 +3168,8 @@ export function CanvasSurface({
                 ? "Project brief"
                 : undefined
         }
+        canvasCategory={shouldUseLocalMemory && routeProjectId ? activeCanvasCategory : undefined}
+        canvasLabel={shouldUseLocalMemory && routeProjectId ? CANVAS_CATEGORIES.find((c) => c.id === activeCanvasCategory)?.label : undefined}
         canExport={editorState.session.lifecycle !== "not-started"}
         onImportFile={importProject}
         onExport={exportProject}
@@ -2983,6 +3206,7 @@ export function CanvasSurface({
           onFit={fitAllFrames}
           onZoomIn={() => zoomAtViewportCenter(1.22)}
           onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
+          canvasCategory={activeCanvasCategory}
           onSelectTool={setActiveTool}
           activeShape={activeShape}
           onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle", { force: true }); }}
@@ -3060,7 +3284,6 @@ export function CanvasSurface({
             onRenameNode={renameNode}
             onToggleNodeLock={toggleNodeLock}
             onToggleNodeHidden={toggleNodeHidden}
-            onReorderNode={(nodeId, direction) => editorStore.execute({ type: "node/reorder", nodeId, direction })}
             onHoverNode={(frameId, nodeId) => setSidebarHoveredNode({ frameId, nodeId })}
             onHoverNodeEnd={() => setSidebarHoveredNode(null)}
             hoveredLayerNode={hoveredOverlayTarget ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId } : null}
@@ -3074,6 +3297,7 @@ export function CanvasSurface({
             onMoveFrame={moveFrameFromPanel}
             onEditNodeStyle={editNodeStyle}
             onEditNodePosition={editNodePosition}
+            onApplyGlassEffect={applyGlassEffect}
             shapeRadius={radiusSelection?.radius ?? shapeRadius}
             shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
             onShapeRadiusChange={changeShapeRadius}

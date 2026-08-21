@@ -14,7 +14,10 @@ export const PASTE_META_WIDTH_ATTR = "data-canvas-paste-width";
 export const PASTE_META_HEIGHT_ATTR = "data-canvas-paste-height";
 export const PASTE_META_BACKGROUND_ATTR = "data-canvas-paste-background";
 
-const PASTE_META_ATTR_PATTERN = /\sdata-canvas-paste-[a-z-]+="[^"]*"/gi;
+// Matches double-quoted, single-quoted, and unquoted attribute forms so the
+// extension's metadata never survives into stored/exported documents.
+const PASTE_META_ATTR_PATTERN = /\sdata-canvas-paste-[a-z-]+=(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+const PASTE_OPEN_TAG_PATTERN = /<[a-zA-Z][^>]*>/g;
 
 export const PASTED_FRAME_MIN_SIZE = 160;
 export const PASTED_FRAME_MAX_SIZE = 2400;
@@ -75,7 +78,9 @@ function readMetaNumber(value: string | null): number | null {
 }
 
 function stripPasteMetadata(html: string): string {
-  return html.replace(/<html\b[^>]*>/i, (tag) => tag.replace(PASTE_META_ATTR_PATTERN, ""));
+  // Metadata normally rides on <html>, but strip it from every opening tag so
+  // fragments wrapped into complete documents are covered as well.
+  return html.replace(PASTE_OPEN_TAG_PATTERN, (tag) => tag.replace(PASTE_META_ATTR_PATTERN, ""));
 }
 
 function ensureCompleteDocument(html: string): string {

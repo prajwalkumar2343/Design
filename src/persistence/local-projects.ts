@@ -3,13 +3,70 @@ import { parseWireCanvasProject, serializeWireCanvasProject } from "./wirecanvas
 import type { BrainstormSessionLifecycle } from "../session/model";
 import { getProjectIdFromUrl } from "../routing";
 
+export type CanvasCategory = "website" | "mobile" | "asset";
+
+export interface CanvasCategoryDef {
+  id: CanvasCategory;
+  label: string;
+  shortLabel: string;
+  description: string;
+  hint: string;
+  accent: string;
+}
+
+export const CANVAS_CATEGORIES: readonly CanvasCategoryDef[] = [
+  {
+    id: "website",
+    label: "Website Design",
+    shortLabel: "Website",
+    description: "Responsive sites — mobile, tablet, desktop.",
+    hint: "Marketing, product and editorial — all breakpoints.",
+    accent: "#161615",
+  },
+  {
+    id: "mobile",
+    label: "Mobile Design",
+    shortLabel: "Mobile",
+    description: "App flows — phones & tablets.",
+    hint: "Native-feeling screens, gestures, no desktop.",
+    accent: "#0e7a5a",
+  },
+  {
+    id: "asset",
+    label: "Asset Design",
+    shortLabel: "Asset",
+    description: "Logos, icons, illustrations — SVG.",
+    hint: "Vector assets, brand kits, export-ready.",
+    accent: "#b45309",
+  },
+] as const;
+
+/**
+ * Agent hardness / prompt file per canvas category.
+ * Each canvas will load a different agent.md / hardness spec.
+ * Mapping is intentional and versioned — define the file later.
+ */
+export const CANVAS_AGENT_FILES: Record<CanvasCategory, string> = {
+  website: "agent.md",
+  mobile: "agent-mobile.md",
+  asset: "agent-asset.md",
+};
+
 export type ProjectKind =
   | "blank"
   | "landing"
   | "dashboard"
   | "portfolio"
   | "wireframe"
-  | "commerce";
+  | "commerce"
+  | "mobile-app"
+  | "mobile-blank"
+  | "app-wireframe"
+  | "logo"
+  | "icon-set"
+  | "illustration"
+  | "brand-kit"
+  | "asset-blank";
 
 export interface ProjectKindDef {
   id: ProjectKind;
@@ -17,15 +74,18 @@ export interface ProjectKindDef {
   description: string;
   hint: string;
   accent: string;
+  canvas: CanvasCategory;
 }
 
 export const PROJECT_KINDS: readonly ProjectKindDef[] = [
+  // — Website — all devices (mobile + tablet + desktop)
   {
     id: "blank",
     label: "Blank brief",
     description: "Start from the project brief. No presets.",
     hint: "A clear, minimal beginning.",
     accent: "#161615",
+    canvas: "website",
   },
   {
     id: "landing",
@@ -33,6 +93,7 @@ export const PROJECT_KINDS: readonly ProjectKindDef[] = [
     description: "Hero, features, proof and CTA — premium marketing flow.",
     hint: "High-contrast hero + editorial grid.",
     accent: "#5d5ce2",
+    canvas: "website",
   },
   {
     id: "dashboard",
@@ -40,6 +101,7 @@ export const PROJECT_KINDS: readonly ProjectKindDef[] = [
     description: "Tables, charts and controls for a data-dense app.",
     hint: "Dense, systematic, calm.",
     accent: "#0e7a5a",
+    canvas: "website",
   },
   {
     id: "portfolio",
@@ -47,6 +109,7 @@ export const PROJECT_KINDS: readonly ProjectKindDef[] = [
     description: "Image-forward editorial showcase.",
     hint: "Quiet typography, airy spacing.",
     accent: "#b45309",
+    canvas: "website",
   },
   {
     id: "wireframe",
@@ -54,6 +117,7 @@ export const PROJECT_KINDS: readonly ProjectKindDef[] = [
     description: "Low-fidelity flows for rapid iteration.",
     hint: "Grayscale, structured, fast.",
     accent: "#6b7280",
+    canvas: "website",
   },
   {
     id: "commerce",
@@ -61,6 +125,73 @@ export const PROJECT_KINDS: readonly ProjectKindDef[] = [
     description: "Product grid, detail, cart and checkout.",
     hint: "Tactile cards, calm commerce.",
     accent: "#c2416a",
+    canvas: "website",
+  },
+  // — Mobile — phones & tablets only, no desktop frames
+  {
+    id: "mobile-blank",
+    label: "Blank app",
+    description: "Start from the project brief. No presets — phones & tablets only.",
+    hint: "A clear, minimal beginning for apps.",
+    accent: "#0e7a5a",
+    canvas: "mobile",
+  },
+  {
+    id: "mobile-app",
+    label: "Mobile App",
+    description: "Native app shell — tabs, lists, detail and actions.",
+    hint: "Phone-first, gesture-driven.",
+    accent: "#0e7a5a",
+    canvas: "mobile",
+  },
+  {
+    id: "app-wireframe",
+    label: "App Wireframe",
+    description: "Low-fidelity app flow — screens and navigation map.",
+    hint: "Grayscale, phones & tablets.",
+    accent: "#6b7280",
+    canvas: "mobile",
+  },
+  // — Asset — logos, icons, illustrations, brand kits (SVG / export-ready)
+  {
+    id: "asset-blank",
+    label: "Blank asset",
+    description: "Start from the project brief. No presets — logos, icons, illustrations.",
+    hint: "A clear, minimal beginning for assets.",
+    accent: "#b45309",
+    canvas: "asset",
+  },
+  {
+    id: "logo",
+    label: "Logo / Mark",
+    description: "Logotype and symbol — geometric, wordmark, emblem.",
+    hint: "Single mark, SVG-first.",
+    accent: "#b45309",
+    canvas: "asset",
+  },
+  {
+    id: "icon-set",
+    label: "Icon Set",
+    description: "Consistent icon family at multiple sizes.",
+    hint: "Grid, stroke, rounded.",
+    accent: "#5d5ce2",
+    canvas: "asset",
+  },
+  {
+    id: "illustration",
+    label: "Illustration",
+    description: "Editorial or product illustration on an artboard.",
+    hint: "Flat, line, textured.",
+    accent: "#c2416a",
+    canvas: "asset",
+  },
+  {
+    id: "brand-kit",
+    label: "Brand Kit",
+    description: "Type, color, logo lockups and usage tiles.",
+    hint: "Tokens, specimens, guidelines.",
+    accent: "#161615",
+    canvas: "asset",
   },
 ] as const;
 
@@ -127,6 +258,26 @@ export function isProjectKind(value: unknown): value is ProjectKind {
   return typeof value === "string" && PROJECT_KINDS.some((k) => k.id === value);
 }
 
+export function isCanvasCategory(value: unknown): value is CanvasCategory {
+  return typeof value === "string" && (CANVAS_CATEGORIES as readonly CanvasCategoryDef[]).some((c) => c.id === value);
+}
+
+export function getCanvasCategoryForKind(kind: ProjectKind): CanvasCategory {
+  return getKindDef(kind).canvas;
+}
+
+export function getKindsForCanvas(canvas: CanvasCategory): readonly ProjectKindDef[] {
+  return PROJECT_KINDS.filter((k) => k.canvas === canvas);
+}
+
+export function getCanvasDef(canvas: CanvasCategory): CanvasCategoryDef {
+  return CANVAS_CATEGORIES.find((c) => c.id === canvas) ?? CANVAS_CATEGORIES[0]!;
+}
+
+export function getCanvasCategoryLabel(canvas: CanvasCategory): string {
+  return getCanvasDef(canvas).label;
+}
+
 export function formatRelativeTime(timestamp: number): string {
   const diff = nowMs() - timestamp;
   if (diff < 60_000) return "Just now";
@@ -174,6 +325,50 @@ export function getBriefPresetForKind(kind: ProjectKind): Partial<import("../ses
         goals: ["Make products tactile and comparable", "Keep cart and price always legible", "Checkout feels safe and light"],
         visualDirection: "Calm, tactile product cards, clear price hierarchy, soft surfaces.",
       };
+    case "mobile-app":
+      return {
+        projectDescription: "Native mobile app — onboarding, home feed, detail, and primary action flow.",
+        audience: "Phone-first users completing a core task in under 30 seconds.",
+        goals: ["One thumb, one hand — all primary actions reachable", "Instant clarity at 390px width", "Feel native, fast, and tactile"],
+        visualDirection: "Large tap targets, bottom navigation, soft surfaces, phone-only — phones & tablets, no desktop.",
+      };
+    case "app-wireframe":
+      return {
+        projectDescription: "App wireframe — map the core user flow screen by screen at low fidelity.",
+        audience: "Product team aligning on app structure before visual design.",
+        goals: ["Expose navigation and hierarchy", "Keep fidelity deliberately low (grayscale boxes)", "Validate flow on phones & tablets only"],
+        visualDirection: "Strict grayscale, neutral boxes, no color — structure only. Phones & tablets, no desktop.",
+      };
+    case "logo":
+      return {
+        projectDescription: "Logo / mark — wordmark, symbol, or emblem for a new brand.",
+        audience: "Anyone encountering the brand at a glance.",
+        goals: ["Read at 16px and 512px", "Work in single color and full color", "Own a distinct silhouette"],
+        visualDirection: "Geometric, SVG-first, precise spacing, minimal ornament — artboard-centered.",
+      };
+    case "icon-set":
+      return {
+        projectDescription: "Icon set — consistent family at 16 / 24 / 32px grid with stroke and corner rules.",
+        audience: "Product and marketing surfaces reusing the same icon language.",
+        goals: ["One stroke weight, one corner radius", "Pixel-snapped at all sizes", "Read in outline and filled variants"],
+        visualDirection: "2px stroke, 2px grid, rounded joins, monochrome first — SVG export-ready.",
+      };
+    case "illustration":
+      return {
+        projectDescription: "Editorial illustration — hero or spot for a product story.",
+        audience: "Readers pausing on a feature or empty state.",
+        goals: ["Support the headline, don't compete with it", "Work on light and dark surfaces", "Scale from card to cover"],
+        visualDirection: "Flat or line style, limited palette, artboard composition — SVG or high-res export.",
+      };
+    case "brand-kit":
+      return {
+        projectDescription: "Brand kit — type scale, color tokens, logo lockups, and usage tiles.",
+        audience: "Team members applying the brand consistently.",
+        goals: ["Tokens documented, not just shown", "Logo clearspace and misuse rules", "Type and color specimens"],
+        visualDirection: "Systematic, specimen-led, generous whitespace — design tokens as source of truth.",
+      };
+    case "mobile-blank":
+    case "asset-blank":
     case "blank":
     default:
       return {};

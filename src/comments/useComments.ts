@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from "react";
 import type { Point } from "../canvas/types";
-import type { EditorStore } from "../editor/store";
 import {
   createCanvasComment,
   createEmptyCommentsState,
@@ -18,7 +17,7 @@ export interface UseCommentsResult extends CommentsState {
   clearComments: () => void;
 }
 
-export function useComments(editorStore: EditorStore): UseCommentsResult {
+export function useComments(): UseCommentsResult {
   const [state, setState] = useState<CommentsState>(createEmptyCommentsState);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -28,48 +27,16 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
     setState(next);
   }, []);
 
-  const commitChange = useCallback(
-    ({
-      label,
-      before,
-      after,
-      undoFeedback,
-      redoFeedback,
-    }: {
-      label: string;
-      before: CommentsState;
-      after: CommentsState;
-      undoFeedback: string;
-      redoFeedback: string;
-    }) => {
-      editorStore.beginTransaction(label);
-      applyState(after);
-      editorStore.commitTransaction({
-        undo: () => applyState({ ...before, feedback: undoFeedback }),
-        redo: () => applyState({ ...after, feedback: redoFeedback }),
-      });
-    },
-    [applyState, editorStore],
-  );
-
   const addComment = useCallback(
     (frameId: string, point: Point) => {
-      const before = stateRef.current;
       const comment = createCanvasComment(frameId, point);
-      const after: CommentsState = {
-        comments: [...before.comments, comment],
+      applyState({
+        comments: [...stateRef.current.comments, comment],
         selectedCommentId: comment.id,
         feedback: null,
-      };
-      commitChange({
-        label: "Add comment",
-        before,
-        after,
-        undoFeedback: "Comment undone",
-        redoFeedback: "Comment restored",
       });
     },
-    [commitChange],
+    [applyState],
   );
 
   const selectComment = useCallback(
@@ -100,21 +67,14 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
         applyState({ ...before, feedback: "Comment is unchanged." });
         return true;
       }
-      const after: CommentsState = {
+      applyState({
         ...before,
         comments: before.comments.map((entry) => entry.id === commentId ? { ...entry, body: nextBody } : entry),
-        feedback: "Comment saved",
-      };
-      commitChange({
-        label: "Edit comment",
-        before,
-        after,
-        undoFeedback: "Comment edit undone",
-        redoFeedback: "Comment edit restored",
+        feedback: null,
       });
       return true;
     },
-    [applyState, commitChange],
+    [applyState],
   );
 
   const toggleCommentResolved = useCallback(
@@ -123,40 +83,26 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
       const comment = before.comments.find((entry) => entry.id === commentId);
       if (!comment) return;
       const resolved = comment.status !== "resolved";
-      const after: CommentsState = {
+      applyState({
         ...before,
         comments: before.comments.map((entry) => entry.id === commentId ? { ...entry, status: resolved ? "resolved" : "open" } : entry),
         feedback: resolved ? "Comment resolved" : "Comment reopened",
-      };
-      commitChange({
-        label: resolved ? "Resolve comment" : "Reopen comment",
-        before,
-        after,
-        undoFeedback: resolved ? "Comment reopened" : "Comment resolved",
-        redoFeedback: resolved ? "Comment resolved" : "Comment reopened",
       });
     },
-    [commitChange],
+    [applyState],
   );
 
   const deleteComment = useCallback(
     (commentId: string) => {
       const before = stateRef.current;
       if (!before.comments.some((comment) => comment.id === commentId)) return;
-      const after: CommentsState = {
+      applyState({
         comments: before.comments.filter((comment) => comment.id !== commentId),
         selectedCommentId: before.selectedCommentId === commentId ? null : before.selectedCommentId,
         feedback: "Comment deleted",
-      };
-      commitChange({
-        label: "Delete comment",
-        before,
-        after,
-        undoFeedback: "Comment restored",
-        redoFeedback: "Comment deleted",
       });
     },
-    [commitChange],
+    [applyState],
   );
 
   const selectedComment = state.selectedCommentId
@@ -178,4 +124,3 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
     clearComments,
   };
 }
-

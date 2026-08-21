@@ -189,6 +189,68 @@ describe("Codex Brainstorm Session service", () => {
     );
   });
 
+  it("rejects untrusted brief payloads with typed errors and without corrupting state", () => {
+    const { service, store } = createService();
+    start(service);
+
+    // Inherited keys must not pass the field allowlist or pollute content.
+    expectServiceError(
+      () => service.updateBriefField({ expectedRevision: 1, field: "__proto__" as never, value: { polluted: true } as never }),
+      "invalid-input",
+    );
+    expect({ ...Object.getOwnPropertyNames(store.getState().session.briefFrame!.content) }).not.toContain("__proto__");
+
+    // List fields reject strings (which would otherwise be char-split) and
+    // non-iterable values (which would otherwise escape as raw TypeErrors).
+    expectServiceError(
+      () => service.updateBriefField({ expectedRevision: 1, field: "goals", value: "not-an-array" as never }),
+      "invalid-input",
+    );
+    expectServiceError(
+      () => service.updateBriefField({ expectedRevision: 1, field: "goals", value: 5 as never }),
+      "invalid-input",
+    );
+    expectServiceError(
+      () => service.updateBriefField({ expectedRevision: 1, field: "projectDescription", value: 42 as never }),
+      "invalid-input",
+    );
+
+    const snapshot = service.getSnapshot();
+    expect(snapshot.revision).toBe(1);
+    expect(snapshot.briefFrame?.content.goals).toEqual(["Align quickly"]);
+    expect(store.getHistory().past).toHaveLength(1);
+  });
+
+  it("enforces the http(s)-only reference URL contract on the live path", () => {
+    const { service, store } = createService();
+    start(service);
+
+    expectServiceError(
+      () => service.addReference({ expectedRevision: 1, reference: { id: "ref-x", label: "Evil", url: "javascript:alert(1)", note: "" } }),
+      "invalid-input",
+    );
+    expectServiceError(
+      () => service.addReference({ expectedRevision: 1, reference: { id: "ref-y", label: 42 as never, url: "", note: "" } }),
+      "invalid-input",
+    );
+    const fresh = createService();
+    expectServiceError(
+      () => fresh.service.startSession({
+        expectedRevision: 0,
+        sessionId: "session-9",
+        briefFrameId: "brief-9",
+        content: { references: [{ id: "r", label: "l", url: "data:text/html,x", note: "" }] } as never,
+      }),
+      "invalid-input",
+    );
+
+    // Empty URLs stay legal, matching the import contract.
+    const added = service.addReference({ expectedRevision: 1, reference: { id: "ref-ok", label: "Later", url: "", note: "" } });
+    expect(added.changed).toBe(true);
+    expect(service.getSnapshot().revision).toBe(2);
+    expect(store.getState().session.briefFrame!.content.references).toHaveLength(1);
+  });
+
   it("allows only briefing to wireframing to completed transitions", () => {
     const { service, store } = createService();
     start(service);

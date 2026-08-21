@@ -9,6 +9,7 @@ export interface BridgeRuntimeConfig extends BridgeSessionIdentity {
 const SAFE_STYLE_PROPERTIES = [
   "align-items",
   "aspect-ratio",
+  "backdrop-filter",
   "background",
   "background-color",
   "border-color",
@@ -331,6 +332,136 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return true;
   }
 
+  const GLASS_VECTOR_KINDS = ["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"];
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  function parseColorChannels(value) {
+    if (!value) return null;
+    const hex = /^#([0-9a-f]{6})$/i.exec(value.trim());
+    if (hex) {
+      const d = hex[1];
+      return {
+        r: parseInt(d.slice(0, 2), 16),
+        g: parseInt(d.slice(2, 4), 16),
+        b: parseInt(d.slice(4, 6), 16),
+      };
+    }
+    const rgb = /^rgba?\\(\\s*(\\d+)[\\s,]+(\\d+)[\\s,]+(\\d+)(?:[\\s,/]+[\\d.]+)?\\s*\\)$/i.exec(value.trim());
+    if (rgb) return { r: Number(rgb[1]), g: Number(rgb[2]), b: Number(rgb[3]) };
+    return null;
+  }
+
+  function mixChannels(a, b, t) {
+    return {
+      r: Math.round(a.r + (b.r - a.r) * t),
+      g: Math.round(a.g + (b.g - a.g) * t),
+      b: Math.round(a.b + (b.b - a.b) * t),
+    };
+  }
+
+  function rgba(color, alpha) {
+    return "rgba(" + color.r + ", " + color.g + ", " + color.b + ", " + alpha + ")";
+  }
+
+  /** Self-material glass: bright sheen into the body color, easing darker at the far edge. */
+  function glassGradientStops(base, level) {
+    const t = clamp01(level / 100);
+    const aBase = 0.32 + 0.43 * t;
+    const white = { r: 255, g: 255, b: 255 };
+    const sheen = mixChannels(mixChannels(base, white, 0.6), white, 0.25);
+    const shade = { r: Math.round(base.r * 0.95), g: Math.round(base.g * 0.95), b: Math.round(base.b * 0.95) };
+    return [
+      { color: sheen, alpha: Math.min(0.92, aBase + 0.18) },
+      { color: base, alpha: Math.round(aBase * 0.72 * 100) / 100 },
+      { color: shade, alpha: Math.round(aBase * 0.9 * 100) / 100 },
+    ];
+  }
+
+  const GLASS_RIM_SHADOW = "inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 10px 26px rgba(20, 20, 18, 0.14)";
+
+  function shapeGeometryChild(element) {
+    return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
+  }
+
+  function rememberOriginalFill(element, child) {
+    if (!element.hasAttribute("data-design-tool-original-fill")) {
+      element.setAttribute("data-design-tool-original-fill", child.getAttribute("fill") || "#d9d9d9");
+    }
+  }
+
+  function applyShapeFill(element, color) {
+    const child = shapeGeometryChild(element);
+    if (!child) throw { code: "shape-fill-not-supported", message: "This shape has no paintable geometry" };
+    rememberOriginalFill(element, child);
+    child.setAttribute("fill", color);
+    element.setAttribute("data-design-tool-fill", color);
+  }
+
+  function applyVectorGlass(element, level) {
+    const child = shapeGeometryChild(element);
+    if (!child) throw { code: "shape-glass-not-supported", message: "This shape has no paintable geometry" };
+    if (level === null || level <= 0) {
+      const original = element.getAttribute("data-design-tool-original-fill");
+      if (original) child.setAttribute("fill", original);
+      const defs = element.querySelector("defs");
+      if (defs) defs.remove();
+      element.removeAttribute("data-design-tool-glass");
+      return;
+    }
+    rememberOriginalFill(element, child);
+    const base = parseColorChannels(child.getAttribute("fill")) ||
+      parseColorChannels(element.getAttribute("data-design-tool-fill")) || { r: 217, g: 217, b: 217 };
+    const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
+    const gradientId = "design-tool-glass-" + String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
+    let defs = element.querySelector("defs");
+    if (!defs) {
+      defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+      element.insertBefore(defs, element.firstChild);
+    }
+    let gradient = defs.querySelector("linearGradient[id='" + gradientId + "']");
+    if (!gradient) {
+      gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
+      gradient.setAttribute("id", gradientId);
+      gradient.setAttribute("x1", "0");
+      gradient.setAttribute("y1", "0");
+      gradient.setAttribute("x2", "1");
+      gradient.setAttribute("y2", "1");
+      defs.appendChild(gradient);
+    }
+    while (gradient.firstChild) gradient.removeChild(gradient.firstChild);
+    const stops = glassGradientStops(base, level);
+    [0, 46, 100].forEach((offset, index) => {
+      const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
+      stop.setAttribute("offset", offset + "%");
+      stop.setAttribute("stop-color", rgba(stops[index].color, 1));
+      stop.setAttribute("stop-opacity", String(stops[index].alpha));
+      gradient.appendChild(stop);
+    });
+    child.setAttribute("fill", "url(#" + gradientId + ")");
+    element.setAttribute("data-design-tool-glass", String(level));
+  }
+
+  function applySurfaceGlass(element, level) {
+    if (level === null || level <= 0) {
+      element.style.removeProperty("background");
+      element.style.removeProperty("box-shadow");
+      element.removeAttribute("data-design-tool-glass");
+      return;
+    }
+    const computed = window.getComputedStyle(element);
+    const base = parseColorChannels(element.style.backgroundColor || computed.backgroundColor) || { r: 255, g: 255, b: 255 };
+    const stops = glassGradientStops(base, level);
+    element.style.background = "linear-gradient(135deg, " +
+      rgba(stops[0].color, stops[0].alpha) + " 0%, " +
+      rgba(stops[1].color, stops[1].alpha) + " 46%, " +
+      rgba(stops[2].color, stops[2].alpha) + " 100%)";
+    element.style.boxShadow = GLASS_RIM_SHADOW;
+    element.setAttribute("data-design-tool-glass", String(level));
+  }
+
   function createElementFromSpec(spec) {
     if (!isRecord(spec) || !isSafeString(spec.elementId, 512) || !isSafeString(spec.kind, 32) ||
       !safeBounds(spec.bounds) || findElement(spec.elementId)) {
@@ -419,8 +550,13 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     if (isRecord(spec.style)) {
       for (const [property, value] of Object.entries(spec.style)) {
         if (!SAFE_STYLE_PROPERTIES.has(property) || !isSafeStyleValue(value)) continue;
-        element.style.setProperty(property, value);
+        element.style.setProperty(property, value, "important");
       }
+    }
+    const specGlass = isFiniteNumber(spec.glass) ? Math.max(0, Math.min(100, spec.glass)) : 0;
+    if (specGlass > 0) {
+      if (GLASS_VECTOR_KINDS.indexOf(kind) !== -1) applyVectorGlass(element, specGlass);
+      else applySurfaceGlass(element, specGlass);
     }
     parent.appendChild(element);
     return element;
@@ -453,6 +589,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       strokeWidth: Number(element.getAttribute("data-design-tool-stroke-width") || 2),
       radius: Math.max(0, Math.min(256, Number(element.getAttribute("data-design-tool-radius") || 0))),
       editable: element.getAttribute("data-design-tool-editable") !== "false",
+      glass: (() => {
+        const raw = element.getAttribute("data-design-tool-glass");
+        if (raw === null) return null;
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : null;
+      })(),
       style,
     };
   }
@@ -472,6 +614,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       strokeWidth: snapshot.strokeWidth,
       radius: snapshot.radius,
       editable: snapshot.editable,
+      glass: snapshot.glass === undefined ? null : snapshot.glass,
       style: snapshot.style,
     };
   }
@@ -488,7 +631,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   const COMPUTED_PROPERTIES = [
     "display", "position", "box-sizing", "aspect-ratio", "white-space", "object-fit", "width", "height", "top", "right", "bottom", "left",
     "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right",
-    "padding-bottom", "padding-left", "gap", "color", "background-color", "font-family", "font-size",
+    "padding-bottom", "padding-left", "gap", "color", "background-color", "backdrop-filter", "font-family", "font-size",
     "font-weight", "line-height", "letter-spacing", "text-align", "text-transform", "opacity",
     "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
     "border-color", "border-width", "box-shadow", "background", "overflow", "transform", "z-index",
@@ -675,7 +818,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       throw { code: "invalid-command", message: "The bridge command shape is invalid" };
     }
     const needsTarget = command.command === "set-inline-style" || command.command === "set-text" ||
-      command.command === "start-text-edit" || command.command === "cancel-text-edit" || command.command === "commit-text-edit";
+      command.command === "start-text-edit" || command.command === "cancel-text-edit" || command.command === "commit-text-edit" ||
+      command.command === "set-shape-fill" || command.command === "set-shape-glass";
     const element = needsTarget ? findElement(command.targetId) : null;
     if (needsTarget && !element) throw { code: "target-not-found", message: "The requested element no longer exists" };
 
@@ -692,7 +836,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         if (window.CSS && typeof window.CSS.supports === "function" && !window.CSS.supports(command.property, command.value)) {
           throw { code: "invalid-style", message: "The value is not valid for the requested style property" };
         }
-        element.style.setProperty(command.property, command.value);
+        // Applied as !important so Canvas-owned edits stay authoritative over
+        // the injected wireframe theme's blanket resets (transform, shadow…).
+        element.style.setProperty(command.property, command.value, "important");
       }
       const value = element.style.getPropertyValue(command.property) || null;
       return {
@@ -836,6 +982,54 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         previousRadius,
         radius: command.radius,
         undo: { command: "set-shape-radius", targetId: command.targetId, radius: previousRadius },
+      };
+    }
+    if (command.command === "set-shape-fill") {
+      const color = command.color;
+      if (color !== null && !(isSafeString(color, 128) && !/[;]|url\\s*\\(/i.test(color))) {
+        throw { code: "unsafe-shape-color", message: "The requested fill color is not allowed" };
+      }
+      if (!element || element.getAttribute("data-design-tool-created") !== "true") {
+        throw { code: "target-not-found", message: "The requested shape no longer exists" };
+      }
+      const previousColor = element.getAttribute("data-design-tool-fill") ||
+        element.getAttribute("data-design-tool-original-fill") || null;
+      if (color === null) {
+        const original = element.getAttribute("data-design-tool-original-fill");
+        if (original) applyShapeFill(element, original);
+        else element.removeAttribute("data-design-tool-fill");
+      } else {
+        applyShapeFill(element, color);
+      }
+      return {
+        kind: "command",
+        command: "set-shape-fill",
+        targetId: command.targetId,
+        previousColor,
+        color,
+        undo: { command: "set-shape-fill", targetId: command.targetId, color: previousColor },
+      };
+    }
+    if (command.command === "set-shape-glass") {
+      const level = command.level;
+      if (level !== null && !(isFiniteNumber(level) && level >= 0 && level <= 100)) {
+        throw { code: "invalid-glass-level", message: "The glass level must be between 0 and 100" };
+      }
+      if (!element || element.getAttribute("data-design-tool-created") !== "true") {
+        throw { code: "target-not-found", message: "The requested shape no longer exists" };
+      }
+      const previousLevelValue = element.getAttribute("data-design-tool-glass");
+      const previousLevel = previousLevelValue === null ? null : Math.max(0, Math.min(100, Number(previousLevelValue)));
+      const kind = element.getAttribute("data-design-tool-kind");
+      if (kind && GLASS_VECTOR_KINDS.indexOf(kind) !== -1) applyVectorGlass(element, level);
+      else applySurfaceGlass(element, level);
+      return {
+        kind: "command",
+        command: "set-shape-glass",
+        targetId: command.targetId,
+        previousLevel,
+        level,
+        undo: { command: "set-shape-glass", targetId: command.targetId, level: previousLevel },
       };
     }
     if (command.command === "pick-element") {

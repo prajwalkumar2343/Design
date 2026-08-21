@@ -85,6 +85,9 @@ test.describe("WireCanvas project persistence", () => {
   test("exports a project file and imports it into a blank canvas", async ({ browser, page }) => {
     await page.goto("/");
     await page.getByTestId("start-brainstorming").click();
+    if (await page.getByTestId("blank-chooser").isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
     await page.getByTestId("brief-field-projectDescription").fill("Portable canvas project");
     await page.getByTestId("brief-field-audience").click();
 
@@ -120,6 +123,9 @@ test.describe("WireCanvas project persistence", () => {
   test("exports the canvas as a Figma .fig file with mapped frames and shapes", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("start-brainstorming").click();
+    if (await page.getByTestId("blank-chooser").isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
     await page.getByTestId("brief-field-projectDescription").fill("Figma export canvas");
     await page.getByTestId("brief-field-audience").click();
 
@@ -162,6 +168,9 @@ test.describe("WireCanvas project persistence", () => {
   test("shows malformed-file feedback without losing current work", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("start-brainstorming").click();
+    if (await page.getByTestId("blank-chooser").isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
     const description = page.getByTestId("brief-field-projectDescription");
     await description.fill("Keep this work");
     await page.getByTestId("brief-field-audience").click();

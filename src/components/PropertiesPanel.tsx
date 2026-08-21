@@ -1,6 +1,7 @@
 import {
   BoxSelect,
   ChevronDown,
+  Droplets,
   Layers3,
   Minus,
   PanelRightClose,
@@ -12,8 +13,14 @@ import {
   Square,
   Type,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SafeInlineStyleProperty } from "../bridge/protocol";
+import {
+  MAX_GLASS_LEVEL,
+  clampGlassLevel,
+  glassLevelFromAttribute,
+  parseCssColor,
+} from "../editor/effects";
 import type { FrameEntity, NodeEntity, SelectionState } from "../editor/model";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
 import { elementProfile, mixedValue } from "./panel-model";
@@ -27,6 +34,7 @@ export interface PropertiesPanelProps {
   onMoveFrame: (frameId: string, position: { x: number; y: number }) => void;
   onEditNodeStyle: (property: SafeInlineStyleProperty, value: string | null) => void;
   onEditNodePosition: (frameId: string, nodeId: string, position: { x: number; y: number }) => void;
+  onApplyGlassEffect: (level: number) => void;
   shapeRadius: number;
   shapeRadiusVisible: boolean;
   onShapeRadiusChange: (radius: number) => void;
@@ -76,7 +84,13 @@ function PropertyField({
           placeholder={placeholder ?? (isMixed ? "Mixed" : "—")}
           disabled={disabled}
           onChange={(event) => setDraft(event.target.value)}
-          onBlur={() => { if (draft.trim() !== "") onCommit(draft.trim()); }}
+          onBlur={() => {
+            const next = draft.trim();
+            if (next === "") return;
+            // Blurring without a real edit must not push a no-op undo step.
+            if (!isMixed && next === value) return;
+            onCommit(next);
+          }}
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
         />
         {suffix ? <small>{suffix}</small> : null}
@@ -87,6 +101,93 @@ function PropertyField({
 
 function PropertySection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return <section className="property-section"><div className="property-section-title"><span>{icon}{title}</span><ChevronDown size={13} /></div>{children}</section>;
+}
+
+/** A curated, gesture-friendly palette — no color wheel required. */
+const COLOR_SWATCHES = [
+  "#ffffff", "#ebebe8", "#d9d9d9", "#a8a8a1", "#666661", "#161615",
+  "#f6b1a4", "#e5484d", "#ffab6b", "#e8792e",
+  "#ffe9a8", "#f2ce4b", "#d9a514",
+  "#b5e0a5", "#6cbf5d", "#2f9e57", "#1d6b40",
+  "#bcd9f5", "#6faee0", "#3b74c2", "#24488f",
+  "#e3cdf6", "#b98ae4", "#7a4fb0",
+];
+
+function ColorField({
+  label,
+  value,
+  onCommit,
+}: {
+  label: string;
+  value: string | null;
+  onCommit: (value: string) => void;
+}) {
+  const isMixed = value === "mixed";
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(isMixed || value === null ? "" : value);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => setDraft(isMixed || value === null ? "" : value), [isMixed, value]);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !wrapRef.current?.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+  const commit = (next: string) => {
+    onCommit(next);
+    setOpen(false);
+  };
+  return (
+    <span className="color-field" ref={wrapRef}>
+      <span className="color-field-label">{label}</span>
+      <button
+        type="button"
+        className="color-swatch-button"
+        data-testid={`color-swatch-${label}`}
+        aria-label={`${label} color`}
+        aria-expanded={open}
+        style={{ background: isMixed || !value ? "transparent" : value }}
+        onClick={() => setOpen((current) => !current)}
+      />
+      <input
+        aria-label={label}
+        value={draft}
+        placeholder={isMixed ? "Mixed" : "—"}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={() => {
+          const next = draft.trim();
+          if (!next || next === value) return;
+          commit(next);
+        }}
+        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+      />
+      {open ? (
+        <span className="color-popover" data-testid={`color-popover-${label}`}>
+          <span className="color-swatch-grid">
+            {COLOR_SWATCHES.map((color) => {
+              const current = parseCssColor(value ?? undefined);
+              const option = parseCssColor(color);
+              const isActive = current !== null && option !== null &&
+                current.r === option.r && current.g === option.g && current.b === option.b;
+              return (
+                <button
+                  key={color}
+                  type="button"
+                  className={`color-swatch${isActive ? " is-active" : ""}`}
+                  data-testid={`color-option-${color}`}
+                  style={{ background: color }}
+                  aria-label={color}
+                  onClick={() => commit(color)}
+                />
+              );
+            })}
+          </span>
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 function styleValue(entries: OverlayBridgeTargetState[], property: string): string | null {
@@ -136,7 +237,7 @@ function TypographySection({ entries, onEditNodeStyle }: Pick<PropertiesPanelPro
         <PropertyField label="Family" value={styleValue(entries, "font-family")} onCommit={(value) => onEditNodeStyle("font-family", value)} />
         <div className="property-grid"><PropertyField label="Size" value={styleValue(entries, "font-size")} onCommit={(value) => onEditNodeStyle("font-size", value)} /><PropertyField label="Weight" value={styleValue(entries, "font-weight")} onCommit={(value) => onEditNodeStyle("font-weight", value)} /></div>
         <PropertyField label="Line height" value={styleValue(entries, "line-height")} onCommit={(value) => onEditNodeStyle("line-height", value)} />
-        <div className="property-grid"><PropertyField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Align" value={styleValue(entries, "text-align")} onCommit={(value) => onEditNodeStyle("text-align", value)} /></div>
+        <div className="property-grid"><ColorField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Align" value={styleValue(entries, "text-align")} onCommit={(value) => onEditNodeStyle("text-align", value)} /></div>
       </div>
     </PropertySection>
   );
@@ -146,7 +247,7 @@ function FillBorderSection({ entries, onEditNodeStyle }: Pick<PropertiesPanelPro
   return (
     <PropertySection title="Fill & border" icon={<Palette size={13} />}>
       <div className="property-grid property-grid-single">
-        <PropertyField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+        <ColorField label="Fill" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
         <div className="property-grid"><PropertyField label="Border" value={styleValue(entries, "border-color")} onCommit={(value) => onEditNodeStyle("border-color", value)} /><PropertyField label="Width" value={styleValue(entries, "border-width")} onCommit={(value) => onEditNodeStyle("border-width", value)} /></div>
         <PropertyField label="Radius" value={styleValue(entries, "border-radius")} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
       </div>
@@ -158,6 +259,88 @@ function OpacityEffectsSection({ entries, onEditNodeStyle }: Pick<PropertiesPane
   return (
     <PropertySection title="Opacity & effects" icon={<SlidersHorizontal size={13} />}>
       <div className="property-grid property-grid-single"><PropertyField label="Opacity" value={styleValue(entries, "opacity")} onCommit={(value) => onEditNodeStyle("opacity", value)} /><PropertyField label="Shadow" value={styleValue(entries, "box-shadow")} onCommit={(value) => onEditNodeStyle("box-shadow", value)} /></div>
+    </PropertySection>
+  );
+}
+
+function GlassSection({
+  entries,
+  onApply,
+}: {
+  entries: OverlayBridgeTargetState[];
+  onApply: (level: number) => void;
+}) {
+  const currentLevel = useMemo(() => {
+    for (const entry of entries) {
+      const parsed = glassLevelFromAttribute(entry.inspection?.attributes["data-design-tool-glass"]);
+      if (parsed !== null && parsed > 0) return parsed;
+    }
+    return 0;
+  }, [entries]);
+  const [level, setLevel] = useState(currentLevel);
+  useEffect(() => setLevel(currentLevel), [currentLevel]);
+  const apply = (next: number) => {
+    const clamped = clampGlassLevel(next);
+    setLevel(clamped);
+    onApply(clamped);
+  };
+  // Dragging previews locally; releasing commits one undoable transaction.
+  const commit = () => {
+    if (level !== currentLevel) apply(level);
+  };
+  return (
+    <PropertySection title="Glass" icon={<Droplets size={13} />}>
+      <div className="corner-radius-card" aria-label="Glass effect">
+        <div className="corner-radius-head">
+          <span className="corner-radius-label">Frost the backdrop</span>
+          <span className="corner-radius-value-pill">
+            <span data-testid="glass-level-value">{level > 0 ? `${level}%` : "Off"}</span>
+          </span>
+        </div>
+        <div className="corner-radius-control-modern">
+          <button
+            aria-label="Decrease glass level"
+            className="corner-radius-step"
+            data-testid="glass-level-decrement"
+            onClick={() => apply(level - 10)}
+            type="button"
+          >
+            <Minus size={14} strokeWidth={1.8} />
+          </button>
+          <div className="corner-radius-slider-wrap">
+            <div className="corner-radius-track" aria-hidden="true">
+              <div className="corner-radius-track-fill" style={{ width: `${(level / MAX_GLASS_LEVEL) * 100}%` }} />
+            </div>
+            <input
+              aria-label="Glass level"
+              data-testid="glass-level-slider"
+              max={MAX_GLASS_LEVEL}
+              min={0}
+              onBlur={commit}
+              onChange={(event) => setLevel(clampGlassLevel(Number(event.target.value)))}
+              onKeyDown={(event) => { if (event.key === "Enter") commit(); }}
+              onKeyUp={commit}
+              onPointerUp={commit}
+              step={1}
+              type="range"
+              value={level}
+            />
+          </div>
+          <button
+            aria-label="Increase glass level"
+            className="corner-radius-step"
+            data-testid="glass-level-increment"
+            onClick={() => apply(level + 10)}
+            type="button"
+          >
+            <Plus size={14} strokeWidth={1.8} />
+          </button>
+        </div>
+        <div className="corner-radius-meta">
+          <span>Clear</span>
+          <span>Frosted</span>
+        </div>
+      </div>
     </PropertySection>
   );
 }
@@ -248,10 +431,12 @@ function NodeDesignPanel({
   nodes,
   onEditNodeStyle,
   onEditNodePosition,
-}: Pick<PropertiesPanelProps, "nodes" | "onEditNodeStyle" | "onEditNodePosition"> & { entries: OverlayBridgeTargetState[] }) {
+  onApplyGlassEffect,
+}: Pick<PropertiesPanelProps, "nodes" | "onEditNodeStyle" | "onEditNodePosition" | "onApplyGlassEffect"> & { entries: OverlayBridgeTargetState[] }) {
   const primary = entries[0];
   const profile = primary ? elementProfile(primary.target, nodes[primary.target.elementId]) : null;
   const positionProps = { entries, onEditNodeStyle, onEditNodePosition };
+  const glassSection = <GlassSection entries={entries} onApply={onApplyGlassEffect} />;
   return (
     <>
       <div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{entries.length === 1 ? primary?.inspection?.target.name ?? "Layer" : `${entries.length} layers`}</strong><small>{entries.length === 1 ? "Selected layer" : "Mixed selection"}</small></span></div>
@@ -259,9 +444,10 @@ function NodeDesignPanel({
       {profile === "button" ? (
         <>
           <PositionSizeSection {...positionProps} />
+          {glassSection}
           <PropertySection title="Button style" icon={<Palette size={13} />}>
             <div className="property-grid property-grid-single">
-              <PropertyField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+              <ColorField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
               <PropertyField label="Radius" value={styleValue(entries, "border-radius")} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
               <div className="property-grid"><PropertyField label="Border" value={styleValue(entries, "border-color")} onCommit={(value) => onEditNodeStyle("border-color", value)} /><PropertyField label="Width" value={styleValue(entries, "border-width")} onCommit={(value) => onEditNodeStyle("border-width", value)} /></div>
             </div>
@@ -271,15 +457,19 @@ function NodeDesignPanel({
               <div className="property-grid"><PropertyField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Size" value={styleValue(entries, "font-size")} onCommit={(value) => onEditNodeStyle("font-size", value)} /></div>
             </div>
           </PropertySection>
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
       ) : profile === "text" ? (
         <>
           <PositionSizeSection {...positionProps} includeHeight={false} />
           <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
       ) : profile === "shape" ? (
         <>
           <PositionSizeSection {...positionProps} />
+          {glassSection}
           <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
@@ -291,6 +481,7 @@ function NodeDesignPanel({
       ) : (
         <>
           <PositionSizeSection {...positionProps} />
+          {glassSection}
           <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
         </>
@@ -304,7 +495,7 @@ function FrameDesignPanel({ frame, selection, onUpdateFrame, onMoveFrame }: Pick
   return <><div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{multiple ? `${selection.frameIds.length} frames` : frame.name}</strong><small>{multiple ? "Mixed selection" : "Responsive frame"}</small></span></div><PropertySection title="Position & size" icon={<BoxSelect size={13} />}><div className="property-grid"><PropertyField label="X" value={multiple ? "mixed" : formatNumber(frame.x)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: next, y: frame.y }); }} /><PropertyField label="Y" value={multiple ? "mixed" : formatNumber(frame.y)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: frame.x, y: next }); }} /><PropertyField label="W" value={multiple ? "mixed" : formatNumber(frame.width)} type="number" suffix="px" testId="property-frame-width" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { width: Math.max(24, next) }); }} /><PropertyField label="H" value={multiple ? "mixed" : formatNumber(frame.height)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { height: Math.max(24, next) }); }} /></div></PropertySection><PropertySection title="Fill" icon={<Palette size={13} />}><PropertyField label="Background" value={multiple ? "mixed" : frame.background} onCommit={(value) => onUpdateFrame(frame.id, { background: value })} /></PropertySection></>;
 }
 
-export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit }: PropertiesPanelProps) {
+export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, onApplyGlassEffect, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit }: PropertiesPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(304);
   const [dragging, setDragging] = useState<{ x: number; width: number } | null>(null);
@@ -312,5 +503,6 @@ export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpd
   const entries = useMemo(() => Object.values(bridgeTargets).filter((entry) => selection.nodeIds.includes(entry.target.elementId) && (selection.frameIds.length === 0 || selection.frameIds.includes(entry.frameId))), [bridgeTargets, selection.frameIds, selection.nodeIds]);
   const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDragging({ x: event.clientX, width }); };
   const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => { if (dragging) setWidth(Math.min(420, Math.max(260, dragging.width - (event.clientX - dragging.x)))); };
-  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}{selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={() => setDragging(null)} type="button" /></div> : null}</aside>;
+  const stopResizing = () => setDragging(null);
+  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}      {selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} onApplyGlassEffect={onApplyGlassEffect} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopResizing} onPointerCancel={stopResizing} onLostPointerCapture={stopResizing} type="button" /></div> : null}</aside>;
 }

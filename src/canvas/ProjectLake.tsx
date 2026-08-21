@@ -1,13 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   GalleryHorizontal,
+  Globe,
+  Grid3x3,
+  Hexagon,
   LayoutDashboard,
-  Megaphone,
-  ShoppingBag,
-  Sparkles,
   Layers3,
+  Megaphone,
+  Palette,
+  Shapes,
+  ShoppingBag,
+  Smartphone,
+  Sparkles,
   Search,
-  Clock3,
   Trash2,
   Copy,
   MoreHorizontal,
@@ -19,8 +24,10 @@ import {
   List,
 } from "lucide-react";
 import {
+  CANVAS_CATEGORIES,
   PROJECT_KINDS,
   formatRelativeTime,
+  type CanvasCategory,
   type LocalProjectSummary,
   type ProjectKind,
 } from "../persistence/local-projects";
@@ -32,6 +39,27 @@ const KIND_ICONS: Record<ProjectKind, React.ComponentType<{ size?: number; class
   portfolio: GalleryHorizontal,
   wireframe: Layers3,
   commerce: ShoppingBag,
+  "mobile-blank": Smartphone,
+  "mobile-app": Smartphone,
+  "app-wireframe": Layers3,
+  "asset-blank": Shapes,
+  logo: Hexagon,
+  "icon-set": Grid3x3,
+  illustration: Palette,
+  "brand-kit": Shapes,
+};
+
+const CANVAS_ICONS: Record<CanvasCategory, React.ComponentType<{ size?: number; className?: string }>> = {
+  website: Globe,
+  mobile: Smartphone,
+  asset: Shapes,
+};
+
+// Maps blank chooser canvas -> internal blank kind
+const BLANK_KIND_FOR_CANVAS: Record<CanvasCategory, ProjectKind> = {
+  website: "blank",
+  mobile: "mobile-blank",
+  asset: "asset-blank",
 };
 
 // Mini preview for Figma-like thumbnail — abstract layout per kind
@@ -81,6 +109,66 @@ function KindThumbnail({ kind, accent }: { kind: ProjectKind; accent: string }) 
               <span /> <span /> <span />
             </div>
           </div>
+        ) : kind === "mobile-app" || kind === "mobile-blank" ? (
+          <div className="figma-thumb-dashboard" style={{ gap: 6 }}>
+            <div className="figma-thumb-dash-sidebar" style={{ width: 18, borderRadius: 6 }} />
+            <div className="figma-thumb-dash-main">
+              <div className="figma-thumb-dash-bar" style={{ background: accent, height: 8, borderRadius: 6 }} />
+              <div className="figma-thumb-dash-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                <span style={{ height: 14 }} /> <span style={{ height: 14 }} /> <span style={{ height: 14 }} /> <span style={{ height: 14 }} />
+              </div>
+            </div>
+          </div>
+        ) : kind === "app-wireframe" ? (
+          <div className="figma-thumb-wireframe">
+            <div className="figma-thumb-wire-hero" style={{ borderStyle: "dashed" }} />
+            <div className="figma-thumb-wire-lines">
+              <span /> <span /> <span />
+            </div>
+          </div>
+        ) : kind === "logo" ? (
+          <div className="figma-thumb-blank" style={{ alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 38, height: 38, borderRadius: 12, background: accent, opacity: 0.92, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Hexagon size={18} color="white" />
+            </div>
+          </div>
+        ) : kind === "asset-blank" ? (
+          <div className="figma-thumb-blank" style={{ alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 28, height: 28, borderRadius: 7, background: accent, opacity: 0.92, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Shapes size={14} color="white" />
+            </div>
+          </div>
+        ) : kind === "icon-set" ? (
+          <div className="figma-thumb-commerce">
+            <div className="figma-thumb-commerce-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+              <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} />
+              <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} />
+            </div>
+          </div>
+        ) : kind === "illustration" ? (
+          <div className="figma-thumb-portfolio">
+            <div className="figma-thumb-portfolio-row is-tall">
+              <span style={{ background: `${accent}22`, border: `1px solid ${accent}33` }} />
+              <span style={{ background: `${accent}14` }} />
+              <span style={{ background: `${accent}10` }} />
+            </div>
+            <div className="figma-thumb-portfolio-row">
+              <span /> <span />
+            </div>
+          </div>
+        ) : kind === "brand-kit" ? (
+          <div className="figma-thumb-blank">
+            <div className="figma-thumb-blank-lines">
+              <span style={{ background: accent, height: 6, borderRadius: 4 }} />
+              <span style={{ width: "70%" }} />
+              <span style={{ width: "55%" }} />
+            </div>
+            <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
+              <span style={{ width: 14, height: 14, borderRadius: 4, background: accent }} />
+              <span style={{ width: 14, height: 14, borderRadius: 4, background: "#161615" }} />
+              <span style={{ width: 14, height: 14, borderRadius: 4, background: "#6b7280" }} />
+            </div>
+          </div>
         ) : (
           <div className="figma-thumb-blank">
             <div className="figma-thumb-blank-lines">
@@ -90,6 +178,102 @@ function KindThumbnail({ kind, accent }: { kind: ProjectKind; accent: string }) 
         )}
       </div>
       <div className="figma-thumb-accent" style={{ background: accent }} />
+    </div>
+  );
+}
+
+function BlankCanvasChooser({
+  open,
+  onClose,
+  onChoose,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onChoose: (canvas: CanvasCategory) => void;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="blank-chooser-backdrop"
+      data-testid="blank-chooser-backdrop"
+      role="presentation"
+      onClick={onClose}
+    >
+      <div
+        className="blank-chooser-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Choose canvas for new blank project"
+        data-testid="blank-chooser"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button className="blank-chooser-close" aria-label="Close" onClick={onClose} type="button">
+          <X size={16} />
+        </button>
+
+        <div className="blank-chooser-header">
+          <span className="blank-chooser-eyebrow">Start blank</span>
+          <h3>Choose your canvas</h3>
+          <p>Each canvas has its own tools and agent. Pick one — the new file is created instantly and dated for today.</p>
+        </div>
+
+        <div className="blank-chooser-options" role="group" aria-label="Canvas options">
+          {CANVAS_CATEGORIES.map((canvas) => {
+            const Icon = CANVAS_ICONS[canvas.id];
+            const isWebsite = canvas.id === "website";
+            const isMobile = canvas.id === "mobile";
+            // const isAsset = canvas.id === "asset";
+            return (
+              <button
+                key={canvas.id}
+                className="blank-chooser-option"
+                data-testid={`blank-choose-${canvas.id}`}
+                onClick={() => onChoose(canvas.id)}
+                type="button"
+                aria-label={`Create blank ${canvas.label}`}
+              >
+                <span className="blank-chooser-option-icon" style={{ background: `${canvas.accent}14`, color: canvas.accent, borderColor: `${canvas.accent}22` }}>
+                  <Icon size={18} />
+                </span>
+                <span className="blank-chooser-option-copy">
+                  <strong>{canvas.label}</strong>
+                  <small>
+                    {isWebsite
+                      ? "All devices · mobile / tablet / desktop"
+                      : isMobile
+                        ? "Phones & tablets only · no desktop"
+                        : "Artboards · SVG · logos, icons, illustrations"}
+                  </small>
+                  <em>{canvas.hint}</em>
+                </span>
+                <span className="blank-chooser-option-arrow" aria-hidden="true">
+                  <Plus size={14} />
+                </span>
+                <span className="blank-chooser-accent" style={{ background: canvas.accent }} />
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="blank-chooser-foot">
+          <span>
+            Agent: <code>agent.md</code> · <code>agent-mobile.md</code> · <code>agent-asset.md</code>
+          </span>
+          <button className="blank-chooser-cancel" onClick={onClose} type="button">
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -136,6 +320,7 @@ export function ProjectLake({
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [showBlankChooser, setShowBlankChooser] = useState(false);
 
   const filtered = useFilteredProjects(projects, kindFilter, query);
   const hasProjects = projects.length > 0;
@@ -146,6 +331,18 @@ export function ProjectLake({
     if (v && onRename) onRename(id, v);
     setRenameId(null);
   };
+
+  const handleBlankChoose = (canvas: CanvasCategory) => {
+    setShowBlankChooser(false);
+    const kind = BLANK_KIND_FOR_CANVAS[canvas];
+    onCreate(kind);
+  };
+
+  // Templates visible on home — hide internal blank variants, keep single blank card for chooser
+  const templateKinds = useMemo(
+    () => PROJECT_KINDS.filter((k) => k.id !== "mobile-blank" && k.id !== "asset-blank"),
+    [],
+  );
 
   return (
     <section
@@ -158,8 +355,6 @@ export function ProjectLake({
       <header className="figma-lake-topbar">
         <div className="figma-lake-topbar-left">
           <div className="figma-lake-logo" aria-hidden="true">
-            <span />
-            <span />
             <span />
             <span />
           </div>
@@ -410,7 +605,7 @@ export function ProjectLake({
               You can come back anytime and continue exactly where you left off.
             </p>
             <div className="figma-onboarding-actions">
-              <button data-testid="start-brainstorming" onClick={() => onCreate("blank")} type="button" className="figma-primary">
+              <button data-testid="start-brainstorming" onClick={() => setShowBlankChooser(true)} type="button" className="figma-primary">
                 <Plus size={14} /> New design file
               </button>
               <span>or choose a template below</span>
@@ -431,17 +626,21 @@ export function ProjectLake({
         <div className="figma-section">
           <div className="figma-section-head">
             <h3>{hasProjects ? "Start something new" : "Templates"}</h3>
-            <span>Different kinds, same canvas — {PROJECT_KINDS.length} starting points</span>
+            <span>Different kinds, same canvas — {templateKinds.length} starting points</span>
           </div>
 
           <div className="figma-template-grid">
-            {PROJECT_KINDS.map((kind) => {
+            {templateKinds.map((kind) => {
               const Icon = KIND_ICONS[kind.id];
+              const isBlank = kind.id === "blank";
               return (
                 <button
                   key={kind.id}
                   className="figma-template-card"
-                  onClick={() => onCreate(kind.id)}
+                  onClick={() => {
+                    if (isBlank) setShowBlankChooser(true);
+                    else onCreate(kind.id);
+                  }}
                   type="button"
                   data-testid={`create-kind-${kind.id}`}
                 >
@@ -472,6 +671,8 @@ export function ProjectLake({
           <span>{projects.length} {projects.length === 1 ? "file" : "files"} in this browser</span>
         </footer>
       </div>
+
+      <BlankCanvasChooser open={showBlankChooser} onClose={() => setShowBlankChooser(false)} onChoose={handleBlankChoose} />
     </section>
   );
 }

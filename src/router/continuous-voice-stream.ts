@@ -104,6 +104,8 @@ export class ContinuousVoiceStream {
   private abortController: AbortController | null = null;
   private cancelReason: CancelVoiceStreamRequest["reason"] | null = null;
   private lastError: unknown = null;
+  /** Increments on every (re)start so stale async work cannot touch new state. */
+  private generation = 0;
 
   constructor(options: ContinuousVoiceStreamOptions) {
     this.transport = options.transport;
@@ -141,13 +143,20 @@ export class ContinuousVoiceStream {
     this.onLifecycleEvent?.({ type: "starting", streamId });
 
     try {
+      // Cancel must be able to abort an in-progress start, so the internal
+      // controller rides along with any caller-provided signal.
+      const signals = [options.signal, this.abortController?.signal]
+        .filter((signal): signal is AbortSignal => Boolean(signal));
+      const signal = signals.length > 1 && typeof AbortSignal.any === "function"
+        ? AbortSignal.any(signals)
+        : signals[0];
       const result = await this.transport.start({
         protocolVersion: VOICE_STREAM_PROTOCOL_VERSION,
         streamId,
         mimeType: options.mimeType,
         startedAtMs: this.now(),
         initialContext: options.initialContext,
-      }, { signal: options.signal });
+      }, { signal });
       if (result.streamId !== streamId || !result.acceptedMimeType) {
         throw new ContinuousVoiceStreamError("protocol-error", "Codex returned an invalid voice stream acknowledgement");
       }
@@ -173,7 +182,7 @@ export class ContinuousVoiceStream {
     }
     if (this.bufferedBytes + bytes.byteLength > this.maxBufferedBytes) {
       const error = new ContinuousVoiceStreamError("buffer-overflow", "Continuous voice buffer is full");
-      void this.cancel("buffer-overflow");
+      void this.cancel("buffer-overflow").catch(() => undefined);
       throw error;
     }
 
@@ -258,6 +267,7 @@ export class ContinuousVoiceStream {
   }
 
   private async drain(): Promise<void> {
+    const generation = this.generation;
     while (this.queue.length > 0 && (this.phase === "streaming" || this.phase === "stopping")) {
       const event = this.queue.shift();
       if (!event || !this.streamId) return;
@@ -287,12 +297,18 @@ export class ContinuousVoiceStream {
       } catch (error) {
         if (event.type === "audio") this.bufferedBytes -= event.bytes.byteLength;
         event.reject(error);
+        // A restart replaced the stream state while this drain was in flight;
+        // the failure belongs to the old generation and must not fail the new
+        // stream or reject its queued events.
+        if (generation !== this.generation) {
+          return;
+        }
         if (this.cancelReason !== null && this.abortController?.signal.aborted) {
           return;
         }
         this.fail(error);
         this.rejectQueue(error);
-        void this.transport.cancel({ streamId: this.streamId, reason: "transport-error" });
+        void this.transport.cancel({ streamId: this.streamId, reason: "transport-error" }).catch(() => undefined);
         return;
       }
     }
@@ -312,6 +328,11 @@ export class ContinuousVoiceStream {
   }
 
   private fail(error: unknown): void {
+    // A deliberate cancel already resolved the lifecycle as `cancelled`/`stopped`;
+    // late transport failures must not overwrite it with `failed`.
+    if (this.cancelReason !== null || this.phase === "stopped") {
+      return;
+    }
     this.phase = "failed";
     this.lastError = error;
     const streamId = this.streamId ?? "unknown";
@@ -320,6 +341,7 @@ export class ContinuousVoiceStream {
   }
 
   private resetForStart(): void {
+    this.generation += 1;
     this.abortController?.abort();
     this.abortController = new AbortController();
     this.nextSequence = 1;

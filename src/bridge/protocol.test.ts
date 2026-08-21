@@ -252,4 +252,86 @@ describe("iframe bridge protocol", () => {
       },
     })).toBeNull();
   });
+
+  it("validates shape fill and glass commands", () => {
+    const commandEnvelope = (command: unknown) => ({
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "command",
+      requestId: "bridge-desktop-8",
+      command,
+    });
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-fill", targetId: "rectangle-1", color: "#e5484d" },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-fill", targetId: "rectangle-1", color: null },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-fill", targetId: "rectangle-1", color: "url(#evil)" },
+    ))).toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-glass", targetId: "rectangle-1", level: 60 },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-glass", targetId: "rectangle-1", level: null },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-glass", targetId: "rectangle-1", level: 140 },
+    ))).toBeNull();
+  });
+
+  it("validates shape fill and glass acknowledgements with their undo payloads", () => {
+    const fillAck = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "response",
+      requestId: "bridge-desktop-9",
+      ok: true,
+      result: {
+        kind: "command",
+        ack: {
+          kind: "command",
+          command: "set-shape-fill",
+          targetId: "rectangle-1",
+          previousColor: null,
+          color: "#e5484d",
+          undo: { command: "set-shape-fill", targetId: "rectangle-1", color: null },
+        },
+      },
+    };
+    expect(parseBridgeMessage(fillAck)).not.toBeNull();
+
+    const glassAck = {
+      ...fillAck,
+      requestId: "bridge-desktop-10",
+      result: {
+        kind: "command",
+        ack: {
+          kind: "command",
+          command: "set-shape-glass",
+          targetId: "rectangle-1",
+          previousLevel: null,
+          level: 60,
+          undo: { command: "set-shape-glass", targetId: "rectangle-1", level: null },
+        },
+      },
+    };
+    expect(parseBridgeMessage(glassAck)).not.toBeNull();
+
+    const glassAckBadUndo = {
+      ...glassAck,
+      requestId: "bridge-desktop-11",
+      result: {
+        kind: "command",
+        ack: {
+          ...glassAck.result.ack,
+          undo: { command: "set-shape-glass", targetId: "rectangle-1", level: 250 },
+        },
+      },
+    };
+    expect(parseBridgeMessage(glassAckBadUndo)).toBeNull();
+  });
 });

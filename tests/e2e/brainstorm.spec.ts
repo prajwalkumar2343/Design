@@ -9,6 +9,11 @@ test.describe("Brainstorming Mode", () => {
     await expect(page.locator("iframe")).toHaveCount(0);
 
     await page.getByTestId("start-brainstorming").first().click();
+    // New blank chooser — pick Website if it appears (home keeps projects + blank popup flow)
+    const chooser = page.getByTestId("blank-chooser");
+    if (await chooser.isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
 
     await expect(page.getByTestId("brief-frame")).toBeVisible();
     await expect(page.getByTestId("brief-opening-prompt")).toHaveText(
@@ -21,6 +26,10 @@ test.describe("Brainstorming Mode", () => {
   test("edits brief content, validates references, and keeps the frame movable", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("start-brainstorming").first().click();
+    const chooser2 = page.getByTestId("blank-chooser");
+    if (await chooser2.isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
 
     const description = page.getByTestId("brief-field-projectDescription");
     await description.fill("A calm planning workspace for small teams.");

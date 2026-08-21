@@ -55,15 +55,37 @@ function preset(
   return { id, category, group, label, detail, width, height, chrome, hardwareNote };
 }
 
-// Chrome presets
-const notch: DeviceChrome = { type: "notch", width: 164, height: 30, bezelRadius: 48 };
-const notchMini: DeviceChrome = { type: "notch", width: 148, height: 28, bezelRadius: 44 };
-const notchLarge: DeviceChrome = { type: "notch", width: 172, height: 30, bezelRadius: 50 };
-const dynamicIsland: DeviceChrome = { type: "dynamic-island", width: 126, height: 36, bezelRadius: 52 };
-const dynamicIslandLarge: DeviceChrome = { type: "dynamic-island", width: 136, height: 38, bezelRadius: 56 };
-const dynamicIslandSmall: DeviceChrome = { type: "dynamic-island", width: 118, height: 34, bezelRadius: 50 };
-const punchHole: DeviceChrome = { type: "punch-hole", width: 12, height: 12, bezelRadius: 28, punchPosition: "center" };
-const punchHoleLarge: DeviceChrome = { type: "punch-hole", width: 14, height: 14, bezelRadius: 30, punchPosition: "center" };
+// Chrome presets — accurate per Apple HIG / physical measurements
+// iPhone X/XS/11 Pro notch: 209×30 pt at 375pt width, corner radii 6/20 pt. Scaled to viewport.
+// iPhone 13/14 notch: 20% narrower (≈160×30) — Apple reduced width for 13 generation.
+// Dynamic Island (14 Pro → 17): 126×37.33 pt pill, 19pt radius, 11pt top inset.
+// Punch-hole (Android): Industry standard 3.2–4.0mm physical diameter (2024–2025 flagships).
+//   • GSMArena/Ice Universe: Galaxy Z Fold7 cover 3.7mm, Fold8 next-gen 2.5mm (32% reduction with new tech), Galaxy S26 Ultra 4.0mm (85° FOV).
+//   • Typical flagships: Galaxy S24/S23 ~3.2–3.4mm, Pixel 9 ~3.8–4.0mm, OnePlus 13 ~3.7mm, Xiaomi 15 ~3.0mm (marketed smallest).
+//   • At 360–412 CSS px viewports (70–80mm physical width), 3.5mm maps to ~16–19 CSS px → standard ≈4.6% of viewport width.
+//   • Tablets: same physical 3.5mm on larger CSS viewport (800px ≈144mm width) → ≈2.2% width, absolute ~16–18px (no scaling).
+//   • Top inset standardized at 11px (Material spec) — unchanged. All Android holes are top-center.
+//   • See FrameView scaling (0.9–1.05×) for sub-pixel density compensation on compact/large viewports.
+const notch: DeviceChrome = { type: "notch", width: 209, height: 30, bezelRadius: 48 };
+const notchMini: DeviceChrome = { type: "notch", width: 209, height: 30, bezelRadius: 44 };
+const notch13: DeviceChrome = { type: "notch", width: 160, height: 30, bezelRadius: 48 };
+const notch13Mini: DeviceChrome = { type: "notch", width: 160, height: 28, bezelRadius: 44 };
+const notchLarge: DeviceChrome = { type: "notch", width: 209, height: 30, bezelRadius: 54 };
+const notch13Large: DeviceChrome = { type: "notch", width: 160, height: 30, bezelRadius: 54 };
+const dynamicIsland: DeviceChrome = { type: "dynamic-island", width: 126, height: 37, bezelRadius: 52 };
+const dynamicIslandLarge: DeviceChrome = { type: "dynamic-island", width: 126, height: 37, bezelRadius: 56 };
+const dynamicIslandSmall: DeviceChrome = { type: "dynamic-island", width: 126, height: 37, bezelRadius: 50 };
+// Android punch-holes — differentiated per model, derived from physical 3.0–4.0mm range at native PPI → CSS px.
+// Compact phones (360px) need 16px, standard (390–393px) 16–18px, large (412px) 18–19px. Ratio holds ~4.6% of CSS width.
+// Pixel/OnePlus skew larger (3.9mm) → 19px on 412px; Xiaomi skew smallest (3.0mm) → 16px on 393px; Fold cover (narrow 344px) ~15–16px keeping 3.7mm ratio.
+const punchHole: DeviceChrome = { type: "punch-hole", width: 18, height: 18, bezelRadius: 28, punchPosition: "center" };
+const punchHoleCompact: DeviceChrome = { type: "punch-hole", width: 16, height: 16, bezelRadius: 28, punchPosition: "center" };
+const punchHoleCompactPlus: DeviceChrome = { type: "punch-hole", width: 17, height: 17, bezelRadius: 28, punchPosition: "center" };
+const punchHoleLarge: DeviceChrome = { type: "punch-hole", width: 19, height: 19, bezelRadius: 30, punchPosition: "center" };
+const punchHoleLargeStd: DeviceChrome = { type: "punch-hole", width: 18, height: 18, bezelRadius: 30, punchPosition: "center" };
+const punchHoleSmall: DeviceChrome = { type: "punch-hole", width: 17, height: 17, bezelRadius: 26, punchPosition: "center" };
+const punchHoleXiaomi: DeviceChrome = { type: "punch-hole", width: 16, height: 16, bezelRadius: 28, punchPosition: "center" };
+const punchHoleTab: DeviceChrome = { type: "punch-hole", width: 18, height: 18, bezelRadius: 28, punchPosition: "center" };
 const noChrome: DeviceChrome = { type: "none", bezelRadius: 16 };
 const desktopChrome: DeviceChrome = { type: "none", bezelRadius: 10 };
 
@@ -77,16 +99,16 @@ export const FRAME_PRESETS: FramePreset[] = [
   preset("iphone-12-pro", "mobile", "iPhone", "iPhone 12 Pro", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Face ID"),
   preset("iphone-12-pro-max", "mobile", "iPhone", "iPhone 12 Pro Max", "428 × 926 · 6.7″", 428, 926, notchLarge, "Notch · Face ID · large"),
 
-  // Mobile · iPhone 13 (notch)
-  preset("iphone-13", "mobile", "iPhone", "iPhone 13", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Face ID"),
-  preset("iphone-13-mini", "mobile", "iPhone", "iPhone 13 mini", "375 × 812 · 5.4″", 375, 812, notchMini, "Notch · compact"),
-  preset("iphone-13-pro", "mobile", "iPhone", "iPhone 13 Pro", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Pro"),
-  preset("iphone-13-pro-max", "mobile", "iPhone", "iPhone 13 Pro Max", "428 × 926 · 6.7″", 428, 926, notchLarge, "Notch · Pro · large"),
+  // Mobile · iPhone 13 (20% narrower notch vs 12)
+  preset("iphone-13", "mobile", "iPhone", "iPhone 13", "390 × 844 · 6.1″", 390, 844, notch13, "Notch · 20% narrower"),
+  preset("iphone-13-mini", "mobile", "iPhone", "iPhone 13 mini", "375 × 812 · 5.4″", 375, 812, notch13Mini, "Notch · compact · narrower"),
+  preset("iphone-13-pro", "mobile", "iPhone", "iPhone 13 Pro", "390 × 844 · 6.1″", 390, 844, notch13, "Notch · Pro · narrower"),
+  preset("iphone-13-pro-max", "mobile", "iPhone", "iPhone 13 Pro Max", "428 × 926 · 6.7″", 428, 926, notch13Large, "Notch · Pro · large · narrower"),
 
   // Mobile · iPhone 14
-  // 14 / Plus keep notch, Pro series moves to Dynamic Island
-  preset("iphone-14", "mobile", "iPhone", "iPhone 14", "390 × 844 · 6.1″", 390, 844, notch, "Notch · Face ID"),
-  preset("iphone-14-plus", "mobile", "iPhone", "iPhone 14 Plus", "428 × 926 · 6.7″", 428, 926, notchLarge, "Notch · Face ID · large"),
+  // 14 / Plus keep the reduced notch (same as 13), Pro series moves to Dynamic Island
+  preset("iphone-14", "mobile", "iPhone", "iPhone 14", "390 × 844 · 6.1″", 390, 844, notch13, "Notch · Face ID · narrower"),
+  preset("iphone-14-plus", "mobile", "iPhone", "iPhone 14 Plus", "428 × 926 · 6.7″", 428, 926, notch13Large, "Notch · Face ID · large · narrower"),
   preset("iphone-14-pro", "mobile", "iPhone", "iPhone 14 Pro", "393 × 852 · 6.1″", 393, 852, dynamicIsland, "Dynamic Island"),
   preset("iphone-14-pro-max", "mobile", "iPhone", "iPhone 14 Pro Max", "430 × 932 · 6.7″", 430, 932, dynamicIslandLarge, "Dynamic Island · large"),
 
@@ -111,28 +133,29 @@ export const FRAME_PRESETS: FramePreset[] = [
   preset("iphone-17e", "mobile", "iPhone", "iPhone 17e", "390 × 844 · 6.1″", 390, 844, notch, "Notch · budget"),
 
   // Mobile · Android — center punch-hole (modern) except legacy
-  preset("galaxy-s24", "mobile", "Android", "Galaxy S24", "360 × 780 · 6.2″", 360, 780, punchHole, "Center punch-hole · 6.2″"),
-  preset("galaxy-s24-plus", "mobile", "Android", "Galaxy S24+", "384 × 832 · 6.7″", 384, 832, punchHoleLarge, "Center punch-hole · 6.7″"),
-  preset("galaxy-s24-ultra", "mobile", "Android", "Galaxy S24 Ultra", "412 × 915 · 6.8″", 412, 915, punchHoleLarge, "Center punch-hole · 6.8″"),
-  preset("galaxy-z-fold6", "mobile", "Android", "Galaxy Z Fold6", "344 × 882 · 6.3″ cover", 344, 882, { type: "punch-hole", width: 10, height: 10, bezelRadius: 26, punchPosition: "center" }, "Under-display · cover"),
-  preset("pixel-9", "mobile", "Android", "Google Pixel 9", "412 × 915 · 6.3″", 412, 915, punchHole, "Center punch-hole · Pixel"),
-  preset("oneplus-13", "mobile", "Android", "OnePlus 13", "412 × 915 · 6.8″", 412, 915, punchHoleLarge, "Center punch-hole · 6.8″"),
-  preset("xiaomi-15", "mobile", "Android", "Xiaomi 15", "393 × 873 · 6.4″", 393, 873, punchHole, "Center punch-hole · 6.4″"),
+  // Sizes derived from GSMArena + physical measurements → CSS px (see header comment). ~4.6% width avg.
+  preset("galaxy-s24", "mobile", "Android", "Galaxy S24", "360 × 780 · 6.2″", 360, 780, punchHoleCompact, "Center punch-hole · 3.4mm · 6.2″"),
+  preset("galaxy-s24-plus", "mobile", "Android", "Galaxy S24+", "384 × 832 · 6.7″", 384, 832, punchHoleCompactPlus, "Center punch-hole · 3.4mm · 6.7″"),
+  preset("galaxy-s24-ultra", "mobile", "Android", "Galaxy S24 Ultra", "412 × 915 · 6.8″", 412, 915, punchHoleLargeStd, "Center punch-hole · 3.5mm · 6.8″"),
+  preset("galaxy-z-fold6", "mobile", "Android", "Galaxy Z Fold6", "344 × 882 · 6.3″ cover", 344, 882, punchHoleSmall, "Center punch-hole · 3.7mm · 6.3″ cover"),
+  preset("pixel-9", "mobile", "Android", "Google Pixel 9", "412 × 915 · 6.3″", 412, 915, punchHoleLarge, "Center punch-hole · 3.9mm · Pixel"),
+  preset("oneplus-13", "mobile", "Android", "OnePlus 13", "412 × 915 · 6.8″", 412, 915, punchHoleLargeStd, "Center punch-hole · 3.7mm · 6.8″"),
+  preset("xiaomi-15", "mobile", "Android", "Xiaomi 15", "393 × 873 · 6.4″", 393, 873, punchHoleXiaomi, "Center punch-hole · 3.0mm · 6.4″"),
   preset("android-legacy", "mobile", "Android", "Android legacy", "360 × 640 · classic", 360, 640, noChrome, "No cutout · classic"),
 
   // Tablet · Standard
   preset("tablet", "tablet", "Standard", "Tablet", "820 × 1180 · 10.9″", 820, 1180, noChrome, "No cutout"),
 
-  // Tablet · Apple iPad — no notch / no island, optional center camera punch on Pro
+  // Tablet · Apple iPad — no notch / no island, optional center camera punch on Pro (3.5mm ≈14–16px at 2× DPR)
   preset("ipad-mini", "tablet", "Apple iPad", "iPad mini", "744 × 1133 · 8.3″", 744, 1133, noChrome, "No cutout · Touch ID"),
   preset("ipad-9", "tablet", "Apple iPad", "iPad (9th gen)", "810 × 1080 · 10.2″", 810, 1080, noChrome, "Home button · classic"),
   preset("ipad-air-11", "tablet", "Apple iPad", "iPad Air 11″", "820 × 1180 · 10.9″", 820, 1180, noChrome, "Top button · Touch ID"),
-  preset("ipad-pro-11", "tablet", "Apple iPad", "iPad Pro 11″", "834 × 1194 · 11″", 834, 1194, { type: "punch-hole", width: 10, height: 10, bezelRadius: 24, punchPosition: "center" }, "Center punch · Face ID"),
-  preset("ipad-pro-129", "tablet", "Apple iPad", "iPad Pro 12.9″", "1024 × 1366 · 12.9″", 1024, 1366, { type: "punch-hole", width: 10, height: 10, bezelRadius: 24, punchPosition: "center" }, "Center punch · Face ID"),
-  preset("ipad-pro-13", "tablet", "Apple iPad", "iPad Pro 13″ (M4)", "1032 × 1376 · 13″", 1032, 1376, { type: "punch-hole", width: 10, height: 10, bezelRadius: 26, punchPosition: "center" }, "Center punch · Face ID · M4"),
+  preset("ipad-pro-11", "tablet", "Apple iPad", "iPad Pro 11″", "834 × 1194 · 11″", 834, 1194, { type: "punch-hole", width: 14, height: 14, bezelRadius: 24, punchPosition: "center" }, "Center punch · 3.5mm · Face ID"),
+  preset("ipad-pro-129", "tablet", "Apple iPad", "iPad Pro 12.9″", "1024 × 1366 · 12.9″", 1024, 1366, { type: "punch-hole", width: 16, height: 16, bezelRadius: 24, punchPosition: "center" }, "Center punch · 3.5mm · Face ID"),
+  preset("ipad-pro-13", "tablet", "Apple iPad", "iPad Pro 13″ (M4)", "1032 × 1376 · 13″", 1032, 1376, { type: "punch-hole", width: 16, height: 16, bezelRadius: 26, punchPosition: "center" }, "Center punch · 3.5mm · Face ID · M4"),
 
-  // Tablet · Android & Windows — punch or none
-  preset("galaxy-tab-s9", "tablet", "Android & Windows", "Galaxy Tab S9", "800 × 1280 · 11″", 800, 1280, punchHole, "Center punch-hole"),
+  // Tablet · Android & Windows — punch or none (absolute 3.5mm → ~18px, ~2.2% of 800px width)
+  preset("galaxy-tab-s9", "tablet", "Android & Windows", "Galaxy Tab S9", "800 × 1280 · 11″", 800, 1280, punchHoleTab, "Center punch-hole · 3.5mm"),
   preset("surface-pro-11", "tablet", "Android & Windows", "Surface Pro 11", "960 × 1440 · 13″", 960, 1440, noChrome, "No cutout · kickstand"),
 
   // Desktop · Standard

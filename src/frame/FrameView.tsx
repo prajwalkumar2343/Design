@@ -79,7 +79,10 @@ function DeviceChrome({ chrome, width }: { chrome: NonNullable<CanvasFrame["chro
     );
   }
   if (chrome.type === "punch-hole") {
-    const d = Math.round((chrome.width ?? 12) * scale);
+    // Punch holes are absolute physical size (~3.0–4.0mm) → CSS px already encodes density
+    // per-model in presets.ts (≈4.6% width for phones, absolute ~18px for tablets), so do not
+    // apply viewport-proportion scaling like notches/islands. Use exact diameter.
+    const d = Math.round(chrome.width ?? 18);
     const left = chrome.punchPosition === "left" ? "24%" : "50%";
     return (
       <div
@@ -347,7 +350,7 @@ export const FrameView = memo(function FrameView({
         width: frame.width,
         height: frame.height,
         transform: `translate3d(${frame.x}px, ${frame.y}px, 0)`,
-        background: isDeviceFrame ? "#0a0a0c" : frame.background,
+        background: frame.background,
         ["--bezel-radius" as string]: `${bezelRadius}px`,
       } as React.CSSProperties}
     >
@@ -364,7 +367,7 @@ export const FrameView = memo(function FrameView({
       </button>
 
       <div className={`device-screen-wrap${showDeviceChrome ? " has-chrome" : ""}`}>
-        <div className="device-screen" style={{ borderRadius: isDeviceFrame ? `calc(var(--bezel-radius) - 4px)` : "4px", background: frame.background }}>
+        <div className="device-screen" style={{ borderRadius: isDeviceFrame ? `var(--bezel-radius)` : "4px", background: frame.background }}>
           {isLive ? (
             <iframe
               ref={iframeRef}
@@ -415,16 +418,6 @@ export const FrameView = memo(function FrameView({
           ) : null}
         </div>
       </div>
-
-      {/* Hardware side buttons – outside screen wrap so they aren’t clipped */}
-      {isDeviceFrame ? (
-        <>
-          <div className="device-button device-button-power" aria-hidden="true" />
-          <div className="device-button device-button-volume-up" aria-hidden="true" />
-          <div className="device-button device-button-volume-down" aria-hidden="true" />
-          <div className="device-button device-button-mute" aria-hidden="true" />
-        </>
-      ) : null}
 
       {isDesktopFrame ? (
         <button

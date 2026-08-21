@@ -100,6 +100,7 @@ function LayerRow({
   depth,
   expanded,
   selected,
+  selectedFrameIds,
   nodes,
   snapshot,
   onToggleExpanded,
@@ -117,6 +118,7 @@ function LayerRow({
   depth: number;
   expanded: Set<string>;
   selected: Set<string>;
+  selectedFrameIds?: Set<string>;
   nodes: Record<string, NodeEntity>;
   snapshot: BridgeHierarchySnapshot;
   onToggleExpanded: (id: string) => void;
@@ -146,6 +148,7 @@ function LayerRow({
     if (next && next !== displayName) onRenameNode(target.elementId, next);
     setEditing(false);
   };
+  const isSelected = selected.has(target.elementId) && (!selectedFrameIds || selectedFrameIds.size === 0 || selectedFrameIds.has(frameId));
   return (
     <div
       className="layer-tree-node"
@@ -154,7 +157,7 @@ function LayerRow({
       onPointerLeave={() => onHoverNodeEnd?.()}
     >
       <div
-        className={`layer-row${selected.has(target.elementId) ? " is-selected" : ""}${hoveredNodeId === target.elementId ? " is-hovered" : ""}${isHidden ? " is-hidden" : ""}`}
+        className={`layer-row${isSelected ? " is-selected" : ""}${hoveredNodeId === target.elementId ? " is-hovered" : ""}${isHidden ? " is-hidden" : ""}`}
         style={{ paddingLeft: 8 + depth * 15 }}
       >
         <button
@@ -213,6 +216,7 @@ function LayerRow({
           depth={depth + 1}
           expanded={expanded}
           selected={selected}
+          selectedFrameIds={selectedFrameIds}
           nodes={nodes}
           snapshot={snapshot}
           onToggleExpanded={onToggleExpanded}
@@ -264,7 +268,8 @@ function LayersPanel({
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const expandedFrameIdsRef = useRef<Set<string>>(new Set());
-  const selected = useMemo(() => new Set(selection.nodeIds), [selection.nodeIds]);
+  const selectedNodeIds = useMemo(() => new Set(selection.nodeIds), [selection.nodeIds]);
+  const selectedFrameIds = useMemo(() => new Set(selection.frameIds), [selection.frameIds]);
   const frameEntries = frames.map((frame) => ({ frame, snapshot: hierarchies[frame.id] })).filter(({ snapshot }) => snapshot);
   useEffect(() => {
     setExpanded((current) => {
@@ -292,7 +297,7 @@ function LayersPanel({
             return (
               <div className="layer-frame-group" key={frame.id}>
                 <div className="layer-frame-heading"><SquareStack size={13} /><span>{frame.name}</span><small>{snapshot.nodes.length}</small></div>
-                {tree.length === 0 ? <div className="layer-filter-empty">No matching layers</div> : tree.map((item) => <LayerRow key={item.target.elementId} frameId={frame.id} tree={item} depth={0} expanded={expanded} selected={selected} nodes={nodes} snapshot={snapshot} hoveredNodeId={hoveredLayerNode?.frameId === frame.id ? hoveredLayerNode.nodeId : null} onToggleExpanded={(id) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onSelectNode={onSelectNode} onRenameNode={onRenameNode} onToggleNodeLock={onToggleNodeLock} onToggleNodeHidden={onToggleNodeHidden} onReorderNode={onReorderNode} onHoverNode={onHoverNode} onHoverNodeEnd={onHoverNodeEnd} />)}
+                {tree.length === 0 ? <div className="layer-filter-empty">No matching layers</div> : tree.map((item) => <LayerRow key={item.target.elementId} frameId={frame.id} tree={item} depth={0} expanded={expanded} selected={selectedNodeIds} selectedFrameIds={selectedFrameIds} nodes={nodes} snapshot={snapshot} hoveredNodeId={hoveredLayerNode?.frameId === frame.id ? hoveredLayerNode.nodeId : null} onToggleExpanded={(id) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onSelectNode={onSelectNode} onRenameNode={onRenameNode} onToggleNodeLock={onToggleNodeLock} onToggleNodeHidden={onToggleNodeHidden} onReorderNode={onReorderNode} onHoverNode={onHoverNode} onHoverNodeEnd={onHoverNodeEnd} />)}
               </div>
             );
           })}

@@ -122,13 +122,13 @@ import {
   cameraTransform,
   fitRect,
   panCamera,
+  revealCamera,
   screenToWorld,
   worldToScreen,
   zoomCameraAtPoint,
   ZOOM_SMOOTH_STEPS,
 } from "./camera";
 import type { Camera, CanvasFrame, Point, Rect, Size } from "./types";
-import { rankVisibleFrames } from "./virtualization";
 
 const CAMERA_FIT_PADDING = 148;
 const CAMERA_SETTLE_MS = 140;
@@ -152,7 +152,6 @@ const worldStyle: CSSProperties = {
   top: 0,
   left: 0,
   transformOrigin: "0 0",
-  willChange: "transform",
 };
 
 type PointerOperation =
@@ -331,6 +330,20 @@ export function CanvasSurface({
     && Object.keys(editorState.pages).length === 0;
   const showDesignChrome = !isEmptyState;
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 });
+  const surfaceRectRef = useRef<DOMRect | null>(null);
+  const updateSurfaceRect = useCallback(() => {
+    const surface = surfaceRef.current;
+    if (surface) surfaceRectRef.current = surface.getBoundingClientRect();
+  }, []);
+  const getCachedPointerPosition = useCallback((event: { clientX: number; clientY: number }) => {
+    const rect = surfaceRectRef.current;
+    if (rect) return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const surface = surfaceRef.current;
+    if (!surface) return { x: event.clientX, y: event.clientY };
+    const bounds = surface.getBoundingClientRect();
+    surfaceRectRef.current = bounds;
+    return { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
+  }, []);
   const pointerRef = useRef<PointerOperation | null>(null);
   const creationRef = useRef<CreationOperation | null>(null);
   const pendingImageRef = useRef<PendingImagePlacement | null>(null);
@@ -340,6 +353,8 @@ export function CanvasSurface({
   const spacePressedRef = useRef(false);
   const cameraInitializedRef = useRef(false);
   const motionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wheelRafRef = useRef<number | null>(null);
   const nextFrameSequenceRef = useRef(suppliedFrames.length + 1);
   const frameDragRef = useRef<{ elementKey: string; transform: string } | null>(null);
   const lastBridgeTargetRef = useRef<{
@@ -368,6 +383,10 @@ export function CanvasSurface({
     ? editorState.session.selection.briefFrameId
     : null;
   const [interactionMode, setInteractionMode] = useState<NodeInteractionMode>("idle");
+  const interactionModeRef = useRef<NodeInteractionMode>(interactionMode);
+  useEffect(() => { interactionModeRef.current = interactionMode; }, [interactionMode]);
+  const hoverRafRef = useRef<number | null>(null);
+  const pendingHoverRef = useRef<OverlayNodeTarget | null | undefined>(undefined);
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
@@ -415,6 +434,7 @@ export function CanvasSurface({
     deleteComment,
     clearComments,
   } = useComments(editorStore);
+  const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
   const activeTool = normalizeActiveTool(editorState.activeTool);
   const activeToolRef = useRef<ToolId>(activeTool);
   const activeShapeRef = useRef<ShapeVariantId>(activeShape);
@@ -1152,7 +1172,12 @@ export function CanvasSurface({
       if (message.event === "text-edit-start" || message.event === "text-cancel") return;
       if (message.event === "select" && currentTool !== "select") return;
 
-      const surfaceRect = surface.getBoundingClientRect();
+      // Suppress hover during pan/zoom for smoothness — Figma does this
+      if (message.event === "hover" && interactionModeRef.current !== "idle" && interactionModeRef.current !== "creating") {
+        return;
+      }
+
+      const surfaceRect = surfaceRectRef.current ?? surface.getBoundingClientRect();
       const iframeRect = iframe.getBoundingClientRect();
       const context = {
         iframeRect: {
@@ -1179,6 +1204,38 @@ export function CanvasSurface({
           world: mappedPoint.world,
           bounds: mapIframeRectToCanvas(message.target.bounds, context),
         };
+        // Batch bridge target updates — hover is high frequency, avoid React thrash
+        if (message.event === "hover") {
+          const nextHover = toOverlayTarget({ frameId, target: message.target, inspection: null });
+          pendingHoverRef.current = nextHover;
+          if (hoverRafRef.current === null) {
+            hoverRafRef.current = requestAnimationFrame(() => {
+              hoverRafRef.current = null;
+              const pending = pendingHoverRef.current;
+              pendingHoverRef.current = undefined;
+              if (pending !== undefined) {
+                setHoveredOverlayTarget(pending);
+                // Also update bridgeTargets for hover, but throttled
+                if (pending) {
+                  setBridgeTargets((current) => {
+                    const key = targetStateKey(frameId, pending.frameId === frameId ? pending.nodeId : message.target!.elementId);
+                    // Use message.target for key to avoid mismatch
+                    const k = targetStateKey(frameId, message.target!.elementId);
+                    return {
+                      ...current,
+                      [k]: {
+                        frameId,
+                        target: message.target!,
+                        inspection: current[k]?.inspection ?? null,
+                      },
+                    };
+                  });
+                }
+              }
+            });
+          }
+          return;
+        }
         setBridgeTargets((current) => {
           const key = targetStateKey(frameId, message.target!.elementId);
           return {
@@ -1190,14 +1247,19 @@ export function CanvasSurface({
             },
           };
         });
-        if (message.event === "hover") {
-          setHoveredOverlayTarget(
-            toOverlayTarget({ frameId, target: message.target, inspection: null }),
-          );
-        }
       } else if (message.event !== "pointermove") {
         lastBridgeTargetRef.current = null;
-        if (message.event === "hover") setHoveredOverlayTarget(null);
+        if (message.event === "hover") {
+          pendingHoverRef.current = null;
+          if (hoverRafRef.current === null) {
+            hoverRafRef.current = requestAnimationFrame(() => {
+              hoverRafRef.current = null;
+              setHoveredOverlayTarget(null);
+            });
+          } else {
+            pendingHoverRef.current = null;
+          }
+        }
       }
 
       if (message.event !== "select" || !message.target) return;
@@ -1738,20 +1800,6 @@ export function CanvasSurface({
     editorStore.execute(renamePageCommand(pageId, name));
   }, [editorStore]);
 
-  const selectNode = useCallback((frameId: string, nodeId: string, shiftKey: boolean) => {
-    const current = editorStore.getState().selection;
-    const alreadySelected = current.nodeIds.includes(nodeId);
-    const nodeIds = shiftKey
-      ? alreadySelected ? current.nodeIds.filter((id) => id !== nodeId) : [...current.nodeIds, nodeId]
-      : [nodeId];
-    const frameIds = shiftKey
-      ? alreadySelected ? current.frameIds : Array.from(new Set([...current.frameIds, frameId]))
-      : [frameId];
-    editorStore.execute(setSelectionCommand({ frameIds, nodeIds, primaryFrameId: nodeIds.includes(nodeId) ? frameId : current.primaryFrameId, primaryNodeId: nodeIds.includes(nodeId) ? nodeId : nodeIds[0] ?? null }), { history: "skip" });
-    const controller = bridgeControllersRef.current.get(frameId);
-    if (controller) void controller.inspect(nodeId).then((inspection) => { if (inspection) handleBridgeInspection(frameId, inspection); }).catch(() => undefined);
-  }, [bridgeControllersRef, editorStore, handleBridgeInspection]);
-
   const startSelectedTextEdit = useCallback(() => {
     const selection = editorStore.getState().selection;
     const nodeId = selection.primaryNodeId ?? selection.nodeIds[0];
@@ -1885,17 +1933,10 @@ export function CanvasSurface({
     setIsFrameMenuOpen(true);
   }, [editorStore, isFrameMenuOpen]);
 
-  const liveFrameIds = useMemo(
-    () =>
-      rankVisibleFrames({
-        frames,
-        camera,
-        viewport,
-        pinnedFrameId: selectedFrameId ?? undefined,
-      }).liveFrameIds,
-    [camera, frames, selectedFrameId, viewport],
-  );
-  const liveFrameIdSet = useMemo(() => new Set(liveFrameIds), [liveFrameIds]);
+  // User request: frames must stay loaded even when dragged out of camera view
+  // Previously only ~12 nearest frames were live (virtualization) — off-screen frames showed placeholder and reloaded text on return
+  // Now keep all frames live so text/elements never unload
+  const liveFrameIdSet = useMemo(() => new Set(frames.map((f) => f.id)), [frames]);
 
   useEffect(() => {
     cameraRef.current = camera;
@@ -1917,6 +1958,7 @@ export function CanvasSurface({
     };
 
     updateViewport();
+    updateSurfaceRect();
     if (typeof ResizeObserver === "undefined") {
       return;
     }
@@ -1930,10 +1972,16 @@ export function CanvasSurface({
         width: entry.contentRect.width || measured.width,
         height: entry.contentRect.height || measured.height,
       });
+      updateSurfaceRect();
     });
     observer.observe(surface);
-    return () => observer.disconnect();
-  }, []);
+    const onWindowResize = () => updateSurfaceRect();
+    window.addEventListener("resize", onWindowResize);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", onWindowResize);
+    };
+  }, [updateSurfaceRect]);
 
   const updateCamera = useCallback((nextCamera: Camera) => {
     cameraRef.current = nextCamera;
@@ -1994,6 +2042,37 @@ export function CanvasSurface({
     cancelZoomAnimation();
     updateCamera(fitRect(getFramesBounds(renderRects), viewport, cameraFitPadding(viewport)));
   }, [cancelZoomAnimation, renderRects, updateCamera, viewport]);
+
+  const selectNode = useCallback((frameId: string, nodeId: string, shiftKey: boolean) => {
+    const current = editorStore.getState().selection;
+    const alreadySelected = current.nodeIds.includes(nodeId);
+    const nodeIds = shiftKey
+      ? alreadySelected ? current.nodeIds.filter((id) => id !== nodeId) : [...current.nodeIds, nodeId]
+      : [nodeId];
+    const frameIds = shiftKey
+      ? alreadySelected ? current.frameIds : Array.from(new Set([...current.frameIds, frameId]))
+      : [frameId];
+    editorStore.execute(setSelectionCommand({ frameIds, nodeIds, primaryFrameId: nodeIds.includes(nodeId) ? frameId : current.primaryFrameId, primaryNodeId: nodeIds.includes(nodeId) ? nodeId : nodeIds[0] ?? null }), { history: "skip" });
+    // Selecting a layer from the sidebar must reveal it: if the element sits in
+    // a frame that is not fully in view, focus the camera on that frame.
+    if (nodeIds.includes(nodeId) && viewport.width > 0 && viewport.height > 0) {
+      const frame = editorStore.getState().frames[frameId];
+      if (frame) {
+        const frameRect: Rect = { x: frame.x, y: frame.y, width: frame.width, height: frame.height };
+        const bounds = bridgeHierarchies[frameId]?.nodes.find((node) => node.elementId === nodeId)?.bounds;
+        const focusRect = bounds
+          ? getFramesBounds([frameRect, { x: frame.x + bounds.x, y: frame.y + bounds.y, width: bounds.width, height: bounds.height }])
+          : frameRect;
+        const nextCamera = revealCamera(cameraRef.current, viewport, focusRect, cameraFitPadding(viewport));
+        if (nextCamera) {
+          cancelZoomAnimation();
+          updateCamera(nextCamera);
+        }
+      }
+    }
+    const controller = bridgeControllersRef.current.get(frameId);
+    if (controller) void controller.inspect(nodeId).then((inspection) => { if (inspection) handleBridgeInspection(frameId, inspection); }).catch(() => undefined);
+  }, [bridgeControllersRef, bridgeHierarchies, cancelZoomAnimation, editorStore, handleBridgeInspection, updateCamera, viewport]);
 
   useEffect(() => {
     if (
@@ -2170,7 +2249,7 @@ export function CanvasSurface({
         pointerRef.current = {
           type: "pan",
           pointerId: event.pointerId,
-          last: getPointerPosition(event, surface),
+          last: getCachedPointerPosition(event),
         };
         setInteractionMode("panning");
         return;
@@ -2178,7 +2257,7 @@ export function CanvasSurface({
       if (currentTool !== "select") {
         return;
       }
-      const start = getPointerPosition(event, surface);
+      const start = getCachedPointerPosition(event);
       const frame = editorStore.getState().frames[frameId];
       setSelectedFrameId(frameId);
       editorStore.beginTransaction(`Move ${frameId}`);
@@ -2192,7 +2271,7 @@ export function CanvasSurface({
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, setSelectedFrameId, cancelZoomAnimation],
+    [editorStore, setSelectedFrameId, cancelZoomAnimation, getCachedPointerPosition],
   );
 
   const beginBriefFramePointer = useCallback(
@@ -2204,18 +2283,19 @@ export function CanvasSurface({
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
       cancelZoomAnimation();
+      updateSurfaceRect();
       const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
       if (spacePressedRef.current || currentTool === "hand") {
         pointerRef.current = {
           type: "pan",
           pointerId: event.pointerId,
-          last: getPointerPosition(event, surface),
+          last: getCachedPointerPosition(event),
         };
         setInteractionMode("panning");
         return;
       }
       if (currentTool !== "select") return;
-      const start = getPointerPosition(event, surface);
+      const start = getCachedPointerPosition(event);
       const currentBriefFrame = editorStore.getState().session.briefFrame;
       selectBriefFrame(briefFrameId);
       editorStore.beginTransaction(`Move ${briefFrameId}`);
@@ -2229,7 +2309,7 @@ export function CanvasSurface({
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, selectBriefFrame, cancelZoomAnimation],
+    [editorStore, selectBriefFrame, cancelZoomAnimation, getCachedPointerPosition, updateSurfaceRect],
   );
 
   const beginCanvasPan = useCallback(
@@ -2243,14 +2323,15 @@ export function CanvasSurface({
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
       cancelZoomAnimation();
+      updateSurfaceRect();
       pointerRef.current = {
         type: "pan",
         pointerId: event.pointerId,
-        last: getPointerPosition(event, surface),
+        last: getCachedPointerPosition(event),
       };
       setInteractionMode("panning");
     },
-    [cancelZoomAnimation],
+    [cancelZoomAnimation, getCachedPointerPosition, updateSurfaceRect],
   );
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -2271,10 +2352,11 @@ export function CanvasSurface({
     event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
+    updateSurfaceRect();
     pointerRef.current = {
       type: "pan",
       pointerId: event.pointerId,
-      last: getPointerPosition(event, event.currentTarget),
+      last: getCachedPointerPosition(event),
     };
     if (!spacePressedRef.current) {
       setSelectedFrameId(null);
@@ -2366,7 +2448,7 @@ export function CanvasSurface({
       return;
     }
 
-    const next = getPointerPosition(event, event.currentTarget);
+    const next = getCachedPointerPosition(event);
     const delta = { x: next.x - operation.last.x, y: next.y - operation.last.y };
     operation.last = next;
     if (delta.x === 0 && delta.y === 0) {
@@ -2407,39 +2489,77 @@ export function CanvasSurface({
     endPointerOperation(event);
   };
 
-  const handleWheel = (event: WheelEvent) => {
+  const handleWheel = useCallback((event: WheelEvent) => {
     if (isCanvasControlTarget(event.target)) {
       return;
+    }
+    const targetEl = event.target as Element | null;
+    if (targetEl && !event.ctrlKey && !event.metaKey) {
+      const scrollable = targetEl.closest(".sidebar-panel-content, .properties-scroll, .figma-lake-body, .figma-lake, .project-lake") as HTMLElement | null;
+      if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
+        const deltaAbsY = Math.abs(event.deltaY);
+        const deltaAbsX = Math.abs(event.deltaX);
+        const atTop = scrollable.scrollTop <= 0;
+        const atBottom = scrollable.scrollTop + scrollable.clientHeight >= scrollable.scrollHeight - 1;
+        const atLeft = scrollable.scrollLeft <= 0;
+        const atRight = scrollable.scrollLeft + scrollable.clientWidth >= scrollable.scrollWidth - 1;
+        const scrollingVertically = deltaAbsY > deltaAbsX;
+        if (scrollingVertically && !(atTop && event.deltaY < 0) && !(atBottom && event.deltaY > 0)) return;
+        if (!scrollingVertically && !(atLeft && event.deltaX < 0) && !(atRight && event.deltaX > 0) && scrollable.scrollWidth > scrollable.clientWidth) return;
+      }
     }
     event.preventDefault();
     const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
     const deltaX = event.deltaX * multiplier;
     const deltaY = event.deltaY * multiplier;
 
-    if (Math.abs(deltaX) > Math.abs(deltaY)) {
-      updateCamera(panCamera(cameraRef.current, { x: deltaX, y: deltaY }));
-      setInteractionMode("panning");
+    const isPinchZoom = event.ctrlKey || event.metaKey;
+
+    if (isPinchZoom) {
+      const pointer = getCachedPointerPosition(event);
+      const zoomFactor = Math.exp(-deltaY * 0.008);
+      const nextZoom = cameraRef.current.zoom * zoomFactor;
+      const nextCamera = zoomCameraAtPoint(cameraRef.current, nextZoom, pointer);
+      cameraRef.current = nextCamera;
+      if (worldRef.current) {
+        worldRef.current.style.transform = cameraTransform(nextCamera);
+      }
+      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
+      wheelRafRef.current = requestAnimationFrame(() => {
+        wheelRafRef.current = null;
+      });
+      setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
     } else {
-      const surface = surfaceRef.current;
-      const pointer = surface ? getPointerPosition(event, surface) : { x: event.clientX, y: event.clientY };
-      const zoomAmount = Math.exp(-deltaY / 360);
-      const target = zoomCameraAtPoint(
-        cameraRef.current,
-        cameraRef.current.zoom * zoomAmount,
-        pointer,
-      );
-      animateZoomTo(target, pointer);
-      setInteractionMode("zooming");
+      const nextCamera = panCamera(cameraRef.current, { x: -deltaX, y: -deltaY });
+      cameraRef.current = nextCamera;
+      if (worldRef.current) {
+        worldRef.current.style.transform = cameraTransform(nextCamera);
+      }
+      setInteractionMode(prev => prev === "panning" ? prev : "panning");
     }
+
+    if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
+    wheelCommitTimeoutRef.current = setTimeout(() => {
+      setCamera(cameraRef.current);
+      wheelCommitTimeoutRef.current = null;
+    }, 40);
+
     settleInteraction();
-  };
+  }, [settleInteraction, getCachedPointerPosition]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
     if (!surface) return;
     surface.addEventListener("wheel", handleWheel, { passive: false });
-    return () => surface.removeEventListener("wheel", handleWheel);
-  }, [animateZoomTo, settleInteraction, updateCamera]);
+    return () => {
+      surface.removeEventListener("wheel", handleWheel);
+      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
+      if (wheelCommitTimeoutRef.current) {
+        clearTimeout(wheelCommitTimeoutRef.current);
+        wheelCommitTimeoutRef.current = null;
+      }
+    };
+  }, [handleWheel]);
 
   const cancelInteraction = useCallback(() => {
     cancelNodeGesture();
@@ -2594,6 +2714,20 @@ export function CanvasSurface({
         );
       })()
     : null;
+  const hoveredComment =
+    hoveredCommentId !== null && hoveredCommentId !== selectedCommentId
+      ? comments.find((entry) => entry.id === hoveredCommentId) ?? null
+      : null;
+  const hoveredCommentAnchor = hoveredComment
+    ? (() => {
+        const frame = frames.find((entry) => entry.id === hoveredComment.frameId);
+        if (!frame) return null;
+        return worldToScreen(
+          { x: frame.x + hoveredComment.point.x, y: frame.y + hoveredComment.point.y },
+          camera,
+        );
+      })()
+    : null;
 
   const isHomeRoute = shouldUseLocalMemory && routeProjectId === null && !routeNotFound;
   const isProjectRoute = shouldUseLocalMemory && routeProjectId !== null && !routeNotFound;
@@ -2690,8 +2824,11 @@ export function CanvasSurface({
                 selectComment(comment.id);
               }}
               onPointerDown={(event) => event.stopPropagation()}
+              onPointerEnter={() => setHoveredCommentId(comment.id)}
+              onPointerLeave={() =>
+                setHoveredCommentId((current) => (current === comment.id ? null : current))
+              }
               style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y }}
-              title={comment.body || "Add a note"}
               type="button"
             >
               <span>{comment.status === "resolved" ? "✓" : "•"}</span>
@@ -2711,6 +2848,17 @@ export function CanvasSurface({
           onSave={updateComment}
           style={{ left: selectedCommentAnchor.x + 18, top: selectedCommentAnchor.y + 18 }}
         />
+      ) : null}
+
+      {hoveredComment && hoveredCommentAnchor ? (
+        <div
+          aria-hidden="true"
+          className="canvas-comment-preview"
+          data-testid="comment-hover-preview"
+          style={{ left: hoveredCommentAnchor.x + 18, top: hoveredCommentAnchor.y + 18 }}
+        >
+          {hoveredComment.body || "Add a note"}
+        </div>
       ) : null}
 
       {guardIframes ? (
@@ -2940,7 +3088,7 @@ export function CanvasSurface({
         <span><kbd>0</kbd> fit all</span>
       </div>
       <div className="sr-only" role="status" aria-live="polite">
-        {frames.length} frames, {liveFrameIds.length} live, {Math.round(camera.zoom * 100)}% zoom
+        {frames.length} frames, {liveFrameIdSet.size} live, {Math.round(camera.zoom * 100)}% zoom
       </div>
     </main>
   );

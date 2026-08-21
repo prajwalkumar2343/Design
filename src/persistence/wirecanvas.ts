@@ -363,10 +363,28 @@ function readPage(value: unknown, path: string): PageEntity {
   };
 }
 
+function readDeviceChrome(value: unknown, path: string): import("../frame/presets").DeviceChrome {
+  const input = record(value, path);
+  expectKeys(input, ["type", "width", "height", "bezelRadius", "punchPosition"], path);
+  const type = input.type;
+  if (type !== "notch" && type !== "dynamic-island" && type !== "punch-hole" && type !== "none") {
+    fail("invalid-field", `${path}.type`, "must be notch, dynamic-island, punch-hole or none");
+  }
+  const chrome: import("../frame/presets").DeviceChrome = { type: type as import("../frame/presets").DeviceChromeType };
+  if (typeof input.width === "number") chrome.width = finiteNumber(input.width, `${path}.width`);
+  if (typeof input.height === "number") chrome.height = finiteNumber(input.height, `${path}.height`);
+  if (typeof input.bezelRadius === "number") chrome.bezelRadius = finiteNumber(input.bezelRadius, `${path}.bezelRadius`);
+  if (input.punchPosition !== undefined) {
+    if (input.punchPosition !== "center" && input.punchPosition !== "left") fail("invalid-field", `${path}.punchPosition`, "must be center or left");
+    chrome.punchPosition = input.punchPosition as "center" | "left";
+  }
+  return chrome;
+}
+
 function readFrame(value: unknown, path: string): FrameEntity {
   const input = record(value, path);
-  expectKeys(input, ["id", "pageId", "documentId", "name", "x", "y", "width", "height", "background"], path);
-  return {
+  expectKeys(input, ["id", "pageId", "documentId", "name", "x", "y", "width", "height", "background", "category", "chrome"], path);
+  const frame: FrameEntity = {
     id: idValue(input.id, `${path}.id`),
     pageId: idValue(input.pageId, `${path}.pageId`),
     documentId: idValue(input.documentId, `${path}.documentId`),
@@ -377,6 +395,16 @@ function readFrame(value: unknown, path: string): FrameEntity {
     height: positiveNumber(input.height, `${path}.height`),
     background: stringValue(input.background, `${path}.background`),
   };
+  if (typeof input.category === "string") {
+    if (input.category !== "mobile" && input.category !== "tablet" && input.category !== "desktop") {
+      fail("invalid-field", `${path}.category`, "must be mobile, tablet or desktop");
+    }
+    frame.category = input.category as FrameEntity["category"];
+  }
+  if (input.chrome !== undefined && input.chrome !== null) {
+    frame.chrome = readDeviceChrome(input.chrome, `${path}.chrome`);
+  }
+  return frame;
 }
 
 function readNode(value: unknown, path: string): NodeEntity {

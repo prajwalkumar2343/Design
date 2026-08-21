@@ -164,6 +164,18 @@ export type BridgeCommand =
       radius: number;
     }
   | {
+      command: "set-shape-fill";
+      targetId: string;
+      /** Concrete CSS color, or null to restore the pre-editor fill. */
+      color: string | null;
+    }
+  | {
+      command: "set-shape-glass";
+      targetId: string;
+      /** Glass intensity 0–100, or null to remove the effect. */
+      level: number | null;
+    }
+  | {
       command: "pick-element";
       point: BridgePoint;
       shiftKey: boolean;
@@ -193,6 +205,8 @@ export interface BridgeCreatedElementSnapshot {
   strokeWidth: number;
   radius: number;
   editable: boolean;
+  /** Glass intensity 0–100 carried through duplicate/restore; legacy snapshots omit it. */
+  glass?: number | null;
   style: Record<string, string>;
 }
 
@@ -220,6 +234,16 @@ export type BridgeUndoCommand =
       command: "set-shape-radius";
       targetId: string;
       radius: number;
+    }
+  | {
+      command: "set-shape-fill";
+      targetId: string;
+      color: string | null;
+    }
+  | {
+      command: "set-shape-glass";
+      targetId: string;
+      level: number | null;
     };
 
 export type BridgeCommandAck =
@@ -266,6 +290,22 @@ export type BridgeCommandAck =
       targetId: string;
       previousRadius: number;
       radius: number;
+      undo: BridgeUndoCommand;
+    }
+  | {
+      kind: "command";
+      command: "set-shape-fill";
+      targetId: string;
+      previousColor: string | null;
+      color: string | null;
+      undo: BridgeUndoCommand;
+    }
+  | {
+      kind: "command";
+      command: "set-shape-glass";
+      targetId: string;
+      previousLevel: number | null;
+      level: number | null;
       undo: BridgeUndoCommand;
     }
   | {
@@ -479,6 +519,14 @@ function isShapeRadius(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0 && value <= 256;
 }
 
+/** Concrete paint colors only; gradients, urls, and statements stay out. */
+function isShapeColor(value: unknown): value is string {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 128 &&
+    /^#[0-9a-f]{3,8}$|^rgba?\(\s*[\d.\s,/]+\)$/i.test(value.trim());
+}
+
 function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElementSnapshot {
   return isRecord(value) &&
     isValidString(value.elementId, { maxLength: 512 }) &&
@@ -493,6 +541,7 @@ function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElement
     isFiniteNumber(value.strokeWidth) && value.strokeWidth >= 0 && value.strokeWidth <= 100 &&
     isShapeRadius(value.radius) &&
     typeof value.editable === "boolean" &&
+    (value.glass === undefined || value.glass === null || (isFiniteNumber(value.glass) && value.glass >= 0 && value.glass <= 100)) &&
     isStringRecord(value.style, 4096);
 }
 
@@ -528,6 +577,14 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
   }
   if (value.command === "set-shape-radius") {
     return isValidString(value.targetId, { maxLength: 512 }) && isShapeRadius(value.radius);
+  }
+  if (value.command === "set-shape-fill") {
+    return isValidString(value.targetId, { maxLength: 512 }) &&
+      (value.color === null || isShapeColor(value.color));
+  }
+  if (value.command === "set-shape-glass") {
+    return isValidString(value.targetId, { maxLength: 512 }) &&
+      (value.level === null || (isFiniteNumber(value.level) && value.level >= 0 && value.level <= 100));
   }
   if (value.command === "pick-element") {
     return isPoint(value.point) && typeof value.shiftKey === "boolean";
@@ -622,6 +679,20 @@ function isCommandAck(value: unknown): value is BridgeCommandAck {
       isRecord(value.undo) &&
       isBridgeCommand(value.undo) &&
       value.undo.command === "set-shape-radius";
+  }
+  if (value.command === "set-shape-fill") {
+    return (value.previousColor === null || isShapeColor(value.previousColor)) &&
+      (value.color === null || isShapeColor(value.color)) &&
+      isRecord(value.undo) &&
+      isBridgeCommand(value.undo) &&
+      value.undo.command === "set-shape-fill";
+  }
+  if (value.command === "set-shape-glass") {
+    return (value.previousLevel === null || (isFiniteNumber(value.previousLevel) && value.previousLevel >= 0 && value.previousLevel <= 100)) &&
+      (value.level === null || (isFiniteNumber(value.level) && value.level >= 0 && value.level <= 100)) &&
+      isRecord(value.undo) &&
+      isBridgeCommand(value.undo) &&
+      value.undo.command === "set-shape-glass";
   }
   if (value.command === "pick-element") return true;
   return false;

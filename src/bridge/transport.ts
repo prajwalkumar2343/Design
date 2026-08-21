@@ -45,6 +45,12 @@ export interface IframeBridgeController {
   setShapeRadius: (
     command: Extract<BridgeCommand, { command: "set-shape-radius" }>,
   ) => Promise<BridgeCommandAck>;
+  setShapeFill: (
+    command: Extract<BridgeCommand, { command: "set-shape-fill" }>,
+  ) => Promise<BridgeCommandAck>;
+  setShapeGlass: (
+    command: Extract<BridgeCommand, { command: "set-shape-glass" }>,
+  ) => Promise<BridgeCommandAck>;
   pickElement: (
     command: Extract<BridgeCommand, { command: "pick-element" }>,
   ) => Promise<BridgeCommandAck>;
@@ -182,6 +188,14 @@ export class IframeBridgeTransport {
   }
 
   setShapeRadius(command: Extract<BridgeCommand, { command: "set-shape-radius" }>): Promise<BridgeCommandAck> {
+    return this.sendCommand(command);
+  }
+
+  setShapeFill(command: Extract<BridgeCommand, { command: "set-shape-fill" }>): Promise<BridgeCommandAck> {
+    return this.sendCommand(command);
+  }
+
+  setShapeGlass(command: Extract<BridgeCommand, { command: "set-shape-glass" }>): Promise<BridgeCommandAck> {
     return this.sendCommand(command);
   }
 

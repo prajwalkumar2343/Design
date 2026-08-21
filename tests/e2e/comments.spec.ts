@@ -22,7 +22,7 @@ test.describe("canvas comments", () => {
     await page.getByTestId("tool-button-select").click();
     await expect(page.getByTestId("comment-popover")).toHaveCount(0);
     await expect(page.getByTestId("comment-marker")).toHaveCount(1);
-    await expect(page.getByTestId("comment-feedback")).toHaveText("Comment saved");
+    await expect(page.getByTestId("comment-feedback")).toHaveCount(0);
 
     await page.getByTestId("comment-marker").click();
     await expect(page.getByTestId("comment-input")).toHaveValue("Tighten the heading rhythm");

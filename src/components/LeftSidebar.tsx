@@ -4,26 +4,44 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
+  Frame,
+  Group,
+  Image as ImageIcon,
   Layers3,
   Lock,
   LockKeyholeOpen,
   Menu,
   MoreHorizontal,
+  MousePointerClick,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Plus,
   Search,
+  Shapes,
   Sparkles,
   SquareStack,
+  TextCursorInput,
+  Type,
   Upload,
   WandSparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
 import type { FrameRenderModel, NodeEntity, PageEntity, SelectionState } from "../editor/model";
-import { buildLayerTree, layerDisplayName, siblingIdsForNode, type LayerTreeNode } from "./panel-model";
+import { buildLayerTree, countLayerNodes, type LayerIconKind, type LayerTreeNode } from "./panel-model";
 
 type SidebarTab = "pages" | "layers" | "assets";
+
+const LAYER_ICONS: Record<LayerIconKind, ReactNode> = {
+  frame: <Frame size={11} />,
+  group: <Group size={11} />,
+  text: <Type size={11} />,
+  image: <ImageIcon size={11} />,
+  vector: <Shapes size={11} />,
+  button: <MousePointerClick size={11} />,
+  field: <TextCursorInput size={11} />,
+};
 
 export interface LeftSidebarProps {
   pages: PageEntity[];
@@ -39,7 +57,6 @@ export interface LeftSidebarProps {
   onRenameNode: (nodeId: string, name: string) => void;
   onToggleNodeLock: (nodeId: string) => void;
   onToggleNodeHidden: (frameId: string, nodeId: string) => void;
-  onReorderNode: (nodeId: string, direction: "up" | "down") => void;
   onHoverNode?: (frameId: string, nodeId: string) => void;
   onHoverNodeEnd?: () => void;
   hoveredLayerNode?: { frameId: string; nodeId: string } | null;
@@ -102,13 +119,11 @@ function LayerRow({
   selected,
   selectedFrameIds,
   nodes,
-  snapshot,
   onToggleExpanded,
   onSelectNode,
   onRenameNode,
   onToggleNodeLock,
   onToggleNodeHidden,
-  onReorderNode,
   onHoverNode,
   onHoverNodeEnd,
   hoveredNodeId,
@@ -120,13 +135,11 @@ function LayerRow({
   selected: Set<string>;
   selectedFrameIds?: Set<string>;
   nodes: Record<string, NodeEntity>;
-  snapshot: BridgeHierarchySnapshot;
   onToggleExpanded: (id: string) => void;
   onSelectNode: (frameId: string, nodeId: string, shiftKey: boolean) => void;
   onRenameNode: (nodeId: string, name: string) => void;
   onToggleNodeLock: (nodeId: string) => void;
   onToggleNodeHidden: (frameId: string, nodeId: string) => void;
-  onReorderNode: (nodeId: string, direction: "up" | "down") => void;
   onHoverNode?: (frameId: string, nodeId: string) => void;
   onHoverNodeEnd?: () => void;
   hoveredNodeId?: string | null;
@@ -137,11 +150,9 @@ function LayerRow({
   const isHidden = node?.hidden ?? false;
   const hasChildren = tree.children.length > 0;
   const isExpanded = expanded.has(target.elementId);
-  const displayName = layerDisplayName(target, nodes);
+  const displayName = tree.name;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(displayName);
-  const siblings = siblingIdsForNode(target, snapshot);
-  const siblingIndex = siblings.indexOf(target.elementId);
   useEffect(() => setDraft(displayName), [displayName]);
   const saveName = () => {
     const next = draft.trim();
@@ -175,7 +186,7 @@ function LayerRow({
           onClick={(event) => onSelectNode(frameId, target.elementId, event.shiftKey)}
           type="button"
         >
-          <span className="layer-kind-mark">{target.tagName.slice(0, 1).toUpperCase()}</span>
+          <span className="layer-kind-mark">{LAYER_ICONS[tree.icon]}</span>
           {editing ? <input autoFocus className="layer-inline-input" value={draft} onChange={(event) => setDraft(event.target.value)} onBlur={saveName} onKeyDown={(event) => { if (event.key === "Enter") saveName(); if (event.key === "Escape") setEditing(false); }} /> : <span className="layer-name" title={displayName} onDoubleClick={() => setEditing(true)}>{displayName}</span>}
         </button>
         <span className="layer-actions">
@@ -198,13 +209,13 @@ function LayerRow({
             {isHidden ? <EyeOff size={12} /> : <Eye size={12} />}
           </button>
           <button
-            className="layer-action-button layer-more-button"
-            aria-label={`Layer actions for ${displayName}`}
-            title="Layer actions"
-            onClick={() => { if (siblingIndex > 0) onReorderNode(target.elementId, "up"); else setEditing(true); }}
+            className="layer-action-button"
+            aria-label={`Rename ${displayName}`}
+            title="Rename layer"
+            onClick={() => setEditing(true)}
             type="button"
           >
-            <MoreHorizontal size={12} />
+            <Pencil size={12} />
           </button>
         </span>
       </div>
@@ -218,13 +229,11 @@ function LayerRow({
           selected={selected}
           selectedFrameIds={selectedFrameIds}
           nodes={nodes}
-          snapshot={snapshot}
           onToggleExpanded={onToggleExpanded}
           onSelectNode={onSelectNode}
           onRenameNode={onRenameNode}
           onToggleNodeLock={onToggleNodeLock}
           onToggleNodeHidden={onToggleNodeHidden}
-          onReorderNode={onReorderNode}
           onHoverNode={onHoverNode}
           onHoverNodeEnd={onHoverNodeEnd}
           hoveredNodeId={hoveredNodeId}
@@ -263,8 +272,8 @@ function PagesPanel({ pages, activePageId, frames, onCreatePage, onRenamePage, o
 }
 
 function LayersPanel({
-  frames, hierarchies, nodes, selection, onSelectNode, onRenameNode, onToggleNodeLock, onToggleNodeHidden, onReorderNode, onHoverNode, onHoverNodeEnd, hoveredLayerNode,
-}: Pick<LeftSidebarProps, "frames" | "hierarchies" | "nodes" | "selection" | "onSelectNode" | "onRenameNode" | "onToggleNodeLock" | "onToggleNodeHidden" | "onReorderNode" | "onHoverNode" | "onHoverNodeEnd" | "hoveredLayerNode">) {
+  frames, hierarchies, nodes, selection, onSelectNode, onRenameNode, onToggleNodeLock, onToggleNodeHidden, onHoverNode, onHoverNodeEnd, hoveredLayerNode,
+}: Pick<LeftSidebarProps, "frames" | "hierarchies" | "nodes" | "selection" | "onSelectNode" | "onRenameNode" | "onToggleNodeLock" | "onToggleNodeHidden" | "onHoverNode" | "onHoverNodeEnd" | "hoveredLayerNode">) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const expandedFrameIdsRef = useRef<Set<string>>(new Set());
@@ -296,8 +305,8 @@ function LayersPanel({
             const tree = buildLayerTree(snapshot, query, nodes);
             return (
               <div className="layer-frame-group" key={frame.id}>
-                <div className="layer-frame-heading"><SquareStack size={13} /><span>{frame.name}</span><small>{snapshot.nodes.length}</small></div>
-                {tree.length === 0 ? <div className="layer-filter-empty">No matching layers</div> : tree.map((item) => <LayerRow key={item.target.elementId} frameId={frame.id} tree={item} depth={0} expanded={expanded} selected={selectedNodeIds} selectedFrameIds={selectedFrameIds} nodes={nodes} snapshot={snapshot} hoveredNodeId={hoveredLayerNode?.frameId === frame.id ? hoveredLayerNode.nodeId : null} onToggleExpanded={(id) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onSelectNode={onSelectNode} onRenameNode={onRenameNode} onToggleNodeLock={onToggleNodeLock} onToggleNodeHidden={onToggleNodeHidden} onReorderNode={onReorderNode} onHoverNode={onHoverNode} onHoverNodeEnd={onHoverNodeEnd} />)}
+                <div className="layer-frame-heading"><SquareStack size={13} /><span>{frame.name}</span><small>{countLayerNodes(tree)}</small></div>
+                {tree.length === 0 ? <div className="layer-filter-empty">No matching layers</div> : tree.map((item) => <LayerRow key={item.target.elementId} frameId={frame.id} tree={item} depth={0} expanded={expanded} selected={selectedNodeIds} selectedFrameIds={selectedFrameIds} nodes={nodes} hoveredNodeId={hoveredLayerNode?.frameId === frame.id ? hoveredLayerNode.nodeId : null} onToggleExpanded={(id) => setExpanded((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; })} onSelectNode={onSelectNode} onRenameNode={onRenameNode} onToggleNodeLock={onToggleNodeLock} onToggleNodeHidden={onToggleNodeHidden} onHoverNode={onHoverNode} onHoverNodeEnd={onHoverNodeEnd} />)}
               </div>
             );
           })}

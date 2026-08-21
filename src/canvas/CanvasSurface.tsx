@@ -2831,7 +2831,24 @@ export function CanvasSurface({
               style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y }}
               type="button"
             >
-              <span>{comment.status === "resolved" ? "✓" : "•"}</span>
+              {comment.status === "resolved" ? (
+                <svg aria-hidden="true" fill="none" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M3.5 8.6l3 3 6-6.8"
+                    stroke="currentColor"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2.2"
+                  />
+                </svg>
+              ) : (
+                <svg aria-hidden="true" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path
+                    d="M20 2H4a2 2 0 0 0-2 2v18l4-4h14a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              )}
             </button>
           );
         })}
@@ -3060,7 +3077,6 @@ export function CanvasSurface({
             onRenameNode={renameNode}
             onToggleNodeLock={toggleNodeLock}
             onToggleNodeHidden={toggleNodeHidden}
-            onReorderNode={(nodeId, direction) => editorStore.execute({ type: "node/reorder", nodeId, direction })}
             onHoverNode={(frameId, nodeId) => setSidebarHoveredNode({ frameId, nodeId })}
             onHoverNodeEnd={() => setSidebarHoveredNode(null)}
             hoveredLayerNode={hoveredOverlayTarget ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId } : null}

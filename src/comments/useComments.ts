@@ -103,7 +103,7 @@ export function useComments(editorStore: EditorStore): UseCommentsResult {
       const after: CommentsState = {
         ...before,
         comments: before.comments.map((entry) => entry.id === commentId ? { ...entry, body: nextBody } : entry),
-        feedback: "Comment saved",
+        feedback: null,
       };
       commitChange({
         label: "Edit comment",

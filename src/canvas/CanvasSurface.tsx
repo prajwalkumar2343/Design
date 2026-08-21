@@ -25,6 +25,7 @@ import type {
   BridgeCreationKind,
   BridgeHierarchySnapshot,
   BridgeInspection,
+  BridgeUndoCommand,
   SafeInlineStyleProperty,
 } from "../bridge/protocol";
 import type { IframeBridgeController } from "../bridge/transport";
@@ -47,9 +48,8 @@ import {
   type NodeEntity,
 } from "../editor/model";
 import {
-  GLASS_RIM_SHADOW,
-  glassBackdropFilter,
-  glassTintFromColor,
+  GLASS_SURFACE_SHADOW,
+  glassSurfaceBackground,
 } from "../editor/effects";
 import {
   isSpaceShortcut,
@@ -89,12 +89,15 @@ import {
   type PersistenceAdapter,
 } from "../persistence";
 import {
+  CANVAS_AGENT_FILES,
+  CANVAS_CATEGORIES,
   createProjectId,
   deleteLocalProject,
   deriveProjectName,
   duplicateLocalProject,
   getActiveProjectId,
   getBriefPresetForKind,
+  getCanvasCategoryForKind,
   getLocalProjectSummaries,
   hydrateInitialState,
   loadProjectIndex,
@@ -102,6 +105,7 @@ import {
   saveProjectIndex,
   setActiveProjectId,
   PROJECT_KINDS,
+  type CanvasCategory,
   type LocalProjectSummary,
   type ProjectKind,
 } from "../persistence/local-projects";
@@ -274,6 +278,19 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+const GLASS_VECTOR_KINDS = new Set(["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"]);
+
+/** Created SVG shapes paint through their geometry child, not CSS backgrounds. */
+function isCreatedVector(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
+  const kind = entry.inspection?.attributes["data-design-tool-kind"];
+  return kind !== undefined && GLASS_VECTOR_KINDS.has(kind);
+}
+
+/** Editor-created layers take the dedicated shape commands; foreign content cannot. */
+function isCreatedTarget(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
+  return entry.inspection?.attributes["data-design-tool-created"] === "true";
+}
+
 function isActivatableControlTarget(target: EventTarget | null): boolean {
   return (
     target instanceof Element &&
@@ -435,6 +452,7 @@ export function CanvasSurface({
     return !loadProjectIndex().some((p) => p.id === id);
   });
   const pendingKindRef = useRef<ProjectKind | null>(null);
+  const [pendingCanvasCategory, setPendingCanvasCategory] = useState<CanvasCategory | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSerializedRef = useRef<string | null>(null);
   const {
@@ -446,7 +464,7 @@ export function CanvasSurface({
     updateComment,
     deleteComment,
     clearComments,
-  } = useComments(editorStore);
+  } = useComments();
   const [hoveredCommentId, setHoveredCommentId] = useState<string | null>(null);
   const activeTool = normalizeActiveTool(editorState.activeTool);
   const activeToolRef = useRef<ToolId>(activeTool);
@@ -501,6 +519,7 @@ export function CanvasSurface({
     (kindOverride?: ProjectKind) => {
       const kind = kindOverride ?? pendingKindRef.current ?? "blank";
       pendingKindRef.current = null;
+      setPendingCanvasCategory(null);
       if (kind !== "blank") {
         const preset = getBriefPresetForKind(kind);
         startBrainstormingBase();
@@ -535,9 +554,26 @@ export function CanvasSurface({
     [shouldUseLocalMemory, startBrainstormingBase, refreshLocalProjects, editorStore],
   );
 
+  // Derived canvas category for the active project — drives Dock presets, tool palette, and future agent.md.
+  const activeCanvasCategory: CanvasCategory = useMemo(() => {
+    if (pendingCanvasCategory) return pendingCanvasCategory;
+    if (pendingKindRef.current) return getCanvasCategoryForKind(pendingKindRef.current);
+    if (shouldUseLocalMemory) {
+      const lookupId = activeProjectId ?? routeProjectId;
+      if (lookupId) {
+        const rec = localProjects.find((p) => p.id === lookupId) ?? loadProjectIndex().find((p) => p.id === lookupId);
+        if (rec) return getCanvasCategoryForKind(rec.kind);
+      }
+    }
+    // Infer from first project kind if available, else website default (covers demo/disabled persistence).
+    if (localProjects.length > 0) return getCanvasCategoryForKind(localProjects[0]!.kind);
+    return "website";
+  }, [pendingCanvasCategory, persistenceVersion, localProjects, activeProjectId, routeProjectId, shouldUseLocalMemory]);
+
   const handleCreateLakeProject = useCallback(
     (kind: ProjectKind) => {
       pendingKindRef.current = kind;
+      setPendingCanvasCategory(getCanvasCategoryForKind(kind));
       let createdId: string | null = null;
       if (shouldUseLocalMemory) {
         const id = createProjectId();
@@ -1806,6 +1842,64 @@ export function CanvasSurface({
     [applyLocalBridgeStyle, bridgeControllersRef, bridgeTargets, editorStore, refreshBridgeSnapshot],
   );
 
+  type ShapeEffectAction =
+    | { frameId: string; targetId: string; kind: "glass"; level: number | null }
+    | { frameId: string; targetId: string; kind: "fill"; color: string | null };
+
+  // Shape effects target the SVG geometry itself, so they run as dedicated
+  // bridge commands with their own undoable transaction.
+  const runBridgeShapeEdits = useCallback(
+    async (actions: readonly ShapeEffectAction[], label: string) => {
+      const applicable = actions.filter((action) => bridgeControllersRef.current.has(action.frameId));
+      if (applicable.length === 0) return;
+      editorStore.beginTransaction(label);
+      const applied: Array<{ frameId: string; undo: BridgeUndoCommand; redo: BridgeCommand }> = [];
+      try {
+        for (const action of applicable) {
+          const controller = bridgeControllersRef.current.get(action.frameId);
+          if (!controller) continue;
+          const ack = action.kind === "glass"
+            ? await controller.setShapeGlass({ command: "set-shape-glass", targetId: action.targetId, level: action.level })
+            : await controller.setShapeFill({ command: "set-shape-fill", targetId: action.targetId, color: action.color });
+          if (!("undo" in ack)) throw new Error("shape acknowledgement invalid");
+          applied.push({ frameId: action.frameId, undo: ack.undo, redo: action.kind === "glass"
+            ? { command: "set-shape-glass", targetId: action.targetId, level: action.level }
+            : { command: "set-shape-fill", targetId: action.targetId, color: action.color } });
+        }
+      } catch {
+        for (const appliedAction of [...applied].reverse()) {
+          const controller = bridgeControllersRef.current.get(appliedAction.frameId);
+          const undo = appliedAction.undo;
+          if (!controller) continue;
+          if (undo.command === "set-shape-glass") await controller.setShapeGlass(undo).catch(() => undefined);
+          else if (undo.command === "set-shape-fill") await controller.setShapeFill(undo).catch(() => undefined);
+        }
+        editorStore.rollbackTransaction();
+        return;
+      }
+      const affectedFrameIds = Array.from(new Set(applied.map(({ frameId }) => frameId)));
+      const refreshAffectedFrames = () => Promise.all(
+        affectedFrameIds.map((frameId) => refreshBridgeSnapshot(frameId).catch(() => undefined)),
+      );
+      const replay = (direction: "undo" | "redo") => {
+        const requests = applied.map(({ frameId, undo, redo }) => {
+          const controller = bridgeControllersRef.current.get(frameId);
+          if (!controller) return undefined;
+          const next = direction === "undo" ? undo : redo;
+          if (next.command === "set-shape-glass") return controller.setShapeGlass(next);
+          if (next.command === "set-shape-fill") return controller.setShapeFill(next);
+          return undefined;
+        });
+        void Promise.all(requests)
+          .then(() => Promise.all(affectedFrameIds.map((frameId) => refreshBridgeSnapshot(frameId).catch(() => undefined))))
+          .catch(() => undefined);
+      };
+      if (!editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") })) return;
+      void refreshAffectedFrames();
+    },
+    [bridgeControllersRef, editorStore, refreshBridgeSnapshot],
+  );
+
   const createPage = useCallback(() => {
     const documentId = Object.keys(editorState.documents)[0];
     if (!documentId) return;
@@ -1866,29 +1960,60 @@ export function CanvasSurface({
 
   const editNodeStyle = useCallback((property: SafeInlineStyleProperty, value: string | null) => {
     const state = editorStore.getState();
-    const changes = Object.values(bridgeTargets)
-      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)))
-      .map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
+    const entries = Object.values(bridgeTargets)
+      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+    // SVG shapes paint through their geometry child, so fills route to the
+    // dedicated shape command instead of an invisible background style.
+    if (property === "background-color" || property === "background") {
+      const vectors = entries.filter((entry) => isCreatedVector(entry));
+      if (vectors.length > 0) {
+        void runBridgeShapeEdits(
+          vectors.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "fill" as const, color: value })),
+          "Change shape fill",
+        );
+      }
+      const others = entries.filter((entry) => !isCreatedVector(entry));
+      if (others.length > 0) {
+        const changes = others.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
+        void runBridgeStyleEdit(changes, `Change ${property}`);
+      }
+      return;
+    }
+    const changes = entries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
     void runBridgeStyleEdit(changes, `Change ${property}`);
-  }, [bridgeTargets, editorStore, runBridgeStyleEdit]);
+  }, [bridgeTargets, editorStore, runBridgeShapeEdits, runBridgeStyleEdit]);
 
-  // Glass effect asset: one undoable transaction sets the backdrop material,
-  // the specular rim, and a translucent tint derived from each element's fill.
+  // Glass effect asset: the element's own surface becomes the glass slab.
+  // Created layers run the dedicated shape command (vectors restyle their
+  // geometry fill, surfaces get a sheen gradient) so the applied level is
+  // tracked on the element; foreign content falls back to plain CSS edits.
   const applyGlassEffect = useCallback((level: number) => {
     const state = editorStore.getState();
-    const changes = Object.values(bridgeTargets)
-      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)))
-      .flatMap((entry) => {
+    const selected = Object.values(bridgeTargets)
+      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+    if (selected.length === 0) return;
+    const label = level > 0 ? `Apply glass ${level}%` : "Remove glass";
+    const glassLevel = level > 0 ? level : null;
+    const createdEntries = selected.filter((entry) => isCreatedTarget(entry));
+    if (createdEntries.length > 0) {
+      void runBridgeShapeEdits(
+        createdEntries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "glass" as const, level: glassLevel })),
+        label,
+      );
+    }
+    const surfaceEntries = selected.filter((entry) => !isCreatedTarget(entry));
+    if (surfaceEntries.length > 0) {
+      const changes = surfaceEntries.flatMap((entry) => {
         const currentFill = entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null;
         return [
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: level > 0 ? glassBackdropFilter(level) : null },
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? GLASS_RIM_SHADOW : null },
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background-color" as const, value: level > 0 ? glassTintFromColor(currentFill, level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background" as const, value: level > 0 ? glassSurfaceBackground(currentFill, level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? GLASS_SURFACE_SHADOW : null },
         ];
       });
-    if (changes.length === 0) return;
-    void runBridgeStyleEdit(changes, level > 0 ? `Apply glass ${level}%` : "Remove glass");
-  }, [bridgeTargets, editorStore, runBridgeStyleEdit]);
+      void runBridgeStyleEdit(changes, label);
+    }
+  }, [bridgeTargets, editorStore, runBridgeShapeEdits, runBridgeStyleEdit]);
 
   const editNodePosition = useCallback((frameId: string, nodeId: string, position: { x: number; y: number }) => {
     const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
@@ -3024,7 +3149,14 @@ export function CanvasSurface({
 
       <WorkspaceHeader
         frameCount={frames.length}
-        projectMeta={briefFrame ? `${frames.length} frames · Brainstorming` : routeProjectId ? `Project · ${routeProjectId.slice(0, 12)}…` : undefined}
+        projectMeta={(() => {
+          const canvasDef = CANVAS_CATEGORIES.find((c) => c.id === activeCanvasCategory)!;
+          const agentFile = CANVAS_AGENT_FILES[activeCanvasCategory];
+          if (briefFrame) return `${frames.length} frames · ${canvasDef.label} · ${agentFile} · Brainstorming`;
+          if (routeProjectId) return `${canvasDef.label} · ${agentFile} · ${routeProjectId.slice(0, 12)}…`;
+          if (isEmptyState) return undefined;
+          return `${canvasDef.label} · ${agentFile}`;
+        })()}
         projectName={
           shouldUseLocalMemory
             ? routeProjectId
@@ -3036,6 +3168,8 @@ export function CanvasSurface({
                 ? "Project brief"
                 : undefined
         }
+        canvasCategory={shouldUseLocalMemory && routeProjectId ? activeCanvasCategory : undefined}
+        canvasLabel={shouldUseLocalMemory && routeProjectId ? CANVAS_CATEGORIES.find((c) => c.id === activeCanvasCategory)?.label : undefined}
         canExport={editorState.session.lifecycle !== "not-started"}
         onImportFile={importProject}
         onExport={exportProject}
@@ -3072,6 +3206,7 @@ export function CanvasSurface({
           onFit={fitAllFrames}
           onZoomIn={() => zoomAtViewportCenter(1.22)}
           onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
+          canvasCategory={activeCanvasCategory}
           onSelectTool={setActiveTool}
           activeShape={activeShape}
           onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle", { force: true }); }}

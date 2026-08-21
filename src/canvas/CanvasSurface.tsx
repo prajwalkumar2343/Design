@@ -47,6 +47,11 @@ import {
   type NodeEntity,
 } from "../editor/model";
 import {
+  GLASS_RIM_SHADOW,
+  glassBackdropFilter,
+  glassTintFromColor,
+} from "../editor/effects";
+import {
   isSpaceShortcut,
   normalizeActiveTool,
   resolveEditorShortcut,
@@ -1867,6 +1872,24 @@ export function CanvasSurface({
     void runBridgeStyleEdit(changes, `Change ${property}`);
   }, [bridgeTargets, editorStore, runBridgeStyleEdit]);
 
+  // Glass effect asset: one undoable transaction sets the backdrop material,
+  // the specular rim, and a translucent tint derived from each element's fill.
+  const applyGlassEffect = useCallback((level: number) => {
+    const state = editorStore.getState();
+    const changes = Object.values(bridgeTargets)
+      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)))
+      .flatMap((entry) => {
+        const currentFill = entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null;
+        return [
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: level > 0 ? glassBackdropFilter(level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? GLASS_RIM_SHADOW : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background-color" as const, value: level > 0 ? glassTintFromColor(currentFill, level) : null },
+        ];
+      });
+    if (changes.length === 0) return;
+    void runBridgeStyleEdit(changes, level > 0 ? `Apply glass ${level}%` : "Remove glass");
+  }, [bridgeTargets, editorStore, runBridgeStyleEdit]);
+
   const editNodePosition = useCallback((frameId: string, nodeId: string, position: { x: number; y: number }) => {
     const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
     const controller = bridgeControllersRef.current.get(frameId);
@@ -3139,6 +3162,7 @@ export function CanvasSurface({
             onMoveFrame={moveFrameFromPanel}
             onEditNodeStyle={editNodeStyle}
             onEditNodePosition={editNodePosition}
+            onApplyGlassEffect={applyGlassEffect}
             shapeRadius={radiusSelection?.radius ?? shapeRadius}
             shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
             onShapeRadiusChange={changeShapeRadius}

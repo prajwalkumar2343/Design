@@ -9,6 +9,7 @@ export interface BridgeRuntimeConfig extends BridgeSessionIdentity {
 const SAFE_STYLE_PROPERTIES = [
   "align-items",
   "aspect-ratio",
+  "backdrop-filter",
   "background",
   "background-color",
   "border-color",
@@ -488,7 +489,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   const COMPUTED_PROPERTIES = [
     "display", "position", "box-sizing", "aspect-ratio", "white-space", "object-fit", "width", "height", "top", "right", "bottom", "left",
     "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right",
-    "padding-bottom", "padding-left", "gap", "color", "background-color", "font-family", "font-size",
+    "padding-bottom", "padding-left", "gap", "color", "background-color", "backdrop-filter", "font-family", "font-size",
     "font-weight", "line-height", "letter-spacing", "text-align", "text-transform", "opacity",
     "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
     "border-color", "border-width", "box-shadow", "background", "overflow", "transform", "z-index",

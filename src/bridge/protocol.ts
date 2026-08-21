@@ -66,6 +66,7 @@ export type BridgeRequestCommand = "snapshot" | "inspect";
 export type SafeInlineStyleProperty =
   | "align-items"
   | "aspect-ratio"
+  | "backdrop-filter"
   | "background"
   | "background-color"
   | "border-color"
@@ -360,6 +361,7 @@ export interface BridgeSessionIdentity {
 const SAFE_INLINE_STYLE_PROPERTIES: readonly SafeInlineStyleProperty[] = [
   "align-items",
   "aspect-ratio",
+  "backdrop-filter",
   "background",
   "background-color",
   "border-color",

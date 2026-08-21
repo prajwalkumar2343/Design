@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
-import { useLiquidGlass } from "../glass/useLiquidGlass";
 import type { FrameRenderModel, NodeEntity, PageEntity, SelectionState } from "../editor/model";
 import { buildLayerTree, countLayerNodes, type LayerIconKind, type LayerTreeNode } from "./panel-model";
 
@@ -322,8 +321,6 @@ export function LeftSidebar(props: LeftSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(276);
   const [dragStart, setDragStart] = useState<{ x: number; width: number } | null>(null);
-  const railGlassRef = useLiquidGlass<HTMLDivElement>({ radius: 13, bezel: 14, scale: 40, blur: 8, saturation: 1.6 });
-  const panelGlassRef = useLiquidGlass<HTMLDivElement>({ radius: 13, bezel: 22, scale: 56, blur: 6, saturation: 1.6 });
   const onResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -341,12 +338,12 @@ export function LeftSidebar(props: LeftSidebarProps) {
   ];
   return (
     <aside className={`left-sidebar${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="left-sidebar" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width + 48 }}>
-      <nav ref={railGlassRef} className="sidebar-rail" aria-label="Navigation panels">
+      <nav className="sidebar-rail" aria-label="Navigation panels">
         <button className="sidebar-collapse-button" data-testid="left-sidebar-toggle" aria-label={collapsed ? "Expand left sidebar" : "Collapse left sidebar"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button>
         <span className="sidebar-rail-divider" />
         {tabs.map(({ id, label, icon: Icon }) => <button key={id} className={`sidebar-rail-tab${tab === id ? " is-active" : ""}`} data-testid={`sidebar-tab-${id}`} aria-label={label} aria-pressed={tab === id} onClick={() => { setTab(id); setCollapsed(false); }} type="button"><Icon size={16} /></button>)}
       </nav>
-      {!collapsed ? <div ref={panelGlassRef} className="left-sidebar-panel" style={{ width }}>
+      {!collapsed ? <div className="left-sidebar-panel" style={{ width }}>
         <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label }) => <button key={id} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} type="button">{label}</button>)}</div>
         {tab === "pages" ? <PagesPanel {...props} /> : null}
         {tab === "layers" ? <LayersPanel {...props} /> : null}

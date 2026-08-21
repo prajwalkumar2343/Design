@@ -231,6 +231,8 @@ export const FrameView = memo(function FrameView({
       restoreElement: (command) => transport.restoreElement(command),
       duplicateElement: (command) => transport.duplicateElement(command),
       setShapeRadius: (command) => transport.setShapeRadius(command),
+      setShapeFill: (command) => transport.setShapeFill(command),
+      setShapeGlass: (command) => transport.setShapeGlass(command),
       pickElement: (command) => transport.pickElement(command),
     });
     transport.attach();

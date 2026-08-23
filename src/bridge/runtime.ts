@@ -22,6 +22,7 @@ const SAFE_STYLE_PROPERTIES = [
   "flex-direction",
   "font-family",
   "font-size",
+  "font-style",
   "font-weight",
   "gap",
   "height",
@@ -45,6 +46,7 @@ const SAFE_STYLE_PROPERTIES = [
   "padding-right",
   "padding-top",
   "text-align",
+  "text-decoration-line",
   "text-transform",
   "transform",
   "white-space",
@@ -84,6 +86,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   const MAX_DEPTH = 64;
   const MAX_TEXT_LENGTH = 20000;
   const MAX_ATTRIBUTE_LENGTH = 4096;
+  const MAX_MARKUP_LENGTH = 2000000;
   let lastHoveredElementId = null;
   let lastSelectedElement = null;
   let activeTextEdit = null;
@@ -126,6 +129,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       capabilities: [
         "hover", "select", "pointer-events", "snapshot", "inspect", "set-inline-style", "set-text",
         "create-element", "delete-element", "duplicate-element", "set-shape-radius",
+        "set-shape-fill", "set-shape-glass",
       ],
     });
   }
@@ -312,7 +316,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       : "none");
     child.setAttribute("stroke", stroke || "#222222");
     child.setAttribute("stroke-width", String(strokeWidth || 2));
-    child.setAttribute("vector-effect", "non-scaling-stroke");
+    // Outline scales with the shape (Apple-like). Previously non-scaling-stroke kept
+    // the border hairline on resize, which felt disconnected when the shape grew.
     svg.appendChild(child);
   }
 
@@ -366,7 +371,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return "rgba(" + color.r + ", " + color.g + ", " + color.b + ", " + alpha + ")";
   }
 
-  /** Self-material glass: bright sheen into the body color, easing darker at the far edge. */
+  /** Legacy gradient stops — kept for spec parity; liquid glass uses backdrop-filter. */
   function glassGradientStops(base, level) {
     const t = clamp01(level / 100);
     const aBase = 0.32 + 0.43 * t;
@@ -380,7 +385,294 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     ];
   }
 
-  const GLASS_RIM_SHADOW = "inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 10px 26px rgba(20, 20, 18, 0.14)";
+  // ── Liquid Glass helpers (Apple iOS 26) ──────────────────────────────────
+  function glassBlur(level) {
+    const t = clamp01(level / 100);
+    return Math.round(6 + 18 * t);
+  }
+  function glassSaturate(level) {
+    const t = clamp01(level / 100);
+    return Math.round(140 + 60 * t);
+  }
+  function glassBrightness(level) {
+    const t = clamp01(level / 100);
+    return Math.round((1.02 + 0.12 * t) * 100) / 100;
+  }
+  function glassTintAlpha(level) {
+    const t = clamp01(level / 100);
+    return Math.round((0.08 + 0.16 * t) * 100) / 100;
+  }
+  function glassBackdropFilter(level) {
+    return "blur(" + glassBlur(level) + "px) saturate(" + glassSaturate(level) + "%) brightness(" + glassBrightness(level) + ")";
+  }
+  function glassDisplacementScale(level) {
+    const t = clamp01(level / 100);
+    return Math.round(4 + 26 * t);
+  }
+  function glassTintBackground(base, level) {
+    const t = clamp01(level / 100);
+    const sheenTop = Math.min(0.62, 0.38 + 0.18 * t);
+    const sheenMid = Math.min(0.22, 0.08 + 0.1 * t);
+    const sheen = "linear-gradient(135deg, rgba(255, 255, 255, " + sheenTop + ") 0%, rgba(255, 255, 255, " + sheenMid + ") 26%, rgba(255, 255, 255, 0) 58%)";
+    if (!base) return sheen;
+    const alpha = glassTintAlpha(level);
+    const tint = rgba(base, alpha);
+    return sheen + ", " + tint;
+  }
+
+  const GLASS_LIQUID_RIM = "inset 0 1px 1px rgba(255, 255, 255, 0.65), inset 0 -1px 1px rgba(255, 255, 255, 0.32), inset 1px 0 1px rgba(255, 255, 255, 0.22), inset -1px 0 1px rgba(255, 255, 255, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.18)";
+  const GLASS_LIQUID_DROP = "0 8px 32px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.14)";
+  const GLASS_LIQUID_SHADOW = GLASS_LIQUID_RIM + ", " + GLASS_LIQUID_DROP;
+  // Keep legacy name for any external read; now points at liquid shadow
+  const GLASS_RIM_SHADOW = GLASS_LIQUID_SHADOW;
+
+  // Refraction displacement map helpers ─────────────────────────────────────
+  function ensureLiquidFilterContainer() {
+    let svg = document.getElementById("design-tool-liquid-filters");
+    if (svg) return svg;
+    svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("id", "design-tool-liquid-filters");
+    svg.setAttribute("width", "0");
+    svg.setAttribute("height", "0");
+    svg.style.position = "absolute";
+    svg.style.width = "0";
+    svg.style.height = "0";
+    svg.style.overflow = "hidden";
+    svg.style.pointerEvents = "none";
+    document.body.appendChild(svg);
+    return svg;
+  }
+
+  function liquidFilterId(rawId) {
+    return "design-tool-liquid-" + String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
+  }
+
+  function removeLiquidFilter(element) {
+    try {
+      const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
+      const ids = [liquidFilterId(rawId), liquidFilterId(rawId + "-surface")];
+      const container = document.getElementById("design-tool-liquid-filters");
+      ids.forEach(function(fid) {
+        let existing = null;
+        try {
+          existing = container ? container.querySelector("filter[id='" + fid + "']") : null;
+        } catch {}
+        if (!existing && container && typeof CSS !== "undefined" && CSS.escape) {
+          try { existing = container.querySelector("#" + CSS.escape(fid)); } catch {}
+        }
+        if (existing && existing.parentElement) existing.parentElement.remove();
+        const localFilter = element.querySelector("filter[id='" + fid + "']");
+        if (localFilter) localFilter.remove();
+      });
+      // Also scrub any inline gradient that may have been left from legacy path
+      const gradId = "design-tool-glass-" + String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
+      const defs = element.querySelector("defs");
+      if (defs) {
+        const grad = defs.querySelector("linearGradient[id='" + gradId + "']");
+        if (grad) grad.remove();
+        if (!defs.firstChild) defs.remove();
+      }
+    } catch {}
+  }
+
+  function buildLiquidDisplacementDataUrl(width, height, level, radius, kind) {
+    const w = Math.round(width);
+    const h = Math.round(height);
+    if (w < 8 || h < 8 || w > 2000 || h > 2000) return null;
+    // Cap canvas for perf — large elements still get smooth refraction via CSS blur
+    const maxDim = 512;
+    let cw = w;
+    let ch = h;
+    let scaleFactor = 1;
+    if (cw > maxDim || ch > maxDim) {
+      scaleFactor = Math.min(maxDim / cw, maxDim / ch);
+      cw = Math.max(1, Math.round(cw * scaleFactor));
+      ch = Math.max(1, Math.round(ch * scaleFactor));
+    }
+    const t = clamp01(level / 100);
+    const bezel = Math.min(28, Math.min(cw, ch) * 0.22);
+    const maxDisp = 4 + 26 * t;
+    // If bezel too thin, skip refraction
+    if (bezel < 2) return null;
+
+    let canvas;
+    try {
+      canvas = document.createElement("canvas");
+      canvas.width = cw;
+      canvas.height = ch;
+    } catch { return null; }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    try {
+      const imageData = ctx.createImageData(cw, ch);
+      const data = imageData.data;
+      const cx = cw / 2;
+      const cy = ch / 2;
+      const rx = cw / 2;
+      const ry = ch / 2;
+      const rad = Math.min(radius || 0, Math.min(cw, ch) / 2);
+      const isEllipse = kind === "ellipse";
+
+      // SDF helpers for rounded rect — negative inside
+      function sdRoundRect(px, py) {
+        const qx = Math.abs(px - cx) - (rx - rad);
+        const qy = Math.abs(py - cy) - (ry - rad);
+        const outside = Math.hypot(Math.max(qx, 0), Math.max(qy, 0));
+        const inside = Math.min(Math.max(qx, qy), 0);
+        return outside + inside - rad;
+      }
+
+      for (let y = 0; y < ch; y++) {
+        for (let x = 0; x < cw; x++) {
+          const idx = (y * cw + x) * 4;
+          let dist;
+          let nx = 0;
+          let ny = 0;
+
+          if (isEllipse) {
+            // Ellipse signed distance approximation
+            const dx = (x - cx) / (rx || 1);
+            const dy = (y - cy) / (ry || 1);
+            const dNorm = Math.hypot(dx, dy);
+            if (dNorm > 1) {
+              // Outside ellipse → neutral (no displacement, masked by clipping anyway)
+              data[idx] = 128; data[idx+1] = 128; data[idx+2] = 128; data[idx+3] = 255;
+              continue;
+            }
+            // Distance to edge along radial approx
+            dist = (1 - dNorm) * Math.min(rx, ry);
+            if (dist > bezel) {
+              data[idx] = 128; data[idx+1] = 128; data[idx+2] = 128; data[idx+3] = 255;
+              continue;
+            }
+            if (dNorm < 0.001) {
+              nx = 0; ny = 0;
+            } else {
+              // Ellipse normal (anisotropic) : (cosTheta/rx, sinTheta/ry) normalized
+              // Theta from scaled coords
+              const theta = Math.atan2(dy, dx);
+              const cosT = Math.cos(theta);
+              const sinT = Math.sin(theta);
+              const nxx = cosT / (rx || 1);
+              const nyy = sinT / (ry || 1);
+              const len = Math.hypot(nxx, nyy) || 1;
+              nx = nxx / len;
+              ny = nyy / len;
+            }
+          } else {
+            // Rectangle (with optional rounded corners) — use SDF
+            const dSigned = rad > 0 ? sdRoundRect(x + 0.5, y + 0.5) : Math.min(Math.min(x, cw - 1 - x), Math.min(y, ch - 1 - y)) * -1;
+            // Convert signed distance to interior distance to edge (positive inside, 0 at edge)
+            // dSigned is negative inside, 0 at border, positive outside.
+            // We want dist = -dSigned when inside, but only when inside.
+            if (dSigned > 0) {
+              // Outside rounded rect (corner cutout) → neutral
+              data[idx] = 128; data[idx+1] = 128; data[idx+2] = 128; data[idx+3] = 255;
+              continue;
+            }
+            dist = -dSigned;
+            if (dist > bezel) {
+              data[idx] = 128; data[idx+1] = 128; data[idx+2] = 128; data[idx+3] = 255;
+              continue;
+            }
+            // Edge normal: closest edge perpendicular
+            // For rounded rect, near straight edges the normal is axis-aligned; near corners it's diagonal from corner center.
+            // Approximate via finite differences on SDF for accuracy, but cheap axis fallback is sufficient for most pixels.
+            // Use SDF gradient approximated by sampling neighbor SDFs
+            const eps = 0.5;
+            const d0 = dSigned;
+            const dX = rad > 0 ? (sdRoundRect(x + 0.5 + eps, y + 0.5) - d0) : 0;
+            const dY = rad > 0 ? (sdRoundRect(x + 0.5, y + 0.5 + eps) - d0) : 0;
+            if (rad > 0 && (Math.abs(dX) > 0.001 || Math.abs(dY) > 0.001)) {
+              const glen = Math.hypot(dX, dY) || 1;
+              // Gradient points outward (outside direction); for interior we want outward normal, so keep as is
+              nx = dX / glen;
+              ny = dY / glen;
+            } else {
+              // Fallback axis method
+              const left = x;
+              const right = cw - 1 - x;
+              const top = y;
+              const bottom = ch - 1 - y;
+              const m = Math.min(left, right, top, bottom);
+              if (m === left) { nx = -1; ny = 0; }
+              else if (m === right) { nx = 1; ny = 0; }
+              else if (m === top) { nx = 0; ny = -1; }
+              else { nx = 0; ny = 1; }
+              // Corner diagonal: when two distances equal within 1px, blend
+              const nearLeft = Math.abs(left - m) < 0.75;
+              const nearRight = Math.abs(right - m) < 0.75;
+              const nearTop = Math.abs(top - m) < 0.75;
+              const nearBottom = Math.abs(bottom - m) < 0.75;
+              const cornerX = (nearLeft && nearTop) || (nearLeft && nearBottom) || (nearRight && nearTop) || (nearRight && nearBottom);
+              if (cornerX) {
+                // Diagonal outward
+                if (nearLeft && nearTop) { nx = -0.707; ny = -0.707; }
+                else if (nearRight && nearTop) { nx = 0.707; ny = -0.707; }
+                else if (nearLeft && nearBottom) { nx = -0.707; ny = 0.707; }
+                else if (nearRight && nearBottom) { nx = 0.707; ny = 0.707; }
+              }
+            }
+          }
+
+          // Profile: convex bevel — steep at edge, calm inside.  Use circular arc derivative.
+          const u = dist / bezel; // 0 at edge, 1 at bezel inner limit
+          const v = 1 - u; // 1 at edge, 0 inside
+          // Circular-arc slope: derivative of sqrt(1-(1-v)^2) style gives pronounced edge
+          const cl = Math.max(0.001, Math.min(0.999, v));
+          const slope = (1 - cl) / Math.sqrt(Math.max(0.001, 1 - (1 - cl) * (1 - cl)));
+          // Combine linear falloff with slope for natural edge emphasis
+          const falloff = Math.pow(v, 0.65);
+          const magNorm = Math.min(1, falloff * (0.35 + 0.85 * Math.min(1, slope * 1.2)));
+          // Apply gentle S-curve so center is truly calm
+          const curved = magNorm * magNorm * (3 - 2 * magNorm);
+
+          const dispX = nx * curved;
+          const dispY = ny * curved;
+
+          // Map normalized -1..1 to 0..255 with 128 as neutral
+          const r = Math.max(0, Math.min(255, Math.round(128 + dispX * 127)));
+          const g = Math.max(0, Math.min(255, Math.round(128 + dispY * 127)));
+          data[idx] = r;
+          data[idx+1] = g;
+          data[idx+2] = 128;
+          data[idx+3] = 255;
+        }
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      // If we downscaled, produce URL at native size by drawing scaled canvas to target size?
+      // Keep as is — filter will stretch via feImage width/height.
+      if (scaleFactor !== 1) {
+        // Scale back to native size by drawing to temp canvas at native dims
+        const out = document.createElement("canvas");
+        out.width = w;
+        out.height = h;
+        const octx = out.getContext("2d");
+        if (octx) {
+          octx.imageSmoothingEnabled = true;
+          octx.drawImage(canvas, 0, 0, w, h);
+          return out.toDataURL("image/png");
+        }
+      }
+      return canvas.toDataURL("image/png");
+    } catch {
+      return null;
+    }
+  }
+
+  function supportsBackdropFilterUrl() {
+    try {
+      return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("backdrop-filter", "url(#test)");
+    } catch { return false; }
+  }
+
+  let backdropUrlSupported = null;
+  function isBackdropUrlSupported() {
+    if (backdropUrlSupported !== null) return backdropUrlSupported;
+    backdropUrlSupported = supportsBackdropFilterUrl();
+    return backdropUrlSupported;
+  }
 
   function shapeGeometryChild(element) {
     return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
@@ -403,62 +695,234 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   function applyVectorGlass(element, level) {
     const child = shapeGeometryChild(element);
     if (!child) throw { code: "shape-glass-not-supported", message: "This shape has no paintable geometry" };
+    // Ensure outline scales with the shape (remove legacy non-scaling-stroke)
+    if (child.getAttribute("vector-effect") === "non-scaling-stroke") child.removeAttribute("vector-effect");
     if (level === null || level <= 0) {
       const original = element.getAttribute("data-design-tool-original-fill");
       if (original) child.setAttribute("fill", original);
+      else child.setAttribute("fill", element.getAttribute("data-design-tool-fill") || "#d9d9d9");
+      // Scrub liquid glass styles and filters
+      removeLiquidFilter(element);
+      element.style.removeProperty("backdrop-filter");
+      try { element.style.removeProperty("-webkit-backdrop-filter"); } catch {}
+      element.style.removeProperty("background");
+      element.style.removeProperty("box-shadow");
+      element.style.removeProperty("border-radius");
+      element.style.removeProperty("overflow");
+      element.style.removeProperty("clip-path");
+      element.style.removeProperty("isolation");
+      element.style.removeProperty("border");
+      // Restore default overflow for SVG shapes
+      element.style.overflow = "visible";
+      // Legacy gradient cleanup (arrow head marker must survive)
+      const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
+      const gradientId = "design-tool-glass-" + String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
+      const gradient = element.querySelector("linearGradient[id='" + gradientId + "']");
+      if (gradient) gradient.remove();
       const defs = element.querySelector("defs");
-      if (defs) defs.remove();
+      if (defs && !defs.firstChild) defs.remove();
       element.removeAttribute("data-design-tool-glass");
       return;
     }
     rememberOriginalFill(element, child);
-    const base = parseColorChannels(child.getAttribute("fill")) ||
-      parseColorChannels(element.getAttribute("data-design-tool-fill")) || { r: 217, g: 217, b: 217 };
+    const fillAttr = child.getAttribute("fill") || element.getAttribute("data-design-tool-fill") || "";
+    const isTransparentFill = fillAttr.trim().toLowerCase() === "transparent";
+    const base = isTransparentFill ? null : (parseColorChannels(fillAttr) ||
+      parseColorChannels(element.getAttribute("data-design-tool-fill")) || { r: 217, g: 217, b: 217 });
     const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
-    const gradientId = "design-tool-glass-" + String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
-    let defs = element.querySelector("defs");
-    if (!defs) {
-      defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      element.insertBefore(defs, element.firstChild);
+    const kind = element.getAttribute("data-design-tool-kind") || "rectangle";
+    let bounds = null;
+    try { bounds = JSON.parse(element.getAttribute("data-design-tool-bounds") || "null"); } catch { bounds = null; }
+    const w = (bounds && bounds.width) ? bounds.width : (element.getBoundingClientRect ? element.getBoundingClientRect().width : 120) || 120;
+    const h = (bounds && bounds.height) ? bounds.height : (element.getBoundingClientRect ? element.getBoundingClientRect().height : 80) || 80;
+    const radiusAttr = Number(element.getAttribute("data-design-tool-radius") || 0);
+    const radius = Math.max(0, Math.min(64, radiusAttr));
+
+    // Build liquid visual — backdrop blur + tinted sheen + rim
+    const bfBase = glassBackdropFilter(level);
+    const bg = glassTintBackground(base, level);
+    const shadow = GLASS_LIQUID_SHADOW;
+
+    // Try to add edge refraction via SVG displacement (Chromium only, rectangle/ellipse)
+    let backdropValue = bfBase;
+    let hadRefraction = false;
+    if ((kind === "rectangle" || kind === "ellipse") && isBackdropUrlSupported()) {
+      try {
+        const dataUrl = buildLiquidDisplacementDataUrl(w, h, level, radius, kind);
+        if (dataUrl) {
+          const fid = liquidFilterId(rawId);
+          let container = ensureLiquidFilterContainer();
+          let filter = container.querySelector("filter[id='" + fid + "']");
+          if (!filter && typeof CSS !== "undefined" && CSS.escape) { try { filter = container.querySelector("#" + CSS.escape(fid)); } catch {} }
+          if (!filter) {
+            filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+            filter.setAttribute("id", fid);
+            filter.setAttribute("x", "0");
+            filter.setAttribute("y", "0");
+            filter.setAttribute("width", "100%");
+            filter.setAttribute("height", "100%");
+            filter.setAttribute("color-interpolation-filters", "sRGB");
+            container.appendChild(filter);
+          } else {
+            while (filter.firstChild) filter.removeChild(filter.firstChild);
+          }
+          const scale = glassDisplacementScale(level);
+          const feImage = document.createElementNS("http://www.w3.org/2000/svg", "feImage");
+          feImage.setAttribute("href", dataUrl);
+          feImage.setAttributeNS("http://www.w3.org/1999/xlink", "href", dataUrl);
+          feImage.setAttribute("x", "0");
+          feImage.setAttribute("y", "0");
+          feImage.setAttribute("width", String(w));
+          feImage.setAttribute("height", String(h));
+          feImage.setAttribute("preserveAspectRatio", "none");
+          feImage.setAttribute("result", "liquidDispMap");
+          filter.appendChild(feImage);
+          const feDisp = document.createElementNS("http://www.w3.org/2000/svg", "feDisplacementMap");
+          feDisp.setAttribute("in", "SourceGraphic");
+          feDisp.setAttribute("in2", "liquidDispMap");
+          feDisp.setAttribute("scale", String(scale));
+          feDisp.setAttribute("xChannelSelector", "R");
+          feDisp.setAttribute("yChannelSelector", "G");
+          filter.appendChild(feDisp);
+          backdropValue = "url(#" + fid + ") " + bfBase;
+          hadRefraction = true;
+        }
+      } catch {}
     }
-    let gradient = defs.querySelector("linearGradient[id='" + gradientId + "']");
-    if (!gradient) {
-      gradient = document.createElementNS("http://www.w3.org/2000/svg", "linearGradient");
-      gradient.setAttribute("id", gradientId);
-      gradient.setAttribute("x1", "0");
-      gradient.setAttribute("y1", "0");
-      gradient.setAttribute("x2", "1");
-      gradient.setAttribute("y2", "1");
-      defs.appendChild(gradient);
+    // Fallback: legacy gradient cleanup if refraction not used
+    if (!hadRefraction) {
+      const gradId = "design-tool-glass-" + String(rawId).replace(/[^a-zA-Z0-9_-]/g, "");
+      const existingGrad = element.querySelector("linearGradient[id='" + gradId + "']");
+      if (existingGrad) existingGrad.remove();
     }
-    while (gradient.firstChild) gradient.removeChild(gradient.firstChild);
-    const stops = glassGradientStops(base, level);
-    [0, 46, 100].forEach((offset, index) => {
-      const stop = document.createElementNS("http://www.w3.org/2000/svg", "stop");
-      stop.setAttribute("offset", offset + "%");
-      stop.setAttribute("stop-color", rgba(stops[index].color, 1));
-      stop.setAttribute("stop-opacity", String(stops[index].alpha));
-      gradient.appendChild(stop);
-    });
-    child.setAttribute("fill", "url(#" + gradientId + ")");
+
+    // Apply to outer element (the glass pane)
+    element.style.setProperty("backdrop-filter", backdropValue, "important");
+    try { element.style.setProperty("-webkit-backdrop-filter", backdropValue, "important"); } catch {}
+    element.style.setProperty("background", bg, "important");
+    element.style.setProperty("box-shadow", shadow, "important");
+    element.style.setProperty("isolation", "isolate");
+    // Ensure the pane clips to its shape so blur follows rounded corners / ellipse
+    if (kind === "rectangle") {
+      if (radius > 0) element.style.setProperty("border-radius", radius + "px", "important");
+      else element.style.setProperty("border-radius", "0px", "important");
+      element.style.setProperty("overflow", "hidden", "important");
+      child.setAttribute("fill", "transparent");
+      // Keep stroke visible as border — map stroke to CSS border via box-shadow? Preserve SVG stroke for now
+      // The inner rect's stroke remains; ensure its fill is transparent so glass tint is visible
+    } else if (kind === "ellipse") {
+      element.style.setProperty("border-radius", "50%", "important");
+      element.style.setProperty("overflow", "hidden", "important");
+      child.setAttribute("fill", "transparent");
+    } else {
+      // Complex path shapes: best-effort — translucent fill tint + rectangular blur
+      // For polygon/star we can add clip-path derived from points
+      const alpha = glassTintAlpha(level);
+      child.setAttribute("fill", rgba(base, alpha));
+      element.style.setProperty("overflow", "hidden", "important");
+      if ((kind === "polygon" || kind === "star") && bounds) {
+        try {
+          const ptsAttr = element.getAttribute("data-design-tool-points");
+          const pts = ptsAttr ? JSON.parse(ptsAttr) : null;
+          if (Array.isArray(pts) && pts.length >= 3) {
+            const poly = pts.map(function(p) {
+              const px = ((p.x - bounds.x) / (bounds.width || 1)) * 100;
+              const py = ((p.y - bounds.y) / (bounds.height || 1)) * 100;
+              return px.toFixed(2) + "% " + py.toFixed(2) + "%";
+            }).join(", ");
+            element.style.setProperty("clip-path", "polygon(" + poly + ")", "important");
+          }
+        } catch {}
+      }
+    }
+
     element.setAttribute("data-design-tool-glass", String(level));
   }
 
   function applySurfaceGlass(element, level) {
     if (level === null || level <= 0) {
+      removeLiquidFilter(element);
+      element.style.removeProperty("backdrop-filter");
+      try { element.style.removeProperty("-webkit-backdrop-filter"); } catch {}
       element.style.removeProperty("background");
       element.style.removeProperty("box-shadow");
+      element.style.removeProperty("border-radius");
+      element.style.removeProperty("overflow");
+      element.style.removeProperty("clip-path");
+      element.style.removeProperty("isolation");
       element.removeAttribute("data-design-tool-glass");
       return;
     }
     const computed = window.getComputedStyle(element);
-    const base = parseColorChannels(element.style.backgroundColor || computed.backgroundColor) || { r: 255, g: 255, b: 255 };
-    const stops = glassGradientStops(base, level);
-    element.style.background = "linear-gradient(135deg, " +
-      rgba(stops[0].color, stops[0].alpha) + " 0%, " +
-      rgba(stops[1].color, stops[1].alpha) + " 46%, " +
-      rgba(stops[2].color, stops[2].alpha) + " 100%)";
-    element.style.boxShadow = GLASS_RIM_SHADOW;
+    const bgColorRaw = element.style.backgroundColor || computed.backgroundColor || "";
+    const isTransparentBg = bgColorRaw.trim().toLowerCase() === "transparent" || bgColorRaw.trim() === "rgba(0, 0, 0, 0)";
+    const base = isTransparentBg ? null : (parseColorChannels(bgColorRaw) || { r: 255, g: 255, b: 255 });
+    const bfBase = glassBackdropFilter(level);
+    const bg = glassTintBackground(base, level);
+    const shadow = GLASS_LIQUID_SHADOW;
+
+    // Surface (div/text) — compute bounds for displacement size if we want refraction
+    let w = 200; let h = 80; let radius = 0;
+    try {
+      const csRadius = computed.getPropertyValue("border-radius") || "";
+      const m = /(\\d+)/.exec(csRadius);
+      if (m) radius = Math.max(0, Math.min(48, Number(m[1])));
+      const rect = element.getBoundingClientRect();
+      if (rect && rect.width > 0) w = rect.width;
+      if (rect && rect.height > 0) h = rect.height;
+    } catch {}
+    let backdropValue = bfBase;
+    const rawIdS = element.getAttribute("data-design-element-id") || element.id || "surface";
+    if (isBackdropUrlSupported()) {
+      try {
+        const dataUrl = buildLiquidDisplacementDataUrl(w, h, level, radius, "rectangle");
+        if (dataUrl) {
+          const fid = liquidFilterId(rawIdS + "-surface");
+          let container = ensureLiquidFilterContainer();
+          let filter = container.querySelector("filter[id='" + fid + "']");
+          if (!filter && typeof CSS !== "undefined" && CSS.escape) { try { filter = container.querySelector("#" + CSS.escape(fid)); } catch {} }
+          if (!filter) {
+            filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+            filter.setAttribute("id", fid);
+            filter.setAttribute("x", "0");
+            filter.setAttribute("y", "0");
+            filter.setAttribute("width", "100%");
+            filter.setAttribute("height", "100%");
+            filter.setAttribute("color-interpolation-filters", "sRGB");
+            container.appendChild(filter);
+          } else {
+            while (filter.firstChild) filter.removeChild(filter.firstChild);
+          }
+          const scale = glassDisplacementScale(level);
+          const feImage = document.createElementNS("http://www.w3.org/2000/svg", "feImage");
+          feImage.setAttribute("href", dataUrl);
+          feImage.setAttributeNS("http://www.w3.org/1999/xlink", "href", dataUrl);
+          feImage.setAttribute("x", "0");
+          feImage.setAttribute("y", "0");
+          feImage.setAttribute("width", String(w));
+          feImage.setAttribute("height", String(h));
+          feImage.setAttribute("preserveAspectRatio", "none");
+          feImage.setAttribute("result", "liquidDispMap");
+          filter.appendChild(feImage);
+          const feDisp = document.createElementNS("http://www.w3.org/2000/svg", "feDisplacementMap");
+          feDisp.setAttribute("in", "SourceGraphic");
+          feDisp.setAttribute("in2", "liquidDispMap");
+          feDisp.setAttribute("scale", String(scale));
+          feDisp.setAttribute("xChannelSelector", "R");
+          feDisp.setAttribute("yChannelSelector", "G");
+          filter.appendChild(feDisp);
+          backdropValue = "url(#" + fid + ") " + bfBase;
+        }
+      } catch {}
+    }
+
+    element.style.setProperty("backdrop-filter", backdropValue, "important");
+    try { element.style.setProperty("-webkit-backdrop-filter", backdropValue, "important"); } catch {}
+    element.style.setProperty("background", bg, "important");
+    element.style.setProperty("box-shadow", shadow, "important");
+    element.style.setProperty("isolation", "isolate");
+    // Keep existing radius but ensure clipping so backdrop follows it
+    if (radius > 0) element.style.setProperty("overflow", "hidden", "important");
     element.setAttribute("data-design-tool-glass", String(level));
   }
 
@@ -632,7 +1096,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     "display", "position", "box-sizing", "aspect-ratio", "white-space", "object-fit", "width", "height", "top", "right", "bottom", "left",
     "margin-top", "margin-right", "margin-bottom", "margin-left", "padding-top", "padding-right",
     "padding-bottom", "padding-left", "gap", "color", "background-color", "backdrop-filter", "font-family", "font-size",
-    "font-weight", "line-height", "letter-spacing", "text-align", "text-transform", "opacity",
+    "font-style", "font-weight", "line-height", "letter-spacing", "text-align", "text-decoration-line", "text-transform", "opacity",
     "border-top-left-radius", "border-top-right-radius", "border-bottom-right-radius", "border-bottom-left-radius",
     "border-color", "border-width", "box-shadow", "background", "overflow", "transform", "z-index",
   ];
@@ -913,21 +1377,79 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
     if (command.command === "delete-element") {
       const element = findElement(command.targetId);
-      if (!element || element.getAttribute("data-design-tool-created") !== "true") {
-        throw { code: "delete-not-supported", message: "Only elements created by this editor can be deleted safely" };
+      if (!element) throw { code: "target-not-found", message: "The requested element no longer exists" };
+      if (element.getAttribute("data-design-tool-created") === "true") {
+        const snapshotValue = createdSnapshot(element);
+        if (!snapshotValue) throw { code: "delete-not-reversible", message: "The element cannot be reversed safely" };
+        element.remove();
+        return {
+          kind: "command",
+          command: "delete-element",
+          targetId: command.targetId,
+          undo: { command: "restore-element", snapshot: snapshotValue },
+          replay: command,
+        };
       }
-      const snapshotValue = createdSnapshot(element);
-      if (!snapshotValue) throw { code: "delete-not-reversible", message: "The element cannot be reversed safely" };
+      // Document-markup layers (agent-authored shader backgrounds and the
+      // like) delete through a verbatim markup snapshot so undo can re-insert
+      // them exactly where they lived.
+      if (/^(HTML|BODY|HEAD)$/.test(element.tagName)) {
+        throw { code: "delete-not-supported", message: "Structural document roots cannot be deleted" };
+      }
+      const parent = element.parentElement;
+      if (!parent) throw { code: "delete-not-supported", message: "The element has no parent to remove it from" };
+      const markup = element.outerHTML;
+      // Whitespace-tolerant guard: authored documents legitimately contain
+      // newlines, but stray control characters would corrupt the snapshot.
+      if (typeof markup !== "string" || markup.length === 0 || markup.length > MAX_MARKUP_LENGTH ||
+        /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(markup)) {
+        throw { code: "delete-not-reversible", message: "The element is too large to reverse safely" };
+      }
+      const index = Array.prototype.indexOf.call(parent.children, element);
       element.remove();
       return {
         kind: "command",
         command: "delete-element",
         targetId: command.targetId,
-        undo: { command: "restore-element", snapshot: snapshotValue },
+        undo: { command: "restore-element", snapshot: { markup, parentId: elementId(parent), index } },
         replay: command,
       };
     }
     if (command.command === "restore-element") {
+      const snapshot = command.snapshot;
+      if (isRecord(snapshot) && typeof snapshot.markup === "string") {
+        if (!snapshot.markup || snapshot.markup.length > MAX_MARKUP_LENGTH ||
+          /[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(snapshot.markup) ||
+          !isFiniteNumber(snapshot.index) || snapshot.index < 0 || snapshot.index > 100000) {
+          throw { code: "restore-failed", message: "The captured markup snapshot is invalid" };
+        }
+        let parent = null;
+        if (snapshot.parentId !== null) {
+          if (!isSafeString(snapshot.parentId, 512)) throw { code: "restore-failed", message: "The captured markup snapshot is invalid" };
+          parent = findElement(snapshot.parentId);
+        } else {
+          parent = document.body;
+        }
+        if (!parent || !(parent instanceof Element)) {
+          throw { code: "parent-not-found", message: "The requested parent does not exist" };
+        }
+        const template = document.createElement("template");
+        template.innerHTML = snapshot.markup;
+        const node = template.content.firstElementChild;
+        if (!node) throw { code: "restore-failed", message: "The element could not be restored" };
+        const reference = parent.children[snapshot.index] || null;
+        parent.insertBefore(node, reference);
+        const target = describe(node);
+        if (!target) throw { code: "restore-failed", message: "The element could not be restored" };
+        return {
+          kind: "command",
+          command: "restore-element",
+          targetId: target.elementId,
+          target,
+          undo: { command: "delete-element", targetId: target.elementId },
+          replay: { command: "delete-element", targetId: target.elementId },
+        };
+      }
       const element = createElementFromSpec(command.snapshot);
       const target = describe(element);
       if (!target) throw { code: "restore-failed", message: "The element could not be restored" };
@@ -1082,6 +1604,13 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   }
 
   function install() {
+    // Migrate legacy shapes: outline should scale with shape (remove non-scaling-stroke)
+    try {
+      document.querySelectorAll("[data-design-tool-created='true']").forEach(function(el) {
+        const child = el.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
+        if (child && child.getAttribute("vector-effect") === "non-scaling-stroke") child.removeAttribute("vector-effect");
+      });
+    } catch {}
     document.addEventListener("pointerover", handleHover, true);
     document.addEventListener("pointermove", queuePointerMove, true);
     document.addEventListener("pointerout", handlePointerOut, true);

@@ -16,6 +16,7 @@ describe("editor tool registry", () => {
       "rectangle",
       "text",
       "image",
+      "shader",
       "comment",
     ]);
   });
@@ -28,6 +29,7 @@ describe("editor tool registry", () => {
       "rectangle",
       "text",
       "image",
+      "shader",
       "comment",
     ]);
   });

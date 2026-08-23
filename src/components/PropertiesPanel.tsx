@@ -103,9 +103,9 @@ function PropertySection({ title, icon, children }: { title: string; icon: React
   return <section className="property-section"><div className="property-section-title"><span>{icon}{title}</span><ChevronDown size={13} /></div>{children}</section>;
 }
 
-/** A curated, gesture-friendly palette — no color wheel required. */
+/** A curated, gesture-friendly palette — no color wheel required. First swatch is transparent for pure glass. */
 const COLOR_SWATCHES = [
-  "#ffffff", "#ebebe8", "#d9d9d9", "#a8a8a1", "#666661", "#161615",
+  "transparent", "#ffffff", "#ebebe8", "#d9d9d9", "#a8a8a1", "#666661", "#161615",
   "#f6b1a4", "#e5484d", "#ffab6b", "#e8792e",
   "#ffe9a8", "#f2ce4b", "#d9a514",
   "#b5e0a5", "#6cbf5d", "#2f9e57", "#1d6b40",
@@ -167,18 +167,30 @@ function ColorField({
         <span className="color-popover" data-testid={`color-popover-${label}`}>
           <span className="color-swatch-grid">
             {COLOR_SWATCHES.map((color) => {
+              const isTransparentSwatch = color === "transparent";
+              const isTransparentValue = typeof value === "string" && value.trim().toLowerCase() === "transparent";
               const current = parseCssColor(value ?? undefined);
               const option = parseCssColor(color);
-              const isActive = current !== null && option !== null &&
+              const isActive = isTransparentSwatch ? isTransparentValue : current !== null && option !== null &&
                 current.r === option.r && current.g === option.g && current.b === option.b;
+              const swatchStyle: React.CSSProperties = isTransparentSwatch
+                ? {
+                    backgroundColor: "transparent",
+                    backgroundImage:
+                      "linear-gradient(45deg, rgba(22,22,21,.08) 25%, transparent 25%, transparent 75%, rgba(22,22,21,.08) 75%), linear-gradient(45deg, rgba(22,22,21,.08) 25%, transparent 25%, transparent 75%, rgba(22,22,21,.08) 75%)",
+                    backgroundSize: "8px 8px",
+                    backgroundPosition: "0 0, 4px 4px",
+                  }
+                : { background: color };
               return (
                 <button
                   key={color}
                   type="button"
                   className={`color-swatch${isActive ? " is-active" : ""}`}
                   data-testid={`color-option-${color}`}
-                  style={{ background: color }}
-                  aria-label={color}
+                  style={swatchStyle}
+                  aria-label={color === "transparent" ? "transparent" : color}
+                  title={color === "transparent" ? "Transparent (pure glass)" : color}
                   onClick={() => commit(color)}
                 />
               );
@@ -277,16 +289,49 @@ function GlassSection({
     }
     return 0;
   }, [entries]);
+  // Foreign surfaces get glass via inline styles, which never write the
+  // tracking attribute; the backdrop-filter + sheen + rim shadow identify them.
+  const hasUntrackedGlass = useMemo(
+    () => entries.some((entry) => {
+      const style = entry.inspection?.inlineStyle;
+      if (!style) return false;
+      const bf = style["backdrop-filter"];
+      const bg = style["background"];
+      const shadow = style["box-shadow"];
+      return (
+        (typeof bf === "string" && bf.includes("blur(")) ||
+        (typeof bg === "string" && bg.includes("linear-gradient(135deg")) ||
+        (typeof shadow === "string" && shadow.includes("inset 0 1px"))
+      );
+    }),
+    [entries],
+  );
   const [level, setLevel] = useState(currentLevel);
-  useEffect(() => setLevel(currentLevel), [currentLevel]);
+  const appliedLevelRef = useRef<number | null>(null);
+  const selectionKey = entries.map((entry) => `${entry.frameId}:${entry.target.elementId}`).sort().join("|");
+  const selectionKeyRef = useRef(selectionKey);
+  useEffect(() => {
+    if (selectionKeyRef.current !== selectionKey) {
+      selectionKeyRef.current = selectionKey;
+      appliedLevelRef.current = null;
+      setLevel(currentLevel);
+      return;
+    }
+    if (currentLevel > 0 || !hasUntrackedGlass) {
+      appliedLevelRef.current = null;
+      setLevel(currentLevel);
+    }
+  }, [currentLevel, hasUntrackedGlass, selectionKey]);
   const apply = (next: number) => {
     const clamped = clampGlassLevel(next);
     setLevel(clamped);
+    appliedLevelRef.current = clamped;
     onApply(clamped);
   };
   // Dragging previews locally; releasing commits one undoable transaction.
   const commit = () => {
-    if (level !== currentLevel) apply(level);
+    if (appliedLevelRef.current === level) return;
+    if (level !== currentLevel || hasUntrackedGlass) apply(level);
   };
   return (
     <PropertySection title="Glass" icon={<Droplets size={13} />}>

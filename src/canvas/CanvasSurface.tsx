@@ -13,6 +13,7 @@ import {
 import { CanvasDock } from "../components/CanvasDock";
 import { LeftSidebar } from "../components/LeftSidebar";
 import { PropertiesPanel } from "../components/PropertiesPanel";
+import { ShaderElementView } from "../components/ShaderElementView";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import { CommentPopover } from "../comments/CommentPopover";
 import { useComments } from "../comments/useComments";
@@ -48,8 +49,9 @@ import {
   type NodeEntity,
 } from "../editor/model";
 import {
-  GLASS_SURFACE_SHADOW,
-  glassSurfaceBackground,
+  glassBackdropFilter,
+  glassLiquidShadow,
+  glassTintBackground,
 } from "../editor/effects";
 import {
   isSpaceShortcut,
@@ -110,6 +112,12 @@ import {
   type ProjectKind,
 } from "../persistence/local-projects";
 import { parseWireCanvasProject } from "../persistence/wirecanvas";
+import {
+  createCanvasShaderElement,
+  detectPaperShaderSupport,
+  type CanvasShaderElement,
+  type PaperShaderId,
+} from "../shaders";
 import {
   buildProjectUrl,
   getProjectIdFromUrl,
@@ -418,6 +426,9 @@ export function CanvasSurface({
   const pendingHoverRef = useRef<{ frameId: string; target: BridgeElementTarget } | null | undefined>(undefined);
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
+  const [isShaderMenuOpen, setIsShaderMenuOpen] = useState(false);
+  const [shaderElements, setShaderElements] = useState<CanvasShaderElement[]>([]);
+  const [selectedShaderElementId, setSelectedShaderElementId] = useState<string | null>(null);
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
   const [shapeRadius, setShapeRadius] = useState(0);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -652,6 +663,8 @@ export function CanvasSurface({
       try {
         const next = parseWireCanvasProject(rec.data);
         clearComments();
+        setShaderElements([]);
+        setSelectedShaderElementId(null);
         bridgeControllersRef.current.clear();
         snapshotQueuesRef.current.clear();
         snapshotSequenceRef.current.clear();
@@ -798,6 +811,8 @@ export function CanvasSurface({
       const result = importWireCanvasProject(editorStore, text);
       if (result.changed) {
         clearComments();
+        setShaderElements([]);
+        setSelectedShaderElementId(null);
         bridgeControllersRef.current.clear();
         snapshotQueuesRef.current.clear();
         snapshotSequenceRef.current.clear();
@@ -947,6 +962,8 @@ export function CanvasSurface({
           try {
             const next = parseWireCanvasProject(state.data);
             clearComments();
+            setShaderElements([]);
+            setSelectedShaderElementId(null);
             bridgeControllersRef.current.clear();
             snapshotQueuesRef.current.clear();
             snapshotSequenceRef.current.clear();
@@ -2006,9 +2023,9 @@ export function CanvasSurface({
       const changes = surfaceEntries.flatMap((entry) => {
         const currentFill = entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null;
         return [
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: null },
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background" as const, value: level > 0 ? glassSurfaceBackground(currentFill, level) : null },
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? GLASS_SURFACE_SHADOW : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: level > 0 ? glassBackdropFilter(level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background" as const, value: level > 0 ? glassTintBackground(currentFill, level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? glassLiquidShadow(level) : null },
         ];
       });
       void runBridgeStyleEdit(changes, label);
@@ -2078,6 +2095,7 @@ export function CanvasSurface({
       setInteractionMode("idle");
       editorStore.execute(setActiveToolCommand(nextTool), { history: "skip" });
       setIsFrameMenuOpen(nextTool === "frame");
+      setIsShaderMenuOpen(nextTool === "shader");
     },
     [editorStore],
   );
@@ -2095,6 +2113,59 @@ export function CanvasSurface({
     editorStore.execute(setActiveToolCommand("frame"), { history: "skip" });
     setIsFrameMenuOpen(true);
   }, [editorStore, isFrameMenuOpen]);
+
+  const toggleShaderMenu = useCallback(() => {
+    creationRef.current = null;
+    pendingImageRef.current = null;
+    setCreationError(null);
+    const current = normalizeActiveTool(editorStore.getState().activeTool);
+    if (current === "shader" && isShaderMenuOpen) {
+      editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+      setIsShaderMenuOpen(false);
+      return;
+    }
+    editorStore.execute(setActiveToolCommand("shader"), { history: "skip" });
+    setIsShaderMenuOpen(true);
+  }, [editorStore, isShaderMenuOpen]);
+
+  const closeShaderMenu = useCallback(() => {
+    setIsShaderMenuOpen(false);
+    if (normalizeActiveTool(editorStore.getState().activeTool) === "shader") {
+      editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+    }
+  }, [editorStore]);
+
+  const addShaderElement = useCallback(
+    (shaderId: PaperShaderId) => {
+      if (!detectPaperShaderSupport().supported) {
+        setCreationError("This browser cannot render shaders. WebGL2 is required.");
+        return;
+      }
+      const worldCenter = screenToWorld(
+        { x: viewport.width / 2, y: viewport.height / 2 },
+        cameraRef.current,
+      );
+      const element = createCanvasShaderElement(shaderId, worldCenter);
+      if (!element) return;
+      setShaderElements((current) => [...current, element]);
+      setSelectedShaderElementId(element.id);
+      setIsShaderMenuOpen(false);
+      setCreationError(null);
+      editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+    },
+    [editorStore, viewport],
+  );
+
+  const updateShaderElement = useCallback((elementId: string, patch: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height">>) => {
+    setShaderElements((current) =>
+      current.map((entry) => (entry.id === elementId ? { ...entry, ...patch } : entry)),
+    );
+  }, []);
+
+  const deleteShaderElement = useCallback((elementId: string) => {
+    setShaderElements((current) => current.filter((entry) => entry.id !== elementId));
+    setSelectedShaderElementId((current) => (current === elementId ? null : current));
+  }, []);
 
   // User request: frames must stay loaded even when dragged out of camera view
   // Previously only ~12 nearest frames were live (virtualization) — off-screen frames showed placeholder and reloaded text on return
@@ -2767,6 +2838,8 @@ export function CanvasSurface({
     pendingImageRef.current = null;
     setCreationError(null);
     setIsFrameMenuOpen(false);
+    setIsShaderMenuOpen(false);
+    setSelectedShaderElementId(null);
     if (activeTool !== "select") {
       editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
     }
@@ -2994,6 +3067,17 @@ export function CanvasSurface({
             onCreationPointerCancel={cancelCreationPointer}
           />
         ))}
+        {shaderElements.map((element) => (
+          <ShaderElementView
+            camera={camera}
+            isSelected={element.id === selectedShaderElementId}
+            key={element.id}
+            element={element}
+            onChange={updateShaderElement}
+            onDelete={deleteShaderElement}
+            onSelect={setSelectedShaderElementId}
+          />
+        ))}
         <NodeOverlayLayer
           zoom={camera.zoom}
           hoveredTarget={sidebarHoveredOverlayTarget ?? hoveredOverlayTarget}
@@ -3200,9 +3284,11 @@ export function CanvasSurface({
           activeTool={activeTool}
           temporaryHand={spacePressed}
           isFrameMenuOpen={isFrameMenuOpen}
+          isShaderMenuOpen={isShaderMenuOpen}
           canUndo={editorStore.canUndo()}
           canRedo={editorStore.canRedo()}
           onAddFrame={addFrame}
+          onAddShader={addShaderElement}
           onFit={fitAllFrames}
           onZoomIn={() => zoomAtViewportCenter(1.22)}
           onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
@@ -3212,6 +3298,8 @@ export function CanvasSurface({
           onSelectShape={(shape) => { setActiveShape(shape); setActiveTool("rectangle", { force: true }); }}
           onToggleFrameMenu={toggleFrameMenu}
           onCloseFrameMenu={() => setIsFrameMenuOpen(false)}
+          onToggleShaderMenu={toggleShaderMenu}
+          onCloseShaderMenu={closeShaderMenu}
           onUndo={() => {
             if (!editorStore.hasActiveTransaction()) editorStore.undo();
           }}

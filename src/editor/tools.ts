@@ -7,6 +7,7 @@ export type ToolId =
   | "rectangle"
   | "text"
   | "image"
+  | "shader"
   | "comment";
 
 export type ToolIconName =
@@ -16,6 +17,7 @@ export type ToolIconName =
   | "square"
   | "type"
   | "image"
+  | "sparkles"
   | "message-circle";
 
 export type ToolAvailability = "enabled" | "planned";
@@ -24,6 +26,7 @@ export type ToolPointerBehavior =
   | "select-move"
   | "pan"
   | "frame-menu"
+  | "shader-menu"
   | "creation";
 
 export type ShapeVariantId = "rectangle" | "ellipse" | "line" | "arrow" | "polygon" | "star";
@@ -107,6 +110,15 @@ export const TOOL_REGISTRY: readonly ToolDefinition[] = [
     icon: "image",
     availability: "enabled",
     pointerBehavior: "creation",
+  },
+  {
+    id: "shader",
+    label: "Shader",
+    description: "Add an animated shader",
+    shortcut: "S",
+    icon: "sparkles",
+    availability: "enabled",
+    pointerBehavior: "shader-menu",
   },
   {
     id: "comment",

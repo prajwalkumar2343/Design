@@ -1,6 +1,6 @@
 import type { PointerActivityKind } from "./types";
 
-export type PointerBehavior = "select-move" | "pan" | "frame-menu" | "creation";
+export type PointerBehavior = "select-move" | "pan" | "frame-menu" | "shader-menu" | "creation";
 
 /**
  * Classifies what the person is doing with the pointer from the active tool's
@@ -14,7 +14,7 @@ export function classifyPointerActivity(
 ): PointerActivityKind {
   const pressed = (options.buttons ?? 0) > 0;
   if (!pressed) return "pointing";
-  if (pointerBehavior === "creation" || pointerBehavior === "frame-menu") return "drawing";
+  if (pointerBehavior === "creation" || pointerBehavior === "frame-menu" || pointerBehavior === "shader-menu") return "drawing";
   if (pointerBehavior === "select-move") return "fixing";
   return "pointing";
 }

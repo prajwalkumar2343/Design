@@ -15,6 +15,7 @@ import {
   Plus,
   Redo2,
   Smartphone,
+  Sparkles,
   Square,
   Star,
   Tablet,
@@ -26,15 +27,19 @@ import { getToolsForCanvasCategory, isToolAvailable, normalizeActiveTool, SHAPE_
 import type { ActiveTool } from "../editor/model";
 import { getFramePresetSectionsForCanvasCategory, type DeviceCategory, type FramePreset } from "../frame/presets";
 import type { CanvasCategory } from "../persistence/local-projects";
+import type { PaperShaderId } from "../shaders";
+import { ShaderMenu } from "./ShaderMenu";
 
 interface CanvasDockProps {
   zoom: number;
   activeTool: ActiveTool;
   temporaryHand: boolean;
   isFrameMenuOpen: boolean;
+  isShaderMenuOpen: boolean;
   canUndo: boolean;
   canRedo: boolean;
   onAddFrame: (preset: FramePreset) => void;
+  onAddShader: (shaderId: PaperShaderId) => void;
   onFit: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -43,6 +48,8 @@ interface CanvasDockProps {
   onSelectShape: (shape: ShapeVariantId) => void;
   onToggleFrameMenu: () => void;
   onCloseFrameMenu: () => void;
+  onToggleShaderMenu: () => void;
+  onCloseShaderMenu: () => void;
   onUndo: () => void;
   onRedo: () => void;
   /** Active canvas category drives frame preset filtering (website: all, mobile: no desktop, asset: artboards) */
@@ -62,6 +69,7 @@ const toolIcons = {
   square: Square,
   type: Type,
   image: Image,
+  sparkles: Sparkles,
   "message-circle": MessageCircle,
 };
 
@@ -70,9 +78,11 @@ export function CanvasDock({
   activeTool,
   temporaryHand,
   isFrameMenuOpen,
+  isShaderMenuOpen,
   canUndo,
   canRedo,
   onAddFrame,
+  onAddShader,
   onFit,
   onZoomIn,
   onZoomOut,
@@ -81,12 +91,15 @@ export function CanvasDock({
   onSelectShape,
   onToggleFrameMenu,
   onCloseFrameMenu,
+  onToggleShaderMenu,
+  onCloseShaderMenu,
   onUndo,
   onRedo,
   canvasCategory = "website",
 }: CanvasDockProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const shapeMenuRef = useRef<HTMLDivElement>(null);
+  const shaderControlRef = useRef<HTMLDivElement>(null);
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<DeviceCategory | null>(null);
   const activeToolId = normalizeActiveTool(activeTool);
@@ -103,19 +116,27 @@ export function CanvasDock({
   }, [isFrameMenuOpen]);
 
   useEffect(() => {
-    if (!isFrameMenuOpen && !isShapeMenuOpen) {
+    if (!isFrameMenuOpen && !isShapeMenuOpen && !isShaderMenuOpen) {
       return;
     }
 
     const handlePointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Node) || (!menuRef.current?.contains(event.target) && !shapeMenuRef.current?.contains(event.target))) {
+      if (!(event.target instanceof Node)) {
         onCloseFrameMenu();
         setIsShapeMenuOpen(false);
+        onCloseShaderMenu();
+        return;
       }
+      const inFrameMenu = menuRef.current?.contains(event.target);
+      const inShapeMenu = shapeMenuRef.current?.contains(event.target);
+      const inShaderMenu = shaderControlRef.current?.contains(event.target);
+      if (!inFrameMenu) onCloseFrameMenu();
+      if (!inShapeMenu) setIsShapeMenuOpen(false);
+      if (!inShaderMenu) onCloseShaderMenu();
     };
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
-  }, [isFrameMenuOpen, isShapeMenuOpen, onCloseFrameMenu]);
+  }, [isFrameMenuOpen, isShapeMenuOpen, isShaderMenuOpen, onCloseFrameMenu, onCloseShaderMenu]);
 
   // Human copy per canvas — surfaces in Dock tooltip / menu heading
   const frameButtonLabel = canvasCategory === "asset" ? "Add artboard" : "Add frame";
@@ -129,7 +150,7 @@ export function CanvasDock({
   return (
     <div className="canvas-dock" data-canvas-control aria-label="Canvas controls">
       <div className="tool-group" role="toolbar" aria-label="Design tools">
-        {visibleTools.filter((tool) => tool.id !== "frame").map((tool) => {
+        {visibleTools.filter((tool) => tool.id !== "frame" && tool.id !== "shader").map((tool) => {
           const Icon = toolIcons[tool.icon];
           const isActive =
             tool.id === "hand"
@@ -192,6 +213,25 @@ export function CanvasDock({
           type="button"
         >
           <Square size={14} strokeWidth={1.8} />
+          <ChevronDown size={10} strokeWidth={1.8} />
+        </button>
+      </div>
+
+      <div className="shader-control" ref={shaderControlRef}>
+        {isShaderMenuOpen ? <ShaderMenu onAddShader={onAddShader} /> : null}
+        <button
+          aria-expanded={isShaderMenuOpen}
+          aria-haspopup="menu"
+          aria-label="Add shader"
+          aria-pressed={activeToolId === "shader"}
+          aria-keyshortcuts="S"
+          className={`tool-button shader-tool-button${isShaderMenuOpen || activeToolId === "shader" ? " is-active" : ""}`}
+          data-testid="tool-button-shader"
+          onClick={onToggleShaderMenu}
+          title="Add shader · S"
+          type="button"
+        >
+          <Sparkles size={15} strokeWidth={1.8} />
           <ChevronDown size={10} strokeWidth={1.8} />
         </button>
       </div>

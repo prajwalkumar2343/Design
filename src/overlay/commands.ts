@@ -187,6 +187,23 @@ function createChange(
   };
 
   setStyle("transform", nextTransform);
+  // Outline scales with the shape (Apple-like). Border/stroke should grow as the shape grows.
+  const prevBorderWidth = styleValue(snapshot, "border-width");
+  const hasBorder = prevBorderWidth !== null && prevBorderWidth !== "" && prevBorderWidth !== "0px" && prevBorderWidth !== "0";
+  let borderScale: number | null = null;
+  if (hasBorder) {
+    const wScale = snapshot.target.bounds.width > 0 ? nextBounds.width / snapshot.target.bounds.width : 1;
+    const hScale = snapshot.target.bounds.height > 0 ? nextBounds.height / snapshot.target.bounds.height : 1;
+    if (resize) {
+      if (isHorizontalHandle(resize.handle) && !isVerticalHandle(resize.handle)) borderScale = wScale;
+      else if (isVerticalHandle(resize.handle) && !isHorizontalHandle(resize.handle)) borderScale = hScale;
+      else borderScale = (wScale + hScale) / 2;
+    } else {
+      borderScale = (wScale + hScale) / 2;
+    }
+    // Clamp to avoid vanishing or exploding borders
+    borderScale = Math.max(0.2, Math.min(8, borderScale));
+  }
   if (resize) {
     const preparation = resizeStylePreparation(snapshot);
     for (const [property, value] of Object.entries(preparation) as [SafeInlineStyleProperty, string][]) {
@@ -199,12 +216,26 @@ function createChange(
     if (isImage || isVerticalHandle(resize.handle)) {
       setStyle("height", `${Math.max(1, nextBounds.height)}px`, true);
     }
+    if (hasBorder && borderScale !== null) {
+      const num = parseFloat(prevBorderWidth!);
+      if (!Number.isNaN(num)) {
+        const nextBorder = Math.max(0.5, Math.round(num * borderScale * 10) / 10);
+        setStyle("border-width", `${nextBorder}px`, true);
+      }
+    }
   } else {
     if (Math.abs(nextBounds.width - snapshot.target.bounds.width) > 0.01) {
       setStyle("width", `${Math.max(1, nextBounds.width)}px`);
     }
     if (Math.abs(nextBounds.height - snapshot.target.bounds.height) > 0.01) {
       setStyle("height", `${Math.max(1, nextBounds.height)}px`);
+    }
+    if (hasBorder && borderScale !== null && Math.abs(borderScale - 1) > 0.01) {
+      const num = parseFloat(prevBorderWidth!);
+      if (!Number.isNaN(num)) {
+        const nextBorder = Math.max(0.5, Math.round(num * borderScale * 10) / 10);
+        setStyle("border-width", `${nextBorder}px`);
+      }
     }
   }
 
@@ -319,6 +350,7 @@ export function toInlineStyleCommands(
     "max-height",
     "width",
     "height",
+    "border-width",
     "transform",
   ] as const;
   for (const change of changes) {

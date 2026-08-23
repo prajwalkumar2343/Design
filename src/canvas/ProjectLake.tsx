@@ -2,13 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import {
   GalleryHorizontal,
   Globe,
-  Grid3x3,
-  Hexagon,
   LayoutDashboard,
   Layers3,
   Megaphone,
-  Palette,
-  Shapes,
   ShoppingBag,
   Smartphone,
   Sparkles,
@@ -42,24 +38,17 @@ const KIND_ICONS: Record<ProjectKind, React.ComponentType<{ size?: number; class
   "mobile-blank": Smartphone,
   "mobile-app": Smartphone,
   "app-wireframe": Layers3,
-  "asset-blank": Shapes,
-  logo: Hexagon,
-  "icon-set": Grid3x3,
-  illustration: Palette,
-  "brand-kit": Shapes,
 };
 
 const CANVAS_ICONS: Record<CanvasCategory, React.ComponentType<{ size?: number; className?: string }>> = {
   website: Globe,
   mobile: Smartphone,
-  asset: Shapes,
 };
 
 // Maps blank chooser canvas -> internal blank kind
 const BLANK_KIND_FOR_CANVAS: Record<CanvasCategory, ProjectKind> = {
   website: "blank",
   mobile: "mobile-blank",
-  asset: "asset-blank",
 };
 
 // Mini preview for Figma-like thumbnail — abstract layout per kind
@@ -126,49 +115,6 @@ function KindThumbnail({ kind, accent }: { kind: ProjectKind; accent: string }) 
               <span /> <span /> <span />
             </div>
           </div>
-        ) : kind === "logo" ? (
-          <div className="figma-thumb-blank" style={{ alignItems: "center", justifyContent: "center" }}>
-            <div style={{ width: 38, height: 38, borderRadius: 12, background: accent, opacity: 0.92, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Hexagon size={18} color="white" />
-            </div>
-          </div>
-        ) : kind === "asset-blank" ? (
-          <div className="figma-thumb-blank" style={{ alignItems: "center", justifyContent: "center" }}>
-            <div style={{ width: 28, height: 28, borderRadius: 7, background: accent, opacity: 0.92, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Shapes size={14} color="white" />
-            </div>
-          </div>
-        ) : kind === "icon-set" ? (
-          <div className="figma-thumb-commerce">
-            <div className="figma-thumb-commerce-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-              <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} />
-              <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} />
-            </div>
-          </div>
-        ) : kind === "illustration" ? (
-          <div className="figma-thumb-portfolio">
-            <div className="figma-thumb-portfolio-row is-tall">
-              <span style={{ background: `${accent}22`, border: `1px solid ${accent}33` }} />
-              <span style={{ background: `${accent}14` }} />
-              <span style={{ background: `${accent}10` }} />
-            </div>
-            <div className="figma-thumb-portfolio-row">
-              <span /> <span />
-            </div>
-          </div>
-        ) : kind === "brand-kit" ? (
-          <div className="figma-thumb-blank">
-            <div className="figma-thumb-blank-lines">
-              <span style={{ background: accent, height: 6, borderRadius: 4 }} />
-              <span style={{ width: "70%" }} />
-              <span style={{ width: "55%" }} />
-            </div>
-            <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: accent }} />
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: "#161615" }} />
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: "#6b7280" }} />
-            </div>
-          </div>
         ) : (
           <div className="figma-thumb-blank">
             <div className="figma-thumb-blank-lines">
@@ -231,8 +177,6 @@ function BlankCanvasChooser({
           {CANVAS_CATEGORIES.map((canvas) => {
             const Icon = CANVAS_ICONS[canvas.id];
             const isWebsite = canvas.id === "website";
-            const isMobile = canvas.id === "mobile";
-            // const isAsset = canvas.id === "asset";
             return (
               <button
                 key={canvas.id}
@@ -250,9 +194,7 @@ function BlankCanvasChooser({
                   <small>
                     {isWebsite
                       ? "All devices · mobile / tablet / desktop"
-                      : isMobile
-                        ? "Phones & tablets only · no desktop"
-                        : "Artboards · SVG · logos, icons, illustrations"}
+                      : "Phones & tablets only · no desktop"}
                   </small>
                   <em>{canvas.hint}</em>
                 </span>
@@ -267,7 +209,7 @@ function BlankCanvasChooser({
 
         <div className="blank-chooser-foot">
           <span>
-            Agent: <code>agent.md</code> · <code>agent-mobile.md</code> · <code>agent-asset.md</code>
+            Agent: <code>agent.md</code> · <code>agent-mobile.md</code>
           </span>
           <button className="blank-chooser-cancel" onClick={onClose} type="button">
             Cancel
@@ -340,7 +282,7 @@ export function ProjectLake({
 
   // Templates visible on home — hide internal blank variants, keep single blank card for chooser
   const templateKinds = useMemo(
-    () => PROJECT_KINDS.filter((k) => k.id !== "mobile-blank" && k.id !== "asset-blank"),
+    () => PROJECT_KINDS.filter((k) => k.id !== "mobile-blank"),
     [],
   );
 

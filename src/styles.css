@@ -152,6 +152,116 @@ button:focus-visible,
   border-color: var(--selection);
 }
 
+/* ── Placed shader elements on the canvas ── */
+.canvas-shader-element {
+  position: absolute;
+  top: 0;
+  left: 0;
+  isolation: isolate;
+  border: 1px solid rgba(20, 20, 18, 0.18);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: var(--shadow-frame);
+  transform-origin: 0 0;
+  transform: translateZ(0);
+  cursor: grab;
+  transition:
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease;
+}
+
+.canvas-shader-element:active {
+  cursor: grabbing;
+}
+
+.canvas-shader-element.is-selected {
+  border-color: var(--selection);
+  box-shadow: 0 18px 52px rgba(20, 20, 18, 0.16), 0 0 0 1px var(--selection-soft);
+}
+
+.shader-element-stage {
+  position: absolute;
+  inset: 4px;
+  overflow: hidden;
+  border-radius: 9px;
+  background: rgba(20, 20, 18, 0.04);
+}
+
+.shader-element-mount {
+  position: absolute;
+  inset: 0;
+}
+
+.shader-element-loading {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(100deg, rgba(20, 20, 18, 0.03) 30%, rgba(20, 20, 18, 0.09) 50%, rgba(20, 20, 18, 0.03) 70%);
+  background-size: 220% 100%;
+  animation: shader-shimmer 1.4s ease-in-out infinite;
+}
+
+.shader-element-unsupported {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.canvas-shader-element .shader-element-label {
+  position: absolute;
+  top: -26px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 5px;
+  color: white;
+  background: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.canvas-shader-element .shader-element-delete {
+  position: absolute;
+  top: -24px;
+  right: 6px;
+  z-index: 3;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  color: white;
+  background: var(--ink);
+  cursor: pointer;
+  transition: transform var(--duration-fast) var(--ease-out), background-color var(--duration-fast) ease;
+}
+
+.canvas-shader-element .shader-element-delete:hover {
+  background: #b3261e;
+  transform: scale(1.06);
+}
+
+.canvas-shader-element .shader-element-resize-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  z-index: 3;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--selection);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 4px rgba(20, 20, 18, 0.18);
+  cursor: nwse-resize;
+}
+
 /* ── Device-accurate hardware chrome — no outer bezel, just frame + cutout ── */
 .canvas-frame.device-frame {
   border: 1px solid rgba(20, 20, 18, 0.14);
@@ -1453,6 +1563,129 @@ button:focus-visible,
 .canvas-dock .shape-menu-item.is-active {
   color: var(--ink);
   background: var(--selection-soft);
+}
+
+/* ── Shader tool in the bottom bar ── */
+.shader-control {
+  position: relative;
+  display: flex;
+}
+
+.shader-tool-button {
+  gap: 1px;
+}
+
+.shader-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  width: 348px;
+  max-height: min(72vh, 520px);
+  padding: 7px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(252, 252, 250, 0.98);
+  box-shadow: 0 18px 55px rgba(20, 20, 18, 0.16), 0 2px 8px rgba(20, 20, 18, 0.07);
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  transform-origin: bottom left;
+  animation: menu-in var(--duration-base) var(--ease-out) both;
+}
+
+.shader-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.shader-menu::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--line-strong);
+  background-clip: padding-box;
+}
+
+.shader-menu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.shader-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  text-align: left;
+  transition:
+    border-color var(--duration-fast) ease,
+    box-shadow var(--duration-fast) ease,
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.canvas-dock .shader-card:hover {
+  border-color: var(--selection);
+  box-shadow: 0 6px 18px rgba(20, 20, 18, 0.1);
+  transform: translateY(-1px);
+}
+
+.canvas-dock .shader-card:active {
+  transform: scale(0.98);
+}
+
+.shader-card-preview {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  border-radius: 7px;
+  background:
+    linear-gradient(135deg, rgba(93, 92, 226, 0.14), rgba(240, 106, 82, 0.12) 55%, rgba(255, 255, 255, 0));
+}
+
+.shader-card span {
+  padding: 0 2px 1px;
+  color: var(--ink-soft);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-dock .shader-card:hover span {
+  color: var(--ink);
+}
+
+.shader-preview-mount,
+.shader-card-preview > * {
+  position: absolute;
+  inset: 0;
+}
+
+.shader-preview-mount [data-paper-shader] {
+  width: 100%;
+  height: 100%;
+}
+
+.shader-preview-loading,
+.shader-preview-fallback {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background:
+    linear-gradient(100deg, rgba(20, 20, 18, 0.03) 30%, rgba(20, 20, 18, 0.09) 50%, rgba(20, 20, 18, 0.03) 70%);
+  background-size: 220% 100%;
+  animation: shader-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes shader-shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
 }
 
 .canvas-dock .tool-button {

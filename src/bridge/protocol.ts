@@ -519,12 +519,12 @@ function isShapeRadius(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0 && value <= 256;
 }
 
-/** Concrete paint colors only; gradients, urls, and statements stay out. */
+/** Concrete paint colors only; gradients, urls, and statements stay out. Transparent is allowed for pure glass. */
 function isShapeColor(value: unknown): value is string {
   return typeof value === "string" &&
     value.length > 0 &&
     value.length <= 128 &&
-    /^#[0-9a-f]{3,8}$|^rgba?\(\s*[\d.\s,/]+\)$/i.test(value.trim());
+    (/^#[0-9a-f]{3,8}$|^rgba?\(\s*[\d.\s,/]+\)$/i.test(value.trim()) || value.trim().toLowerCase() === "transparent");
 }
 
 function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElementSnapshot {

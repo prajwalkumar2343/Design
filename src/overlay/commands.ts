@@ -159,6 +159,68 @@ function isVerticalHandle(handle: ResizeHandle): boolean {
   return handle.includes("n") || handle.includes("s");
 }
 
+/**
+ * Aspect-locked image resize. The dragged dimension follows the pointer and
+ * the other dimension derives from the locked ratio, so an image can only be
+ * enlarged or shrunk — never squeezed. Corner drags anchor the opposite
+ * corner; edge drags grow symmetrically about the perpendicular center line.
+ */
+export function resizeImageRect(
+  initial: Rect,
+  handle: ResizeHandle,
+  delta: Point,
+  minimumSize = 24,
+): Rect {
+  const ratio = initial.height / initial.width;
+  const anchorRight = initial.x + initial.width;
+  const anchorBottom = initial.y + initial.height;
+  // Growth is signed per grabbed edge: dragging "w"/"n" outward shrinks the
+  // delta's raw value while still enlarging the box.
+  const growX = handle.includes("e") ? delta.x : -delta.x;
+  const growY = handle.includes("s") ? delta.y : -delta.y;
+
+  if (!isVerticalHandle(handle)) {
+    const width = Math.max(minimumSize, initial.width + growX, minimumSize / ratio);
+    const height = width * ratio;
+    return {
+      x: round(handle.includes("w") ? anchorRight - width : initial.x),
+      y: round(initial.y + (initial.height - height) / 2),
+      width: round(width),
+      height: round(height),
+    };
+  }
+  if (!isHorizontalHandle(handle)) {
+    const height = Math.max(minimumSize, initial.height + growY, minimumSize * ratio);
+    const width = height / ratio;
+    return {
+      x: round(initial.x + (initial.width - width) / 2),
+      y: round(handle.includes("n") ? anchorBottom - height : initial.y),
+      width: round(width),
+      height: round(height),
+    };
+  }
+
+  const freeWidth = Math.max(minimumSize, initial.width + growX);
+  const freeHeight = Math.max(minimumSize, initial.height + growY);
+  const widthLeads =
+    Math.abs(freeWidth / initial.width - 1) >= Math.abs(freeHeight / initial.height - 1);
+  let width: number;
+  let height: number;
+  if (widthLeads) {
+    width = Math.max(freeWidth, minimumSize / ratio);
+    height = width * ratio;
+  } else {
+    height = Math.max(freeHeight, minimumSize * ratio);
+    width = height / ratio;
+  }
+  return {
+    x: round(handle.includes("w") ? anchorRight - width : initial.x),
+    y: round(handle.includes("n") ? anchorBottom - height : initial.y),
+    width: round(width),
+    height: round(height),
+  };
+}
+
 function createChange(
   snapshot: OverlayStyleSnapshot,
   nextBounds: Rect,
@@ -284,10 +346,17 @@ export function buildResizeChanges(
   if (snapshots.length === 1) {
     const snapshot = snapshots[0];
     const parsed = parseTransform(snapshotTransform(snapshot));
+    const isImage = snapshot.target.tagName.toLowerCase() === "img";
     if (parsed && Math.abs(parsed.rotation) > 0.01) {
       const radians = (parsed.rotation * Math.PI) / 180;
       const localDelta = rotateVector(delta, -radians);
-      const nextBounds = resizeRect(snapshot.target.bounds, handle, localDelta, minimumSize);
+      const nextBounds = isImage
+        ? resizeImageRect(snapshot.target.bounds, handle, localDelta, minimumSize)
+        : resizeRect(snapshot.target.bounds, handle, localDelta, minimumSize);
+      return [createChange(snapshot, nextBounds, 0, { handle })];
+    }
+    if (isImage) {
+      const nextBounds = resizeImageRect(snapshot.target.bounds, handle, delta, minimumSize);
       return [createChange(snapshot, nextBounds, 0, { handle })];
     }
   }

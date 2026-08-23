@@ -52,7 +52,7 @@ interface CanvasDockProps {
   onCloseShaderMenu: () => void;
   onUndo: () => void;
   onRedo: () => void;
-  /** Active canvas category drives frame preset filtering (website: all, mobile: no desktop, asset: artboards) */
+  /** Active canvas category drives frame preset filtering (website: all, mobile: no desktop) */
   canvasCategory?: CanvasCategory;
 }
 
@@ -139,13 +139,11 @@ export function CanvasDock({
   }, [isFrameMenuOpen, isShapeMenuOpen, isShaderMenuOpen, onCloseFrameMenu, onCloseShaderMenu]);
 
   // Human copy per canvas — surfaces in Dock tooltip / menu heading
-  const frameButtonLabel = canvasCategory === "asset" ? "Add artboard" : "Add frame";
+  const frameButtonLabel = "Add frame";
   const frameMenuHint =
     canvasCategory === "mobile"
       ? "Phones & tablets · no desktop"
-      : canvasCategory === "asset"
-        ? "Artboards · SVG · logos, icons"
-        : "All devices · mobile / tablet / desktop";
+      : "All devices · mobile / tablet / desktop";
 
   return (
     <div className="canvas-dock" data-canvas-control aria-label="Canvas controls">
@@ -246,7 +244,6 @@ export function CanvasDock({
               if (!section) return null;
               const SectionIcon = presetIcons[section.category];
               const viewportCount = section.groups.reduce((count, group) => count + group.items.length, 0);
-              const countLabel = canvasCategory === "asset" ? "artboards" : "viewports";
               return (
                 <div className="frame-menu" role="menu" aria-label="Frame presets">
                   <button
@@ -257,12 +254,12 @@ export function CanvasDock({
                     type="button"
                   >
                     <ChevronLeft size={13} strokeWidth={1.8} aria-hidden="true" />
-                    {canvasCategory === "asset" ? "All artboards" : "All devices"}
+                    All devices
                   </button>
                   <div className="frame-menu-category-title">
                     <SectionIcon size={13} strokeWidth={1.8} aria-hidden="true" />
                     <span>{section.title}</span>
-                    <small>{viewportCount} {countLabel}</small>
+                    <small>{viewportCount} viewports</small>
                   </div>
                   {section.groups.map((group) => (
                     <div key={group.title}>
@@ -298,47 +295,13 @@ export function CanvasDock({
               <div className="frame-menu" role="menu" aria-label="Frame presets">
                 <div className="frame-menu-heading">
                   <div>
-                    <strong>{canvasCategory === "asset" ? "New artboard" : "New frame"}</strong>
+                    <strong>New frame</strong>
                     <span>{frameMenuHint}</span>
                   </div>
                   <kbd>F</kbd>
                 </div>
                 {presetSections.map((section) => {
                   const SectionIcon = presetIcons[section.category];
-                  // Asset has a single "Asset" section — render its items directly instead of nesting
-                  if (canvasCategory === "asset") {
-                    return (
-                      <div key={section.title}>
-                        {section.groups.map((group) => (
-                          <div key={group.title}>
-                            <div className="frame-menu-group-label">{group.title}</div>
-                            {group.items.map((preset) => {
-                              const Icon = presetIcons[preset.category];
-                              return (
-                                <button
-                                  className="frame-preset"
-                                  data-testid={`add-${preset.id}-frame`}
-                                  key={preset.id}
-                                  onClick={() => {
-                                    onAddFrame(preset);
-                                    onCloseFrameMenu();
-                                  }}
-                                  role="menuitem"
-                                  type="button"
-                                >
-                                  <span className="preset-icon"><Icon size={16} strokeWidth={1.7} /></span>
-                                  <span>
-                                    <strong>{preset.label}</strong>
-                                    <small>{preset.detail}</small>
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }
                   return (
                     <button
                       className="frame-menu-category"

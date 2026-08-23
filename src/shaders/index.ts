@@ -12,3 +12,11 @@ export {
   type PaperShaderId,
   type PaperShaderSupport,
 } from "./registry";
+
+export {
+  SHADER_ELEMENT_DEFAULT_SIZE,
+  SHADER_ELEMENT_MIN_SIZE,
+  clampShaderElementSize,
+  createCanvasShaderElement,
+  type CanvasShaderElement,
+} from "./canvas-model";

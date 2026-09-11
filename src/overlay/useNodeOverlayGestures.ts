@@ -470,10 +470,11 @@ export function useNodeOverlayGestures({
 
       const settled = liveSettledRef.current;
       const schedule = (direction: "previous" | "next") => {
-        operation.queue = operation.queue
+        const run = operation.queue
           .then(() => settled)
           .then(() => applyStyleChanges(operation.changes, direction, operation.capturedPrevious))
           .catch(() => undefined);
+        operation.queue = run;
         setGestureOverlayTargets(
           direction === "previous"
             ? operation.snapshots.map((snapshot) => snapshot.target)
@@ -484,6 +485,7 @@ export function useNodeOverlayGestures({
               })),
         );
         refreshAfterQueue();
+        return run.then(() => undefined);
       };
       const effect = { undo: () => schedule("previous"), redo: () => schedule("next") };
       if (editorStore.hasActiveTransaction()) editorStore.commitTransaction(effect);

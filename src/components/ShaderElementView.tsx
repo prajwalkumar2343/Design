@@ -1,5 +1,6 @@
 import { Trash2 } from "lucide-react";
 import { memo, useEffect, useRef, useState, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { SafeShaderMount } from "./SafeShaderMount";
 import {
   clampShaderElementSize,
   detectPaperShaderSupport,
@@ -38,7 +39,7 @@ function useLoadedShaderComponent(shaderId: CanvasShaderElement["shaderId"]) {
       .then((loaded) => {
         if (!alive) return;
         if (detectPaperShaderSupport().supported) {
-          setComponent(loaded.Component as SizedShaderComponent);
+          setComponent(() => loaded.Component as SizedShaderComponent);
         } else {
           setFailed(true);
         }
@@ -162,9 +163,7 @@ export const ShaderElementView = memo(function ShaderElementView({
         {failed ? (
           <div className="shader-element-unsupported">WebGL2 unavailable</div>
         ) : Component ? (
-          <div className="shader-element-mount">
-            <Component width="100%" height="100%" />
-          </div>
+          <SafeShaderMount className="shader-element-mount" component={Component} />
         ) : (
           <div className="shader-element-loading" />
         )}

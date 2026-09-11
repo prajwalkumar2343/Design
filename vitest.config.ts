@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     css: true,
-    exclude: ["tests/e2e/**", "node_modules/**", "dist/**"],
+    setupFiles: ["./src/test/dom-storage-polyfill.ts"],
+    exclude: ["tests/e2e/**", "node_modules/**", "dist/**", "improved source/**", "tmp/**"],
   },
 });

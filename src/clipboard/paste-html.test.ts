@@ -8,6 +8,7 @@ import {
   preparePastedHtml,
   resolvePastedFrameName,
   resolvePastedFrameSize,
+  sanitizeImportedHtml,
   PASTED_FRAME_DEFAULT_WIDTH,
   PASTED_FRAME_MAX_SIZE,
   PASTED_FRAME_MIN_SIZE,
@@ -214,5 +215,73 @@ describe("pasteHtmlIntoStore", () => {
     expect(Object.keys(state.documents)).toHaveLength(2);
     expect(Object.keys(state.pages)).toHaveLength(2);
     expect(Object.keys(state.frames)).toHaveLength(2);
+  });
+});
+
+describe("sanitizeImportedHtml", () => {
+  it("returns clean HTML byte-for-byte unchanged", () => {
+    const clean = "<!doctype html><html><head><style>.a { color: red; }</style></head><body><div>Hi</div></body></html>";
+    expect(sanitizeImportedHtml(clean)).toEqual({ html: clean, removedExecutables: false });
+  });
+
+  it("strips script elements and event-handler attributes", () => {
+    const raw = '<!doctype html><html><head><script>alert(1)</script></head><body onload="x()"><button onclick="y()">go</button></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("<script");
+    expect(result.html).not.toContain("onclick");
+    expect(result.html).not.toContain("onload");
+    expect(result.html).toContain("go");
+  });
+
+  it("neutralizes javascript: URLs and removes srcdoc embeds", () => {
+    const raw = '<!doctype html><html><head></head><body><a href="javascript:steal()">x</a><iframe srcdoc="<p>hi</p>" src="https://example.com/e"></iframe></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("javascript:");
+    expect(result.html).not.toContain("srcdoc");
+    expect(result.html).toContain('href="#');
+    expect(result.html).toContain("<iframe");
+  });
+
+  it("removes base hijacks and plugin-like executable embeds", () => {
+    const raw = '<!doctype html><html><head><base href="https://evil.example/"></head><body><object data="x.swf"></object><embed src="y.swf"><p>ok</p></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("<base");
+    expect(result.html).not.toContain("<object");
+    expect(result.html).not.toContain("<embed");
+    expect(result.html).toContain("ok");
+  });
+
+  it("keeps full styling, media, links, and navigation", () => {
+    const raw = '<!doctype html><html><head><link rel="stylesheet" href="https://example.com/a.css"><style>.a { color: red; }</style></head><body><a href="https://example.com/">out</a><img src="https://example.com/i.png"><video src="https://example.com/v.mp4"></video></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(false);
+    expect(result.html).toBe(raw);
+  });
+});
+
+describe("preparePastedHtml executable hardening", () => {
+  it("accepts generic text/html from any source and strips executables", () => {
+    const raw = '<!doctype html><html><head><title>Elsewhere</title></head><body><script>bad()</script><div onmouseover="bad()">Card</div></body></html>';
+    const { srcDoc, metadata, removedExecutables } = preparePastedHtml(raw);
+    expect(removedExecutables).toBe(true);
+    expect(srcDoc).not.toContain("<script");
+    expect(srcDoc).not.toContain("onmouseover");
+    expect(srcDoc).toContain("Card");
+    expect(metadata.title).toBeNull();
+  });
+
+  it("accepts an HTML fragment from text/plain and keeps it styled", () => {
+    const { srcDoc, removedExecutables } = preparePastedHtml('<div style="color: red">Hello</div>');
+    expect(removedExecutables).toBe(false);
+    expect(srcDoc).toContain('style="color: red"');
+    expect(srcDoc).toContain("Hello");
+  });
+
+  it("still rejects reserved markers after sanitizing", () => {
+    const raw = '<!doctype html><html><head><script>bad()</script></head><body><div data-design-tool-iframe-bridge="1">x</div></body></html>';
+    expect(() => preparePastedHtml(raw)).toThrow(HtmlAdmissionError);
   });
 });

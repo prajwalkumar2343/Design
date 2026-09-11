@@ -21,6 +21,8 @@ import {
   type HarnessTool,
   type HarnessToolContext,
 } from "./tools";
+import { createConceptBrainstormSkill } from "./skills/concept-brainstorm";
+import { createLiveWireframesSkill, type HarnessSkill } from "./skills/live-wireframes";
 
 export interface BrainstormingAgentOptions {
   provider: ModelProvider;
@@ -32,6 +34,12 @@ export interface BrainstormingAgentOptions {
   trace?: TraceLog;
   /** When true, tools run in ask mode are auto-denied instead of running. */
   denyAsk?: boolean;
+  /**
+   * Skills extend the agent with extra system-prompt guidance and tools.
+   * Defaults to the concept-brainstorming plus live wireframe co-design
+   * skills; pass [] for base tools only.
+   */
+  skills?: HarnessSkill[];
   /** Called when a tool requires permission; resolves to allow/deny. */
   onPermissionRequest?: (toolName: string, args: Record<string, unknown>) => boolean | Promise<boolean>;
   /** Stable ID generator override (deterministic tests). */
@@ -112,6 +120,7 @@ export class BrainstormingAgentHarness {
   private readonly draftAgent: MainAgentHarness;
   private readonly tools: HarnessTool[];
   private readonly toolByName: Map<string, HarnessTool>;
+  private readonly skills: HarnessSkill[];
   private readonly transcript = new Transcript();
 
   constructor(options: BrainstormingAgentOptions) {
@@ -136,10 +145,10 @@ export class BrainstormingAgentHarness {
         trace: this.trace,
         traceId: "draft",
       });
-    this.tools = createBrainstormTools();
+    this.skills = options.skills ?? [createConceptBrainstormSkill(), createLiveWireframesSkill()];
+    this.tools = [...createBrainstormTools(), ...this.skills.flatMap((skill) => skill.tools)];
     this.toolByName = new Map(this.tools.map((tool) => [tool.name, tool]));
   }
-
   getSession(): BrainstormSessionService {
     return this.session;
   }
@@ -300,6 +309,13 @@ export class BrainstormingAgentHarness {
       ].join("\n");
       messages.push({ role: "system", content: briefLine });
     }
+    if (this.skills.length > 0) {
+      const skillBlock = [
+        "Active skills:",
+        ...this.skills.map((skill) => `[${skill.name}] ${skill.description}\n${skill.prompt.trim()}`),
+      ].join("\n\n");
+      messages.push({ role: "system", content: skillBlock });
+    }
     for (const entry of windowed) {
       switch (entry.kind) {
         case "user":
@@ -359,7 +375,16 @@ export class BrainstormingAgentHarness {
       maxToolResultChars: this.config.brainstorm.maxToolResultChars,
       createId: this.createId,
       resolveFrame: (frameId) => this.resolveFrame(frameId),
+      listFrames: () => this.listFrames(),
     };
+  }
+
+  private listFrames(): FrameResolution[] {
+    const state = this.store.getState();
+    return Object.values(state.frames)
+      .map((frame) => this.resolveFrame(frame.id))
+      .filter((frame): frame is FrameResolution => frame !== null)
+      .sort((a, b) => (a.y - b.y) || (a.x - b.x));
   }
 
   private resolveFrame(frameId: string): FrameResolution | null {
@@ -375,6 +400,9 @@ export class BrainstormingAgentHarness {
       name: frame.name,
       width: frame.width,
       height: frame.height,
+      mode: document.mode,
+      x: frame.x,
+      y: frame.y,
     };
   }
 

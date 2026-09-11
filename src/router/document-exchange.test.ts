@@ -7,6 +7,7 @@ import {
   DocumentExchangeService,
   MAX_ROUTER_HTML_BYTES,
   validateRouterHtml,
+  type CreateDesignDocumentInput,
 } from "./document-exchange";
 import { renderFrameDocument } from "../frame/render-document";
 import { WIREFRAME_THEME_MARKER } from "../frame/wireframe-theme";
@@ -408,5 +409,158 @@ describe("Codex router document exchange", () => {
     expect(store.getState().documents["wireframe-document"].mode).toBe("wireframe");
     expect(store.getState().session.lifecycle).toBe("wireframing");
     expect(store.getState().session.revision).toBe(2);
+  });
+});
+
+describe("Codex router design document creation", () => {
+  const designHtml = "<!doctype html><html lang=\"en\"><head><title>Agent page</title><style>.hero { color: #b91c1c; background: #fff7ed; }</style><script>window.__agent = true;</script></head><body><main class=\"hero\"><h1>Hello</h1></main></body></html>";
+
+  function createBlankService() {
+    const store = createEditorStore(createEmptyEditorState());
+    return { store, service: new DocumentExchangeService(store) };
+  }
+
+  function createDesignInput(overrides: Partial<CreateDesignDocumentInput> = {}): CreateDesignDocumentInput {
+    return {
+      mode: "design",
+      expectedSessionRevision: 0,
+      documentId: "design-document",
+      pageId: "design-page",
+      frameId: "design-frame",
+      documentName: "Agent page",
+      pageName: "Agent page",
+      frameName: "Agent frame",
+      html: designHtml,
+      x: 120,
+      y: 80,
+      width: 1024,
+      height: 768,
+      background: "#ffffff",
+      ...overrides,
+    };
+  }
+
+  it("creates a full-styled design document without touching the session", () => {
+    const { store, service } = createBlankService();
+    const result = service.createDesignDocument(createDesignInput());
+
+    expect(result).toMatchObject({
+      documentId: "design-document",
+      pageId: "design-page",
+      frameId: "design-frame",
+      mode: "design",
+      documentRevision: 1,
+      sessionRevision: 0,
+      affectedFrameIds: ["design-frame"],
+    });
+    expect(result.htmlBytes).toBeGreaterThan(0);
+
+    const state = store.getState();
+    const document = state.documents["design-document"];
+    expect(document.mode).toBe("design");
+    expect(document.revision).toBe(1);
+    // No wireframe stripping: author styling AND scripts survive verbatim on
+    // this trusted agent path (execution stays sandbox-contained at render).
+    expect(document.srcDoc).toBe(designHtml);
+    expect(document.srcDoc).toContain("color: #b91c1c");
+    expect(document.srcDoc).toContain("<script>");
+    expect(state.pages["design-page"].documentId).toBe("design-document");
+    expect(state.frames["design-frame"].documentId).toBe("design-document");
+    expect(state.activePageId).toBe("design-page");
+    expect(state.session.lifecycle).toBe("not-started");
+    expect(state.session.revision).toBe(0);
+  });
+
+  it("creates repeated design documents while the session stays put", () => {
+    const { store, service } = createBlankService();
+    service.createDesignDocument(createDesignInput());
+    const second = service.createDesignDocument(createDesignInput({
+      documentId: "design-document-2",
+      pageId: "design-page-2",
+      frameId: "design-frame-2",
+      expectedSessionRevision: 0,
+    }));
+    expect(second.documentRevision).toBe(1);
+    expect(second.sessionRevision).toBe(0);
+    expect(Object.keys(store.getState().documents)).toHaveLength(2);
+  });
+
+  it("rejects stale session revisions and duplicate IDs before mutation", () => {
+    const { store, service } = createBlankService();
+    const before = store.getState();
+    const historyLength = store.getHistory().past.length;
+
+    expect(() => service.createDesignDocument(createDesignInput({ expectedSessionRevision: 3 })))
+      .toThrowError(expect.objectContaining({ code: "stale-session-revision" }));
+    expect(() => service.createDesignDocument(createDesignInput({ documentId: "design-page" })))
+      .toThrowError(expect.objectContaining({ code: "inconsistent-wireframe-ids" }));
+    expect(store.getState()).toBe(before);
+    expect(store.getHistory().past).toHaveLength(historyLength);
+
+    service.createDesignDocument(createDesignInput());
+    expect(() => service.createDesignDocument(createDesignInput()))
+      .toThrowError(expect.objectContaining({ code: "duplicate-document-id" }));
+    expect(() => service.createDesignDocument(createDesignInput({
+      documentId: "design-document-2",
+      pageId: "design-page",
+      frameId: "design-frame-2",
+    }))).toThrowError(expect.objectContaining({ code: "duplicate-page-id" }));
+    expect(() => service.createDesignDocument(createDesignInput({
+      documentId: "design-document-2",
+      pageId: "design-page-2",
+      frameId: "design-frame",
+    }))).toThrowError(expect.objectContaining({ code: "duplicate-frame-id" }));
+    expect(Object.keys(store.getState().documents)).toHaveLength(1);
+  });
+
+  it("requires design mode and complete admitted HTML", () => {
+    const { service } = createBlankService();
+    expect(() => service.createDesignDocument(createDesignInput({ mode: "wireframe" as never })))
+      .toThrowError(expect.objectContaining({ code: "invalid-mode" }));
+    expect(() => service.createDesignDocument(createDesignInput({ mode: undefined as never })))
+      .toThrowError(expect.objectContaining({ code: "mode-required" }));
+    expect(() => service.createDesignDocument(createDesignInput({
+      html: "<!doctype html><html><body><div data-design-tool-iframe-bridge=\"1\"></div></body></html>",
+    }))).toThrowError(expect.objectContaining({ code: "reserved-runtime-marker" }));
+    expect(() => service.createDesignDocument(createDesignInput({
+      html: `<div>${"x".repeat(MAX_ROUTER_HTML_BYTES + 1)}</div>`,
+    }))).toThrowError(expect.objectContaining({ code: "html-too-large" }));
+  });
+
+  it("refuses design creation while a Brainstorm session is actively briefing", () => {
+    const { store, service } = createBlankBrainstormService();
+    const before = store.getState();
+    expect(() => service.createDesignDocument(createDesignInput({ expectedSessionRevision: 1 })))
+      .toThrowError(expect.objectContaining({ code: "brainstorm-wireframe-required" }));
+    expect(store.getState()).toBe(before);
+  });
+
+  it("validates geometry and names before mutation", () => {
+    const { store, service } = createBlankService();
+    const before = store.getState();
+    expect(() => service.createDesignDocument(createDesignInput({ width: 0 })))
+      .toThrowError(expect.objectContaining({ code: "invalid-size" }));
+    expect(() => service.createDesignDocument(createDesignInput({ x: Number.NaN })))
+      .toThrowError(expect.objectContaining({ code: "invalid-position" }));
+    expect(() => service.createDesignDocument(createDesignInput({ frameName: "  " })))
+      .toThrowError(expect.objectContaining({ code: "invalid-input" }));
+    expect(() => service.createDesignDocument(createDesignInput({ expectedSessionRevision: -1 })))
+      .toThrowError(expect.objectContaining({ code: "invalid-session-revision" }));
+    expect(store.getState()).toBe(before);
+  });
+
+  it("undoes and redoes the complete design creation as one transaction", () => {
+    const { store, service } = createBlankService();
+    service.createDesignDocument(createDesignInput());
+    expect(store.getHistory().past).toHaveLength(1);
+
+    expect(store.undo()).toBe(true);
+    expect(store.getState().documents).toEqual({});
+    expect(store.getState().pages).toEqual({});
+    expect(store.getState().frames).toEqual({});
+
+    expect(store.redo()).toBe(true);
+    expect(store.getState().documents["design-document"].mode).toBe("design");
+    expect(store.getState().documents["design-document"].srcDoc).toBe(designHtml);
   });
 });

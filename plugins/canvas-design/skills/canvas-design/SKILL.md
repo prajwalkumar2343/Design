@@ -87,7 +87,7 @@ Inspect an element inside a frame:
 node <plugin-root>/scripts/inspect-canvas.mjs \
   --url http://127.0.0.1:5173 \
   --frame desktop \
-  --selector '.hero h1'
+  --selector 'h1'
 ```
 
 The helpers emit JSON on stdout and diagnostics on stderr. A nonzero exit means the requested evidence was not produced.

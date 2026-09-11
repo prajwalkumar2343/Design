@@ -98,21 +98,30 @@ function insertToken(root: DTCGGroup, resolved: ResolvedToken): void {
   let group = root;
   segments.forEach((segment, index) => {
     if (index === segments.length - 1) {
+      const existing = group[segment];
       const node: DTCGTokenNode = {
         $value: dtcgValueForToken(resolved.token),
         $type: dtcgTypeForTokenType(resolved.token.type),
       };
       if (resolved.token.description !== undefined) node.description = resolved.token.description;
-      group[segment] = node;
+      // A descendant name (e.g. "color.accent") may already have made this
+      // segment a group — keep its children and let it carry the payload too.
+      if (existing && !isTokenNode(existing)) {
+        Object.assign(existing, node);
+      } else {
+        group[segment] = node;
+      }
       return;
     }
     const next = group[segment];
-    if (!next || isTokenNode(next)) {
+    if (!next) {
       const created: DTCGGroup = {};
       group[segment] = created;
       group = created;
     } else {
-      group = next;
+      // Descend into token nodes as well: a token named "color" can also be
+      // the group for "color.accent" — overwriting it would drop a token.
+      group = next as DTCGGroup;
     }
   });
 }

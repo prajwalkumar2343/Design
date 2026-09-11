@@ -15,6 +15,7 @@ import {
   validateToken,
   validateTokenStore,
   type DesignToken,
+  type TokenStoreState,
 } from "./index";
 
 function colorToken(overrides: Partial<DesignToken> = {}): DesignToken {
@@ -202,5 +203,27 @@ describe("token exporters", () => {
     expect(color.accent.primary.$type).toBe("color");
     const spacing = document.spacing as Record<string, { $value: unknown; $type: string }>;
     expect(spacing.md).toMatchObject({ $value: "16px", $type: "dimension" });
+  });
+
+  it("keeps a token whose name is a path prefix of another token", () => {
+    const store: TokenStoreState = {
+      sets: {
+        s: {
+          id: "s",
+          name: "S",
+          tokens: {
+            a: { id: "a", name: "color", type: "color", value: "#ffffff" },
+            b: { id: "b", name: "color.accent", type: "color", value: "#e5484d" },
+          },
+        },
+      },
+      themes: { t: { id: "t", name: "T", setIds: ["s"] } },
+      activeThemeId: "t",
+      revision: 0,
+    };
+    const document = buildDTCGDocument(store);
+    const color = document.color as { $value?: unknown; accent?: { $value?: unknown } };
+    expect(color.$value).toBe("#ffffff");
+    expect(color.accent?.$value).toBe("#e5484d");
   });
 });

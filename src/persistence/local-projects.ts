@@ -372,17 +372,17 @@ export function clearAllLocalProjects(): void {
   } catch {}
 }
 
-export function upsertLocalProject(record: LocalProjectRecord): void {
+export function upsertLocalProject(record: LocalProjectRecord): boolean {
   const index = loadProjectIndex();
   const existingIdx = index.findIndex((p) => p.id === record.id);
   if (existingIdx >= 0) index.splice(existingIdx, 1);
   index.unshift(record);
-  saveProjectIndex(index.slice(0, MAX_PROJECTS));
+  return saveProjectIndex(index.slice(0, MAX_PROJECTS));
 }
 
-export function deleteLocalProject(id: string): LocalProjectRecord[] {
+export function deleteLocalProject(id: string): LocalProjectRecord[] | null {
   const index = loadProjectIndex().filter((p) => p.id !== id);
-  saveProjectIndex(index);
+  if (!saveProjectIndex(index)) return null;
   if (getActiveProjectId() === id) setActiveProjectId(index[0]?.id ?? null);
   return index;
 }
@@ -399,19 +399,18 @@ export function duplicateLocalProject(id: string): LocalProjectRecord | null {
     updatedAt: nowMs(),
   };
   index.unshift(dup);
-  saveProjectIndex(index.slice(0, MAX_PROJECTS));
-  return dup;
+  return saveProjectIndex(index.slice(0, MAX_PROJECTS)) ? dup : null;
 }
 
-export function renameLocalProject(id: string, name: string): void {
+export function renameLocalProject(id: string, name: string): boolean {
   const trimmed = name.trim().slice(0, 80);
-  if (!trimmed) return;
+  if (!trimmed) return false;
   const index = loadProjectIndex();
   const rec = index.find((p) => p.id === id);
-  if (!rec) return;
+  if (!rec) return false;
   rec.name = trimmed;
   rec.updatedAt = nowMs();
-  saveProjectIndex(index);
+  return saveProjectIndex(index);
 }
 
 export function saveEditorStateToActiveProject(
@@ -449,8 +448,6 @@ export function saveEditorStateToActiveProject(
       data: serialized,
     };
     index.unshift(rec);
-    activeId = newId;
-    setActiveProjectId(newId);
   } else {
     rec.data = serialized;
     rec.updatedAt = nowMs();
@@ -475,7 +472,8 @@ export function saveEditorStateToActiveProject(
     index.length = 0;
     index.push(...filtered);
   }
-  saveProjectIndex(index.slice(0, MAX_PROJECTS));
+  if (!saveProjectIndex(index.slice(0, MAX_PROJECTS))) return null;
+  if (isNew) setActiveProjectId(rec.id);
   return { record: rec, isNew };
 }
 

@@ -15,6 +15,7 @@ import type {
   StartBrainstormSessionOptions,
 } from "../session/model";
 import type { BrainstormSessionAction } from "../session/reducer";
+import type { DesignToken, TokenSet, TokenTheme } from "../tokens";
 import { editorReducer } from "./reducer";
 
 export type EditorCommand =
@@ -50,6 +51,13 @@ export type EditorCommand =
   | { type: "node/reorder"; nodeId: string; direction: "up" | "down" }
   | { type: "selection/set"; selection: SelectionState }
   | { type: "tool/set"; tool: ActiveTool }
+  | { type: "tokens/upsert-set"; set: TokenSet; expectedRevision?: number }
+  | { type: "tokens/remove-set"; setId: string; expectedRevision?: number }
+  | { type: "tokens/upsert-token"; setId: string; token: DesignToken; expectedRevision?: number }
+  | { type: "tokens/remove-token"; setId: string; tokenId: string; expectedRevision?: number }
+  | { type: "tokens/upsert-theme"; theme: TokenTheme; expectedRevision?: number }
+  | { type: "tokens/remove-theme"; themeId: string; expectedRevision?: number }
+  | { type: "tokens/switch-theme"; themeId: string | null; expectedRevision?: number }
   | BrainstormSessionAction;
 
 export class EditorCommandError extends Error {
@@ -149,6 +157,14 @@ export function applyEditorCommand(
     case "selection/set":
       return editorReducer(state, command);
     case "tool/set":
+      return editorReducer(state, command);
+    case "tokens/upsert-set":
+    case "tokens/remove-set":
+    case "tokens/upsert-token":
+    case "tokens/remove-token":
+    case "tokens/upsert-theme":
+    case "tokens/remove-theme":
+    case "tokens/switch-theme":
       return editorReducer(state, command);
     case "session/start":
     case "session/brief-update":
@@ -284,4 +300,43 @@ export function moveBriefFrameCommand(options: {
   expectedRevision?: number;
 }): EditorCommand {
   return { type: "session/brief-move", ...options };
+}
+
+export function upsertTokenSetCommand(set: TokenSet, expectedRevision?: number): EditorCommand {
+  return { type: "tokens/upsert-set", set, expectedRevision };
+}
+
+export function removeTokenSetCommand(setId: string, expectedRevision?: number): EditorCommand {
+  return { type: "tokens/remove-set", setId, expectedRevision };
+}
+
+export function upsertTokenCommand(
+  setId: string,
+  token: DesignToken,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "tokens/upsert-token", setId, token, expectedRevision };
+}
+
+export function removeTokenCommand(
+  setId: string,
+  tokenId: string,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "tokens/remove-token", setId, tokenId, expectedRevision };
+}
+
+export function upsertTokenThemeCommand(theme: TokenTheme, expectedRevision?: number): EditorCommand {
+  return { type: "tokens/upsert-theme", theme, expectedRevision };
+}
+
+export function removeTokenThemeCommand(themeId: string, expectedRevision?: number): EditorCommand {
+  return { type: "tokens/remove-theme", themeId, expectedRevision };
+}
+
+export function switchTokenThemeCommand(
+  themeId: string | null,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "tokens/switch-theme", themeId, expectedRevision };
 }

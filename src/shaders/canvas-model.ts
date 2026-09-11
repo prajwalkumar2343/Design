@@ -16,6 +16,7 @@ export const SHADER_ELEMENT_MIN_SIZE: Size = { width: 96, height: 72 };
 
 export function createCanvasShaderElement(shaderId: string, worldCenter: Point): CanvasShaderElement | null {
   if (!isShaderId(shaderId)) return null;
+  if (!Number.isFinite(worldCenter.x) || !Number.isFinite(worldCenter.y)) return null;
   return {
     id: createElementId("shader"),
     shaderId,
@@ -28,8 +29,12 @@ export function createCanvasShaderElement(shaderId: string, worldCenter: Point):
 
 export function clampShaderElementSize(width: number, height: number): Size {
   return {
-    width: Math.max(SHADER_ELEMENT_MIN_SIZE.width, Math.round(width)),
-    height: Math.max(SHADER_ELEMENT_MIN_SIZE.height, Math.round(height)),
+    width: Number.isFinite(width)
+      ? Math.max(SHADER_ELEMENT_MIN_SIZE.width, Math.round(width))
+      : SHADER_ELEMENT_MIN_SIZE.width,
+    height: Number.isFinite(height)
+      ? Math.max(SHADER_ELEMENT_MIN_SIZE.height, Math.round(height))
+      : SHADER_ELEMENT_MIN_SIZE.height,
   };
 }
 

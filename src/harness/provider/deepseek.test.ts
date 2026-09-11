@@ -86,4 +86,30 @@ describe("DeepSeekClient", () => {
 
     expect(() => new DeepSeekClient({ apiKey: "" })).toThrow();
   });
+
+  it("reports the internal timeout as timeout, not cancelled", async () => {
+    const fetchImpl = (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    const client = new DeepSeekClient({ apiKey: "key", timeoutMs: 5, fetch: fetchImpl });
+    await expect(client.complete({ model: "deepseek-v4-flash", messages: [] }))
+      .rejects.toMatchObject({ code: "timeout" });
+  });
+
+  it("still reports caller abort as cancelled mid-flight", async () => {
+    const fetchImpl = (_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("aborted", "AbortError"));
+        });
+      });
+    const client = new DeepSeekClient({ apiKey: "key", timeoutMs: 60_000, fetch: fetchImpl });
+    const controller = new AbortController();
+    const pending = client.complete({ model: "deepseek-v4-flash", messages: [], signal: controller.signal });
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ code: "cancelled" });
+  });
 });

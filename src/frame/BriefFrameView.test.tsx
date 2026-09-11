@@ -5,6 +5,9 @@ import { BRAINSTORM_OPENING_PROMPT } from "../router/brainstorm-session";
 import { createEmptyBriefContent, type BriefFrame } from "../session/model";
 import { BriefFrameView } from "./BriefFrameView";
 
+// Rendering + validation is CPU-bound under full-suite parallel load; avoid 5s default-timeout flakes.
+vi.setConfig({ testTimeout: 30_000 });
+
 function createBriefFrame(): BriefFrame {
   return {
     id: "brief-1",

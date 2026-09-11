@@ -5,6 +5,7 @@ import type { BridgeElementTarget, BridgeEventMessage, BridgeHierarchySnapshot, 
 import type { CanvasFrame, Point } from "../canvas/types";
 import type { ShapeVariantId } from "../editor/tools";
 import { renderFrameDocument } from "./render-document";
+import { injectTokenTheme } from "./token-theme";
 import { injectWireframeTheme } from "./wireframe-theme";
 import { ShapePreview } from "./shape-geometry";
 
@@ -31,6 +32,11 @@ interface FrameViewProps {
   onCreationPointerMove?: (frameId: string, point: Point, pointerId: number) => void;
   onCreationPointerUp?: (frameId: string, point: Point, pointerId: number) => void;
   onCreationPointerCancel?: (frameId: string, pointerId: number) => void;
+  /**
+   * Active theme CSS variables for design-mode frames. Wireframe frames ignore
+   * this and keep the neutral grayscale theme.
+   */
+  tokenCss?: string;
 }
 
 interface BridgeViewState {
@@ -116,6 +122,7 @@ export const FrameView = memo(function FrameView({
   onCreationPointerMove,
   onCreationPointerUp,
   onCreationPointerCancel,
+  tokenCss,
 }: FrameViewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [creationPreview, setCreationPreview] = useState<{ start: Point; end: Point } | null>(null);
@@ -254,7 +261,7 @@ export const FrameView = memo(function FrameView({
     onBridgeSnapshot,
   ]);
 
-  const bridgeSrcDoc = renderFrameDocument(frame.srcDoc, frame.mode, bridgeSession);
+  const bridgeSrcDoc = renderFrameDocument(frame.srcDoc, frame.mode, bridgeSession, tokenCss);
 
   const getCreationPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
     const iframe = iframeRef.current;
@@ -328,7 +335,11 @@ export const FrameView = memo(function FrameView({
 
   const openFullPreview = () => {
     const previewDoc =
-      frame.mode === "wireframe" ? injectWireframeTheme(frame.srcDoc) : frame.srcDoc;
+      frame.mode === "wireframe"
+        ? injectWireframeTheme(frame.srcDoc)
+        : tokenCss
+          ? injectTokenTheme(frame.srcDoc, tokenCss)
+          : frame.srcDoc;
     const blob = new Blob([previewDoc], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank", "noopener");

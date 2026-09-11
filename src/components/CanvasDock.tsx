@@ -27,7 +27,7 @@ import { getToolsForCanvasCategory, isToolAvailable, normalizeActiveTool, SHAPE_
 import type { ActiveTool } from "../editor/model";
 import { getFramePresetSectionsForCanvasCategory, type DeviceCategory, type FramePreset } from "../frame/presets";
 import type { CanvasCategory } from "../persistence/local-projects";
-import type { PaperShaderId } from "../shaders";
+import type { ShaderId } from "../shaders";
 import { ShaderMenu } from "./ShaderMenu";
 
 interface CanvasDockProps {
@@ -39,7 +39,7 @@ interface CanvasDockProps {
   canUndo: boolean;
   canRedo: boolean;
   onAddFrame: (preset: FramePreset) => void;
-  onAddShader: (shaderId: PaperShaderId) => void;
+  onAddShader: (shaderId: ShaderId) => void;
   onFit: () => void;
   onZoomIn: () => void;
   onZoomOut: () => void;
@@ -216,7 +216,7 @@ export function CanvasDock({
       </div>
 
       <div className="shader-control" ref={shaderControlRef}>
-        {isShaderMenuOpen ? <ShaderMenu onAddShader={onAddShader} /> : null}
+        {isShaderMenuOpen ? <ShaderMenu onAddShader={onAddShader} onClose={onCloseShaderMenu} /> : null}
         <button
           aria-expanded={isShaderMenuOpen}
           aria-haspopup="menu"

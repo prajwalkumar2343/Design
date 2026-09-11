@@ -62,7 +62,7 @@ describe("createLLMClient", () => {
 describe("defaultModelForProvider", () => {
   it("returns a usable default model for every provider", () => {
     expect(defaultModelForProvider("opencode-go")).toBe("deepseek-v4-flash");
-    expect(defaultModelForProvider("codex-chatgpt")).toBe("gpt-5.6-sol");
+    expect(defaultModelForProvider("codex-chatgpt")).toBe("gpt-5.3-codex");
     expect(defaultModelForProvider("gemini")).toBe("gemini-3.7-flash");
   });
 });

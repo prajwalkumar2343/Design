@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   GalleryHorizontal,
   Globe,
@@ -13,7 +13,6 @@ import {
   Copy,
   MoreHorizontal,
   FileText,
-  Star,
   X,
   Plus,
   LayoutGrid,
@@ -263,12 +262,39 @@ export function ProjectLake({
   const [renameValue, setRenameValue] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
   const [showBlankChooser, setShowBlankChooser] = useState(false);
+  // Guards the rename commit so an Enter keypress followed by the input
+  // unmount blur can only commit once per rename session.
+  const renameCommittedRef = useRef(false);
+
+  // Close the card overflow menu on outside pointer-down or Escape so a
+  // keyboard / touch user is never stuck with a stale open menu.
+  useEffect(() => {
+    if (menuId === null) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest(".figma-more-wrap") === null) {
+        setMenuId(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuId(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuId]);
 
   const filtered = useFilteredProjects(projects, kindFilter, query);
   const hasProjects = projects.length > 0;
-  const recent = filtered.slice(0, 12);
+  // Show every matching file. The lake caps at 24 stored projects, and an
+  // arbitrary 12-card cut made files look missing / unopenable.
+  const recent = filtered;
 
   const handleRenameCommit = (id: string) => {
+    if (renameCommittedRef.current) return;
+    renameCommittedRef.current = true;
     const v = renameValue.trim();
     if (v && onRename) onRename(id, v);
     setRenameId(null);
@@ -451,17 +477,6 @@ export function ProjectLake({
                         </div>
 
                         <div className="figma-file-actions">
-                          <button
-                            className="figma-icon-btn"
-                            onClick={() => {
-                              // star placeholder — Figma has star
-                            }}
-                            type="button"
-                            aria-label="Star file"
-                            title="Star"
-                          >
-                            <Star size={14} />
-                          </button>
                           <div className="figma-more-wrap">
                             <button
                               className={`figma-icon-btn${isMenuOpen ? " is-active" : ""}`}
@@ -478,6 +493,7 @@ export function ProjectLake({
                                 <button
                                   role="menuitem"
                                   onClick={() => {
+                                    renameCommittedRef.current = false;
                                     setRenameId(p.id);
                                     setRenameValue(p.name);
                                     setMenuId(null);

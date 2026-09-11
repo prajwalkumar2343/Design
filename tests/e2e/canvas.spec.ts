@@ -10,6 +10,15 @@ async function openCanvas(page: Page) {
   await expect(page.locator(worldSelector)).toBeVisible();
 }
 
+/** Current canvas zoom, for converting measured pixels into design units. */
+async function readZoom(page: Page) {
+  return page.evaluate(() => {
+    const world = document.querySelector('[data-testid="canvas-world"]');
+    const matrix = new DOMMatrixReadOnly(getComputedStyle(world!).transform);
+    return matrix.a;
+  });
+}
+
 async function worldTransform(page: Page) {
   return page.locator(worldSelector).evaluate((element) => getComputedStyle(element).transform);
 }
@@ -46,7 +55,11 @@ async function findBackgroundPoint(page: Page) {
             target &&
             surfaceElement.contains(target) &&
             !target.closest("[data-frame-id]") &&
-            !(target instanceof HTMLIFrameElement)
+            !(target instanceof HTMLIFrameElement) &&
+            // Floating panels and docks overlay the canvas but are not
+            // canvas: gestures over them scroll the panel instead of
+            // moving the world.
+            !target.closest("[data-canvas-control]")
           );
         }) ?? null
       );
@@ -356,6 +369,50 @@ test.describe("infinite canvas infrastructure", () => {
     await expect(textTool).toHaveAttribute("aria-pressed", "true");
   });
 
+  test("types straight into a fresh text layer with character-level backspace", async ({ page }) => {
+    await openCanvas(page);
+    const frame = page.locator('[data-frame-id="desktop"]');
+    const preview = frame.locator("iframe").contentFrame();
+
+    const textTool = page.getByTestId("tool-button-text");
+    await textTool.click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box) throw new Error("The active frame creation layer is unavailable");
+
+    const start = { x: box.x + box.width * 0.35, y: box.y + box.height * 0.4 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 180, start.y + 30, { steps: 4 });
+    await page.mouse.up();
+
+    // The fresh layer enters editing immediately, so keystrokes reach the
+    // text instead of triggering tool shortcuts.
+    const textLayer = preview.locator('[data-design-tool-kind="text"]').last();
+    await expect(textLayer).toHaveAttribute("data-design-tool-editing", "true");
+    await page.keyboard.type("Hello", { delay: 25 });
+    await expect(textLayer).toHaveText("Hello");
+
+    // No focus ring and no selection chrome while the caret is active.
+    await expect(textLayer).toHaveCSS("outline-style", "none");
+    await expect(page.getByTestId("node-selection-box")).toHaveCount(0);
+
+    // Backspace edits a character; it must never delete the whole layer.
+    await page.keyboard.press("Backspace");
+    await expect(textLayer).toHaveText("Hell");
+    await expect(preview.locator('[data-design-tool-kind="text"]')).toHaveCount(1);
+
+    // Enter commits; editing chrome clears for the committed layer.
+    await page.keyboard.press("Enter");
+    await expect(textLayer).not.toHaveAttribute("data-design-tool-editing", "true");
+
+    // Deleting the committed selection still removes the layer itself.
+    await page.getByTestId("tool-button-select").click();
+    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+    await page.keyboard.press("Delete");
+    await expect(preview.locator('[data-design-tool-kind="text"]')).toHaveCount(0);
+  });
+
   test("undoes and redoes a frame move through the editor shortcuts", async ({ page }) => {
     await openCanvas(page);
 
@@ -557,9 +614,11 @@ test.describe("infinite canvas infrastructure", () => {
 
     const textLayer = preview.locator('[data-design-tool-kind="text"]');
     await expect(textLayer).toHaveAttribute("contenteditable", "true");
+    // Wrapping width is authored in design units — measure through the camera.
+    const zoom = await readZoom(page);
     const bounds = await textLayer.boundingBox();
-    expect(bounds && bounds.width).toBeGreaterThan(150);
-    expect(bounds && bounds.height).toBeLessThan(100);
+    expect(bounds && bounds.width / zoom).toBeGreaterThan(150);
+    expect(bounds && bounds.height / zoom).toBeLessThan(100);
     await expect(textLayer).toHaveCSS("white-space", "pre-wrap");
     await expect(textLayer).toHaveCSS("line-height", "24px");
   });

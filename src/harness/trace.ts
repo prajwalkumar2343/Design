@@ -15,6 +15,8 @@ export type TraceEventType =
   | "main/admission-failed"
   | "wireframe/created"
   | "wireframe/edited"
+  | "concept/proposed"
+  | "concept/selected"
   | "turn/ended"
   | "error";
 

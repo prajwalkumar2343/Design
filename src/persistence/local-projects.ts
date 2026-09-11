@@ -324,19 +324,21 @@ export function loadProjectIndex(): LocalProjectRecord[] {
   }
 }
 
-export function saveProjectIndex(records: LocalProjectRecord[]): void {
+export function saveProjectIndex(records: LocalProjectRecord[]): boolean {
   const storage = safeStorage();
-  if (!storage) return;
+  if (!storage) return false;
   try {
     const sorted = [...records].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_PROJECTS);
     storage.setItem(LS_KEY_PROJECTS, JSON.stringify(sorted));
+    return true;
   } catch {
     // quota exceeded — try to drop oldest and retry once
     try {
       const trimmed = [...records].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, MAX_PROJECTS - 4));
       storage.setItem(LS_KEY_PROJECTS, JSON.stringify(trimmed));
+      return true;
     } catch {
-      // give up silently
+      return false;
     }
   }
 }

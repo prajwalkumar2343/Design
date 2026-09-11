@@ -1,5 +1,5 @@
 import type { Point, Rect, Size } from "../canvas/types";
-import { isPaperShaderId, type PaperShaderId } from "./registry";
+import { isShaderId, type ShaderId } from "./registry";
 
 /**
  * A shader placed directly on the infinite canvas (world coordinates).
@@ -8,14 +8,14 @@ import { isPaperShaderId, type PaperShaderId } from "./registry";
  */
 export interface CanvasShaderElement extends Rect {
   id: string;
-  shaderId: PaperShaderId;
+  shaderId: ShaderId;
 }
 
 export const SHADER_ELEMENT_DEFAULT_SIZE: Size = { width: 340, height: 240 };
 export const SHADER_ELEMENT_MIN_SIZE: Size = { width: 96, height: 72 };
 
 export function createCanvasShaderElement(shaderId: string, worldCenter: Point): CanvasShaderElement | null {
-  if (!isPaperShaderId(shaderId)) return null;
+  if (!isShaderId(shaderId)) return null;
   return {
     id: createElementId("shader"),
     shaderId,

@@ -8,8 +8,10 @@ interface WorkspaceHeaderProps {
   projectMeta?: string;
   canExport?: boolean;
   onImportFile?: (file: File) => void | Promise<void>;
+  onImportHtmlFile?: (file: File) => void | Promise<void>;
   onExport?: () => void;
   onExportFigma?: () => void;
+  onExportCode?: () => void;
   persistenceFeedback?: { kind: "success" | "error"; message: string } | null;
   onShowLake?: () => void;
   lakeCount?: number;
@@ -24,8 +26,10 @@ export function WorkspaceHeader({
   projectMeta,
   canExport = false,
   onImportFile,
+  onImportHtmlFile,
   onExport,
   onExportFigma,
+  onExportCode,
   persistenceFeedback,
   onShowLake,
   lakeCount,
@@ -91,12 +95,40 @@ export function WorkspaceHeader({
             data-testid="import-project-button"
             onClick={(event) => {
               event.stopPropagation();
-              event.currentTarget.parentElement?.querySelector<HTMLInputElement>("input[type=file]")?.click();
+              event.currentTarget.parentElement?.querySelector<HTMLInputElement>('[data-testid="import-project-input"]')?.click();
             }}
             type="button"
           >
             Import
           </button>
+          {onImportHtmlFile ? (
+            <>
+              <input
+                accept=".html,.htm,text/html"
+                aria-label="Choose HTML file to import onto the canvas"
+                className="workspace-import-input"
+                data-testid="import-html-input"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) void onImportHtmlFile?.(file);
+                }}
+                type="file"
+              />
+              <button
+                className="workspace-file-button"
+                data-testid="import-html-button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  event.currentTarget.parentElement?.querySelector<HTMLInputElement>('[data-testid="import-html-input"]')?.click();
+                }}
+                type="button"
+                title="Import a saved .html page as a live design frame"
+              >
+                Import HTML
+              </button>
+            </>
+          ) : null}
           {canExport ? (
             <>
               <button
@@ -121,6 +153,20 @@ export function WorkspaceHeader({
               >
                 Export .fig
               </button>
+              {onExportCode ? (
+                <button
+                  className="workspace-file-button workspace-export-code-button"
+                  data-testid="export-code-button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onExportCode();
+                  }}
+                  type="button"
+                  title="Download the working HTML code for every page on this canvas"
+                >
+                  Export Code
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>

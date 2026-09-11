@@ -84,7 +84,7 @@ describe("CodexClient.chat", () => {
 
     const result = await client.chat({ messages: [{ role: "user", content: "hi" }] });
 
-    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.6-sol");
+    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.3-codex");
     expect(result.model).toBe(DEFAULT_CODEX_MODEL);
     expect(JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).model)
       .toBe(DEFAULT_CODEX_MODEL);

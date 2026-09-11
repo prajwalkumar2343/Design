@@ -450,12 +450,12 @@ export class BrainstormingAgentHarness {
       return "failed";
     }
 
-    if (tool.permission === "ask" && !this.denyAsk) {
+    if (tool.permission !== "allow") {
       let allowed = false;
-      if (this.onPermissionRequest) {
-        allowed = await this.onPermissionRequest(toolCall.name, args);
-      } else {
-        allowed = true;
+      if (tool.permission === "ask" && !this.denyAsk) {
+        allowed = this.onPermissionRequest
+          ? await this.onPermissionRequest(toolCall.name, args)
+          : true;
       }
       if (!allowed) {
         const content = `Permission denied for tool ${toolCall.name}`;

@@ -162,7 +162,10 @@ function ColorField({
         value={draft}
         placeholder={isMixed ? "Mixed" : "—"}
         onChange={(event) => setDraft(event.target.value)}
-        onBlur={() => {
+        onBlur={(event) => {
+          // Focus moving inside this field (e.g. a palette swatch) is not a
+          // commit — the click handler owns that gesture.
+          if (event.relatedTarget instanceof Node && wrapRef.current?.contains(event.relatedTarget)) return;
           const next = draft.trim();
           if (!next || next === value) return;
           commit(next);

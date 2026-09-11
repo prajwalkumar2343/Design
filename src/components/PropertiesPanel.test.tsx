@@ -112,6 +112,32 @@ describe("PropertiesPanel color field", () => {
     expect(screen.queryByTestId("color-popover-Fill")).toBeNull();
   });
 
+  it("lets the swatch win over a half-typed draft in the text input", () => {
+    const onEditNodeStyle = vi.fn();
+    render(<PropertiesPanel {...baseProps} onEditNodeStyle={onEditNodeStyle} />);
+    fireEvent.click(screen.getByTestId("color-swatch-Fill"));
+    const input = screen.getByLabelText("Fill");
+    fireEvent.change(input, { target: { value: "#123456" } });
+
+    // Real browsers blur the input on swatch mousedown; committing the draft
+    // there unmounts the popover and the swatch click is lost.
+    const swatch = screen.getByTestId("color-option-#e5484d");
+    fireEvent.blur(input, { relatedTarget: swatch });
+    fireEvent.click(swatch);
+
+    expect(onEditNodeStyle).toHaveBeenCalledTimes(1);
+    expect(onEditNodeStyle).toHaveBeenCalledWith("background-color", "#e5484d");
+  });
+
+  it("still commits the typed value when focus leaves the field", () => {
+    const onEditNodeStyle = vi.fn();
+    render(<PropertiesPanel {...baseProps} onEditNodeStyle={onEditNodeStyle} />);
+    const input = screen.getByLabelText("Fill");
+    fireEvent.change(input, { target: { value: "#123456" } });
+    fireEvent.blur(input, { relatedTarget: document.body });
+    expect(onEditNodeStyle).toHaveBeenCalledWith("background-color", "#123456");
+  });
+
   it("marks the active swatch when the fill matches", () => {
     const filled: OverlayBridgeTargetState = {
       ...entry,

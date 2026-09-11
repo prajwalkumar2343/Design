@@ -60,13 +60,15 @@ test.describe("canvas comments", () => {
     const heading = preview.getByRole("heading", { name: "Make room for better ideas." });
 
     await page.getByTestId("tool-button-comment").click();
-    await heading.click({ position: { x: 200, y: 30 } });
+    const headingBox = (await heading.boundingBox())!;
+    // Fractional offsets keep the taps inside the heading at any camera zoom.
+    await page.mouse.click(headingBox.x + headingBox.width * 0.3, headingBox.y + headingBox.height * 0.4);
     await page.getByTestId("comment-input").fill("First comment");
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("comment-popover")).toHaveCount(0);
     await expect(page.getByTestId("comment-marker")).toHaveCount(1);
 
-    await heading.click({ position: { x: 400, y: 50 } });
+    await page.mouse.click(headingBox.x + headingBox.width * 0.7, headingBox.y + headingBox.height * 0.6);
     await expect(page.getByTestId("comment-marker")).toHaveCount(2);
     await expect(page.getByTestId("comment-input")).toBeFocused();
     await expect(page.getByTestId("comment-input")).toHaveValue("");

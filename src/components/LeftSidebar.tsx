@@ -138,7 +138,9 @@ function LayerRow({
   const displayName = tree.name;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(displayName);
-  useEffect(() => setDraft(displayName), [displayName]);
+  useEffect(() => {
+    if (editing) setDraft(displayName);
+  }, [editing, displayName]);
   const saveName = () => {
     const next = draft.trim();
     if (next && next !== displayName) onRenameNode(target.elementId, next);

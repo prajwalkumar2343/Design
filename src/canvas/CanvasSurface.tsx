@@ -789,6 +789,11 @@ export function CanvasSurface({
     (id: string) => {
       const isActive = getActiveProjectId() === id || routeProjectId === id;
       const nextIdx = deleteLocalProject(id);
+      if (!nextIdx) {
+        refreshLocalProjects();
+        showPersistenceFeedback({ kind: "error", message: "Could not delete that project — storage is unavailable." });
+        return;
+      }
       setLocalProjects(nextIdx.map(({ data: _d, ...rest }) => rest));
       if (isActive) {
         const nextActive = getActiveProjectId();
@@ -824,7 +829,11 @@ export function CanvasSurface({
 
   const handleRenameLakeProject = useCallback(
     (id: string, name: string) => {
-      renameLocalProject(id, name);
+      if (!renameLocalProject(id, name)) {
+        refreshLocalProjects();
+        showPersistenceFeedback({ kind: "error", message: "Could not rename that project." });
+        return;
+      }
       refreshLocalProjects();
       showPersistenceFeedback({ kind: "success", message: "Project renamed." });
     },

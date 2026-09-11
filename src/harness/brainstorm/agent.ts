@@ -353,7 +353,6 @@ export class BrainstormingAgentHarness {
     for (const message of messages) {
       if (message.role === "tool") {
         if (!callIds.has(message.toolCallId)) continue;
-        callIds.delete(message.toolCallId);
       } else if (message.role === "assistant" && message.toolCalls?.length) {
         for (const call of message.toolCalls) callIds.add(call.id);
       }
@@ -361,7 +360,26 @@ export class BrainstormingAgentHarness {
       kept.push(message);
       used += messageSize(message);
     }
-    return kept;
+    // The budget break can strand a tool-call without its result (and, after
+    // dropping the call, a result without its call). Providers reject
+    // unpaired tool messages, so drop them until every pair is complete.
+    for (;;) {
+      const calls = new Set<string>();
+      const results = new Set<string>();
+      for (const message of kept) {
+        if (message.role === "assistant") {
+          for (const call of message.toolCalls ?? []) calls.add(call.id);
+        } else if (message.role === "tool") {
+          results.add(message.toolCallId);
+        }
+      }
+      const unpaired = kept.findIndex((message) =>
+        (message.role === "assistant" &&
+          (message.toolCalls ?? []).some((call) => !results.has(call.id))) ||
+        (message.role === "tool" && !calls.has(message.toolCallId)));
+      if (unpaired === -1) return kept;
+      kept.splice(unpaired, 1);
+    }
   }
 
   private buildToolContext(traceId: string): HarnessToolContext {

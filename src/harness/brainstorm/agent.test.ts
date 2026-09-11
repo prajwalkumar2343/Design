@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { BrainstormingAgentHarness, BrainstormingAgentError } from "./agent";
+import type { ProviderMessage } from "../provider/types";
 import { ScriptedProvider, type ScriptedTurn } from "../provider/scripted";
 import { TraceLog } from "../trace";
 import { MainAgentHarness } from "../main/agent";
@@ -192,6 +193,40 @@ describe("BrainstormingAgentHarness", () => {
   it("propagates provider failures as typed errors", async () => {
     const { harness } = createHarness([{ kind: "error", message: "down" }]);
     await expect(harness.handleTurn("hello")).rejects.toMatchObject({ code: "provider-error" });
+  });
+
+  it("never emits a tool-call without its result when trimming context", () => {
+    const { harness } = createHarness([{ kind: "text", content: "unused" }]);
+    const trimToBudget = (harness as unknown as {
+      trimToBudget(messages: ProviderMessage[], maxChars: number): ProviderMessage[];
+    }).trimToBudget.bind(harness);
+
+    const big = "x".repeat(500);
+    const messages: ProviderMessage[] = [
+      { role: "system", content: "sys" },
+      { role: "user", content: "hi" },
+      { role: "assistant", content: "", toolCalls: [{ id: "call-1", name: "tool", arguments: "{}" }] },
+      { role: "tool", toolCallId: "call-1", content: big },
+      { role: "assistant", content: "", toolCalls: [{ id: "call-2", name: "tool", arguments: "{}" }] },
+      { role: "tool", toolCallId: "call-2", content: big },
+    ];
+
+    // Budget cuts between the second tool-call and its result.
+    const trimmed = trimToBudget(messages, 600);
+    const calls = new Set<string>();
+    const results = new Set<string>();
+    for (const message of trimmed) {
+      if (message.role === "assistant") {
+        for (const call of message.toolCalls ?? []) calls.add(call.id);
+      } else if (message.role === "tool") {
+        results.add(message.toolCallId);
+      }
+    }
+    expect([...calls].every((id) => results.has(id))).toBe(true);
+    expect([...results].every((id) => calls.has(id))).toBe(true);
+    // The stranded call is the one the budget actually cut.
+    expect(calls.has("call-1")).toBe(true);
+    expect(calls.has("call-2")).toBe(false);
   });
 
   it("keeps tool-call/result pairs when the context budget forces trimming", async () => {

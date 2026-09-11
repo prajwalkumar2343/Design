@@ -228,6 +228,58 @@ describe("Figma .fig export", () => {
     expect(star.starInnerScale).toBeCloseTo(0.382, 3);
   });
 
+  it("never emits NaN or negative geometry from malformed attributes", async () => {
+    const doc = await parse(input({
+      nodes: {
+        "rect-1": node("rect-1", "desktop"),
+        "rect-2": node("rect-2", "desktop"),
+        "line-1": node("line-1", "desktop"),
+        "arrow-1": node("arrow-1", "desktop"),
+      },
+      bridgeTargets: {
+        "desktop:rect-1": target("desktop", "rect-1", {
+          ...created,
+          "data-design-tool-kind": "rectangle",
+          "data-design-tool-bounds": bounds(0, 0, 100, 50),
+          "data-design-tool-stroke": "#222222",
+          "data-design-tool-stroke-width": "not-a-number",
+          "data-design-tool-radius": "-5",
+        }),
+        "desktop:rect-2": target("desktop", "rect-2", {
+          ...created,
+          "data-design-tool-kind": "rectangle",
+          "data-design-tool-bounds": JSON.stringify({ x: 0, y: 0, width: -10, height: 20 }),
+        }),
+        "desktop:line-1": target("desktop", "line-1", {
+          ...created,
+          "data-design-tool-kind": "line",
+          "data-design-tool-bounds": bounds(0, 0, 10, 10),
+          "data-design-tool-points": JSON.stringify([{ x: 0, y: 0 }, { x: "bad", y: 10 }]),
+        }),
+        "desktop:arrow-1": target("desktop", "arrow-1", {
+          ...created,
+          "data-design-tool-kind": "arrow",
+          "data-design-tool-bounds": bounds(0, 0, 10, 10),
+          "data-design-tool-points": JSON.stringify([{ x: 5, y: 5 }, { x: 5, y: 5 }]),
+        }),
+      },
+    }));
+
+    const rect = byName(doc, "Layer rect-1")!;
+    expect(rect.type).toBe("ROUNDED_RECTANGLE");
+    expect(rect.cornerRadius).toBe(0);
+    expect(rect.strokeWeight).toBe(2);
+    expect(byName(doc, "Layer rect-2")).toBeUndefined();
+    expect(byName(doc, "Layer line-1")).toBeUndefined();
+    expect(byName(doc, "Layer arrow-1")).toBeUndefined();
+    for (const item of doc.nodes) {
+      if (item.size) {
+        expect(Number.isFinite(item.size.x)).toBe(true);
+        expect(Number.isFinite(item.size.y)).toBe(true);
+      }
+    }
+  });
+
   it("converts text layers into TEXT nodes with characters and typography", async () => {
     const doc = await parse(input({
       nodes: { "text-1": node("text-1", "desktop") },

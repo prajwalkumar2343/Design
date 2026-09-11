@@ -86,10 +86,17 @@ export {
   setSelectionCommand,
   startBrainstormSessionCommand,
   transitionBrainstormSessionCommand,
+  removeTokenCommand,
+  removeTokenSetCommand,
+  removeTokenThemeCommand,
+  switchTokenThemeCommand,
   switchPageCommand,
   updateBriefFieldCommand,
   updateBriefReferenceCommand,
   updateConfirmedDecisionCommand,
+  upsertTokenCommand,
+  upsertTokenSetCommand,
+  upsertTokenThemeCommand,
   wireframeCreatedCommand,
   type EditorCommand,
 } from "./commands";
@@ -98,6 +105,7 @@ export {
   editorReducer,
   EditorReducerError,
   type EditorAction,
+  type TokenAction,
 } from "./reducer";
 export {
   createEditorStore,

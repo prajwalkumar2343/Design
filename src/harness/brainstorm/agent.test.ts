@@ -146,7 +146,7 @@ describe("BrainstormingAgentHarness", () => {
   });
 
   it("surfaces permission-ask denial for high-impact tools", async () => {
-    const { harness } = createHarness([
+    const { harness, provider, trace } = createHarness([
       {
         kind: "tool",
         toolCalls: [{
@@ -170,6 +170,13 @@ describe("BrainstormingAgentHarness", () => {
     expect(result.toolCallCount).toBe(1);
     expect(harness.getSession().getSnapshot().briefFrame?.content.goals ?? []).toEqual([]);
     expect(result.assistantMessage).toContain("hold off");
+
+    // The tool must be denied before executing: a real run would spend an
+    // extra provider request inside the delegated Main Agent.
+    expect(provider.requests).toHaveLength(2);
+    const failures = trace.byType("brainstorm/tool-failed");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]!.data).toMatchObject({ reason: "permission-denied" });
   });
 
   it("stops after a bounded step budget when the model keeps calling tools", async () => {

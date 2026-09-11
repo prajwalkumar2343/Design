@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseFig, type FigDocument } from "openfig-core";
 import { serializeFigmaProject, type FigmaExportInput } from "./figma";
 import type { FrameEntity, NodeEntity } from "../editor/model";
+
+// Zip + kiwi serialization is CPU-bound; under full-suite parallel load the
+// default 5s timeout flakes even though the test passes in isolation.
+vi.setConfig({ testTimeout: 30_000 });
 
 function frame(overrides: Partial<FrameEntity> = {}): FrameEntity {
   return {
@@ -270,5 +274,64 @@ describe("Figma .fig export", () => {
     const documentNode = doc.nodes.find((item) => item.type === "DOCUMENT");
     expect(documentNode).toBeTruthy();
     expect(doc.nodes.some((item) => item.type === "FRAME")).toBe(true);
+  });
+
+  it("matches the real Design FRAME shape (no canvas background fields)", async () => {
+    const doc = await parse(input());
+    const frameNode = byName(doc, "Desktop · 1440 × 900")!;
+    expect(frameNode.type).toBe("FRAME");
+    expect("backgroundColor" in frameNode).toBe(false);
+    expect("backgroundEnabled" in frameNode).toBe(false);
+    expect(frameNode.strokeWeight).toBe(0);
+    expect(frameNode.frameMaskDisabled).toBe(false);
+    expect(frameNode.fillPaints?.length).toBeGreaterThan(0);
+  });
+
+  it("never emits empty text runs (Figma rejects them)", async () => {
+    const doc = await parse(input({
+      nodes: { "text-1": node("text-1", "desktop") },
+      bridgeTargets: {
+        "desktop:text-1": target("desktop", "text-1", {
+          ...created,
+          "data-design-tool-kind": "text",
+          "data-design-tool-bounds": bounds(0, 0, 240, 30),
+          "data-design-tool-fill": "#171717",
+        }, ""),
+      },
+    }));
+    expect(byName(doc, "Layer text-1")!.textData?.characters).toBe(" ");
+  });
+
+  it("carries the message envelope real Figma exports include", async () => {
+    const doc = await parse(input());
+    expect(doc.message.sessionID).toBe(0);
+    expect(doc.message.ackID).toBe(0);
+    expect(Array.isArray(doc.message.blobs)).toBe(true);
+  });
+
+  it("writes document profile and rich file meta like real exports", async () => {
+    const doc = await parse(input());
+    expect(doc.nodes.find((item) => item.type === "DOCUMENT")?.documentColorProfile).toBe("SRGB");
+    expect(doc.meta?.file_name).toBe("brainstorm-session");
+    expect(doc.meta?.exported_at).toBeTypeOf("string");
+    expect(doc.meta?.client_meta?.thumbnail_size).toMatchObject({ width: 320, height: 180 });
+  });
+
+  it("drops stroke paint and weight when a shape has no stroke", async () => {
+    const doc = await parse(input({
+      nodes: { "rect-1": node("rect-1", "desktop") },
+      bridgeTargets: {
+        "desktop:rect-1": target("desktop", "rect-1", {
+          ...created,
+          "data-design-tool-kind": "rectangle",
+          "data-design-tool-bounds": bounds(0, 0, 200, 100),
+          "data-design-tool-fill": "#ff8800",
+          "data-design-tool-radius": "0",
+        }),
+      },
+    }));
+    const rect = byName(doc, "Layer rect-1")!;
+    expect(rect.strokeWeight).toBe(0);
+    expect(rect.strokePaints ?? []).toEqual([]);
   });
 });

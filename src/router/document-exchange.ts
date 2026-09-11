@@ -32,6 +32,7 @@ export type DocumentExchangeErrorCode =
   | "invalid-revision"
   | "reserved-runtime-marker"
   | "reserved-wireframe-theme-marker"
+  | "reserved-token-theme-marker"
   | "stale-revision"
   | "html-too-large"
   | "mode-required"
@@ -104,6 +105,49 @@ export interface CreateWireframeResult {
   htmlBytes: number;
 }
 
+/**
+ * Paper-like agent `write_html` equivalent: create a new full-styled design
+ * document from complete HTML. Unlike createWireframe this path:
+ * - uses design admission (validateCompleteHtml) WITHOUT wireframe
+ *   grayscale/style stripping, so colors, backgrounds, media, and scripts
+ *   are preserved as authored;
+ * - does NOT sanitize executable content: Codex-supplied scripts are
+ *   legitimate design content on this trusted path (consistent with
+ *   replaceHtml in design mode) and stay sandbox-contained at render time;
+ * - proves freshness with expectedSessionRevision but never mutates the
+ *   Brainstorm session (no lifecycle change, no revision bump);
+ * - is refused while a Brainstorm session is actively briefing/wireframing,
+ *   because agent HTML during brainstorming must be wireframe-only
+ *   (consistent with replaceHtml's brainstorm-wireframe-required guard).
+ */
+export interface CreateDesignDocumentInput {
+  mode: "design";
+  expectedSessionRevision: number;
+  documentId: string;
+  pageId: string;
+  frameId: string;
+  documentName: string;
+  pageName: string;
+  frameName: string;
+  html: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  background: string;
+}
+
+export interface CreateDesignDocumentResult {
+  documentId: string;
+  pageId: string;
+  frameId: string;
+  mode: "design";
+  documentRevision: number;
+  sessionRevision: number;
+  affectedFrameIds: string[];
+  htmlBytes: number;
+}
+
 export class DocumentExchangeError extends Error {
   readonly code: DocumentExchangeErrorCode;
   readonly violations?: readonly WireframeViolation[];
@@ -149,17 +193,25 @@ function validateStableId(value: string, field: string): void {
   }
 }
 
-function validateCreateWireframeInput(input: CreateWireframeInput): void {
+function validateCreateDocumentInput(
+  input: CreateWireframeInput | CreateDesignDocumentInput,
+  expectedMode: DocumentMode,
+  minSessionRevision: number,
+): void {
   if (input.mode === undefined) {
-    throw new DocumentExchangeError("mode-required", "Wireframe creation must declare mode wireframe");
+    throw new DocumentExchangeError("mode-required", `Document creation must declare mode ${expectedMode}`);
   }
-  if (input.mode !== "wireframe") {
-    throw new DocumentExchangeError("invalid-mode", "Wireframe creation only accepts mode wireframe");
+  if (input.mode !== expectedMode) {
+    throw new DocumentExchangeError("invalid-mode", `This creation path only accepts mode ${expectedMode}`);
   }
-  if (!Number.isSafeInteger(input.expectedSessionRevision) || input.expectedSessionRevision < 1) {
+  // Wireframes require an active Brainstorm session (revision >= 1); design
+  // documents may be created on a blank canvas whose session is still at
+  // revision 0, so the floor differs per mode. Either way the caller must
+  // prove freshness by matching the live session revision exactly.
+  if (!Number.isSafeInteger(input.expectedSessionRevision) || input.expectedSessionRevision < minSessionRevision) {
     throw new DocumentExchangeError(
       "invalid-session-revision",
-      "Expected brainstorm session revision must be a positive safe integer",
+      `Expected session revision must be a safe integer of at least ${minSessionRevision}`,
     );
   }
   validateStableId(input.documentId, "documentId");
@@ -182,11 +234,19 @@ function validateCreateWireframeInput(input: CreateWireframeInput): void {
     }
   }
   if (!Number.isFinite(input.x) || !Number.isFinite(input.y)) {
-    throw new DocumentExchangeError("invalid-position", "Wireframe x and y must be finite numbers");
+    throw new DocumentExchangeError("invalid-position", "Document x and y must be finite numbers");
   }
   if (!Number.isFinite(input.width) || input.width <= 0 || !Number.isFinite(input.height) || input.height <= 0) {
-    throw new DocumentExchangeError("invalid-size", "Wireframe width and height must be positive finite numbers");
+    throw new DocumentExchangeError("invalid-size", "Document width and height must be positive finite numbers");
   }
+}
+
+function validateCreateWireframeInput(input: CreateWireframeInput): void {
+  validateCreateDocumentInput(input, "wireframe", 1);
+}
+
+function validateCreateDesignDocumentInput(input: CreateDesignDocumentInput): void {
+  validateCreateDocumentInput(input, "design", 0);
 }
 
 function validateDocumentMode(mode: unknown): asserts mode is DocumentMode {
@@ -369,6 +429,88 @@ export class DocumentExchangeService {
       mode: "wireframe",
       documentRevision: after.documents[input.documentId].revision,
       previousSessionRevision: session.revision,
+      sessionRevision: after.session.revision,
+      affectedFrameIds: [input.frameId],
+      htmlBytes: validation.htmlBytes,
+    };
+  }
+
+  createDesignDocument(input: CreateDesignDocumentInput): CreateDesignDocumentResult {
+    validateCreateDesignDocumentInput(input);
+
+    const before = this.store.getState();
+    const session = before.session;
+    const lifecycle = session.lifecycle;
+    if (lifecycle === "briefing" || lifecycle === "wireframing") {
+      throw new DocumentExchangeError(
+        "brainstorm-wireframe-required",
+        "Active Brainstorm sessions only accept agent HTML in wireframe mode",
+      );
+    }
+    if (session.revision !== input.expectedSessionRevision) {
+      throw new DocumentExchangeError(
+        "stale-session-revision",
+        `Brainstorm session is at revision ${session.revision}, not ${input.expectedSessionRevision}`,
+      );
+    }
+    if (before.documents[input.documentId]) {
+      throw new DocumentExchangeError("duplicate-document-id", `Document already exists: ${input.documentId}`);
+    }
+    if (before.pages[input.pageId]) {
+      throw new DocumentExchangeError("duplicate-page-id", `Page already exists: ${input.pageId}`);
+    }
+    if (before.frames[input.frameId]) {
+      throw new DocumentExchangeError("duplicate-frame-id", `Frame already exists: ${input.frameId}`);
+    }
+
+    // Design admission only: complete doctype document, size bound, and no
+    // reserved bridge/theme markers. Full author styling (including scripts)
+    // is preserved; the iframe sandbox contains execution at render time.
+    const validation = validateRouterHtml(input.html);
+    const document: DocumentEntity = {
+      id: input.documentId,
+      name: input.documentName.trim(),
+      mode: "design",
+      srcDoc: input.html,
+      revision: 1,
+      rootNodeIds: [],
+      pageIds: [input.pageId],
+    };
+
+    // One undoable transaction; the store restores the pre-transaction state
+    // if any command below throws, so failed creations leave live state and
+    // history untouched.
+    this.store.transact(`Create design document ${document.name}`, () => {
+      this.store.execute({ type: "document/create", document }, { history: "skip" });
+      this.store.execute(createPageCommand({
+        id: input.pageId,
+        documentId: input.documentId,
+        name: input.pageName.trim(),
+        frameIds: [input.frameId],
+      }), { history: "skip" });
+      this.store.execute(createFrameCommand({
+        id: input.frameId,
+        name: input.frameName.trim(),
+        documentId: input.documentId,
+        pageId: input.pageId,
+        mode: "design",
+        x: input.x,
+        y: input.y,
+        width: input.width,
+        height: input.height,
+        srcDoc: input.html,
+        background: input.background,
+      }), { history: "skip" });
+      this.store.execute(switchPageCommand(input.pageId), { history: "skip" });
+    });
+
+    const after = this.store.getState();
+    return {
+      documentId: input.documentId,
+      pageId: input.pageId,
+      frameId: input.frameId,
+      mode: "design",
+      documentRevision: after.documents[input.documentId].revision,
       sessionRevision: after.session.revision,
       affectedFrameIds: [input.frameId],
       htmlBytes: validation.htmlBytes,

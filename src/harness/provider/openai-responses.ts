@@ -167,10 +167,13 @@ export class OpenAIResponsesClient implements ModelProvider {
         signal: controller.signal,
       });
     } catch (error) {
-      if (signal?.aborted || controller.signal.aborted) {
+      if (signal?.aborted) {
         throw new ProviderError("cancelled", "Provider request was cancelled", { cause: error });
       }
-      if (error instanceof Error && error.name === "TimeoutError") {
+      if (
+        controller.signal.aborted ||
+        (error instanceof Error && error.name === "TimeoutError")
+      ) {
         throw new ProviderError("timeout", "Provider request timed out", { cause: error });
       }
       throw new ProviderError("network", "Provider request failed", { cause: error });

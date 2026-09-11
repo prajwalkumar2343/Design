@@ -8,6 +8,7 @@ import {
   WIREFRAME_THEME_CSS,
   WIREFRAME_THEME_MARKER,
 } from "./wireframe-theme";
+import { TOKEN_THEME_MARKER } from "./token-theme";
 
 const bridgeSession = {
   channel: "frame-desktop-channel",
@@ -67,5 +68,37 @@ describe("Canvas-owned wireframe rendering", () => {
     expect(() => validateRouterHtml(
       `<!doctype html><html><head><style ${WIREFRAME_THEME_MARKER}=\"1\"></style></head><body></body></html>`,
     )).toThrowError(expect.objectContaining({ code: "reserved-wireframe-theme-marker" }));
+  });
+});
+
+describe("Canvas-owned token theme rendering", () => {
+  const tokenCss = ":root {\n  --color-accent-primary: #3b74c2;\n}\n";
+
+  it("injects active-theme variables into design frames only", () => {
+    const rendered = renderFrameDocument(completeDocument, "design", bridgeSession, tokenCss);
+
+    expect(countMarker(rendered, TOKEN_THEME_MARKER)).toBe(1);
+    expect(rendered).toContain("--color-accent-primary: #3b74c2;");
+    expect(rendered).toContain(BRIDGE_RUNTIME_MARKER);
+    expect(completeDocument).not.toContain(TOKEN_THEME_MARKER);
+  });
+
+  it("keeps wireframe frames on the neutral theme even when token CSS is present", () => {
+    const rendered = renderFrameDocument(completeDocument, "wireframe", bridgeSession, tokenCss);
+
+    expect(rendered).toContain(WIREFRAME_THEME_MARKER);
+    expect(rendered).not.toContain(TOKEN_THEME_MARKER);
+  });
+
+  it("renders design frames unthemed without token CSS", () => {
+    const rendered = renderFrameDocument(completeDocument, "design", bridgeSession);
+
+    expect(rendered).not.toContain(TOKEN_THEME_MARKER);
+  });
+
+  it("rejects the token theme marker at the HTML admission boundary", () => {
+    expect(() => validateRouterHtml(
+      `<!doctype html><html><head><style ${TOKEN_THEME_MARKER}="1"></style></head><body></body></html>`,
+    )).toThrowError(expect.objectContaining({ code: "reserved-token-theme-marker" }));
   });
 });

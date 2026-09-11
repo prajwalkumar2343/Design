@@ -92,6 +92,18 @@ interface Point {
   y: number;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPoint(value: unknown): value is Point {
+  return (
+    Boolean(value) &&
+    isFiniteNumber((value as Point).x) &&
+    isFiniteNumber((value as Point).y)
+  );
+}
+
 function identityTransform(): { m00: number; m01: number; m02: number; m10: number; m11: number; m12: number } {
   return { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 }
@@ -161,12 +173,19 @@ function convertShapeNode(
   };
 
   const bounds = parseJson(attributes["data-design-tool-bounds"]) as Bounds | null;
-  if (!bounds || typeof bounds.width !== "number" || typeof bounds.height !== "number") return;
+  if (
+    !bounds ||
+    !isFiniteNumber(bounds.x) || !isFiniteNumber(bounds.y) ||
+    !isFiniteNumber(bounds.width) || !isFiniteNumber(bounds.height) ||
+    bounds.width < 0 || bounds.height < 0
+  ) return;
 
   const fill = attributes["data-design-tool-fill"];
   const stroke = attributes["data-design-tool-stroke"];
-  const strokeWidth = Number(attributes["data-design-tool-stroke-width"] || 2);
-  const radius = Number(attributes["data-design-tool-radius"] || 0);
+  const strokeWidthAttr = Number(attributes["data-design-tool-stroke-width"] || 2);
+  const strokeWidth = Number.isFinite(strokeWidthAttr) && strokeWidthAttr >= 0 ? strokeWidthAttr : 2;
+  const radiusAttr = Number(attributes["data-design-tool-radius"] || 0);
+  const radius = Number.isFinite(radiusAttr) && radiusAttr >= 0 ? radiusAttr : 0;
   const name = node.name || kind;
 
   if (kind === "rectangle") {
@@ -251,7 +270,7 @@ function convertShapeNode(
 
   if (kind === "line") {
     const points = parseJson(attributes["data-design-tool-points"]) as Point[] | null;
-    if (!Array.isArray(points) || points.length < 2) return;
+    if (!Array.isArray(points) || points.length < 2 || !points.every(isPoint)) return;
     const start = points[0];
     const end = points[points.length - 1];
     const dx = end.x - start.x;
@@ -294,13 +313,13 @@ function convertShapeNode(
 
   if (kind === "arrow") {
     const points = parseJson(attributes["data-design-tool-points"]) as Point[] | null;
-    if (!Array.isArray(points) || points.length < 2) return;
+    if (!Array.isArray(points) || points.length < 2 || !points.every(isPoint)) return;
     const start = points[0];
     const end = points[points.length - 1];
     const dx = end.x - start.x;
     const dy = end.y - start.y;
     const length = Math.hypot(dx, dy);
-    if (length === 0) return;
+    if (!(length > 0)) return;
     const unitX = dx / length;
     const unitY = dy / length;
     const perpX = -unitY;

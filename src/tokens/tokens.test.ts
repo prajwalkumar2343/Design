@@ -188,7 +188,13 @@ describe("theme resolution", () => {
     expect(colorsEqual("#fff", "rgb(255,255,255)")).toBe(true);
     expect(colorsEqual("#3b74c2", "rgba(59, 116, 194, 0.5)")).toBe(false);
     expect(colorsEqual("#3b74c2", "#e5484d")).toBe(false);
-    expect(colorsEqual("red", "rgb(255, 0, 0)")).toBe(false);
+    expect(colorsEqual("red", "rgb(255, 0, 0)")).toBe(true);
+    expect(colorsEqual("hsl(0, 100%, 50%)", "rgb(255, 0, 0)")).toBe(true);
+    expect(colorsEqual("hsl(120, 100%, 25%)", "rgb(0, 128, 0)")).toBe(true);
+    expect(colorsEqual("rgb(100%, 0%, 0%)", "rgb(255, 0, 0)")).toBe(true);
+    expect(colorsEqual("transparent", "rgba(0, 0, 0, 0)")).toBe(true);
+    expect(colorsEqual("rebeccapurple", "rgb(102, 51, 153)")).toBe(true);
+    expect(colorsEqual("hsl(120, 100%, 50%)", "rgb(0, 0, 255)")).toBe(false);
   });
 
   it("finds hex tokens behind computed rgb() values", () => {

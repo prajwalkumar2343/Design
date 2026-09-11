@@ -270,12 +270,17 @@ export function validateTokenSet(input: unknown, path: string): TokenSet {
     fail("invalid-input", `${path}.tokens`, "tokens must be an object keyed by token id");
   }
   const tokens: Record<string, DesignToken> = {};
+  const names = new Set<string>();
   for (const [key, item] of Object.entries(record.tokens as Record<string, unknown>)) {
     const token = validateToken(item, `${path}.tokens.${key}`);
     if (token.id !== key) {
       fail("invalid-token-id", `${path}.tokens.${key}.id`, "token id must match its key in the set");
     }
     if (tokens[key]) fail("duplicate-token", `${path}.tokens.${key}`, `duplicate token ${key}`);
+    if (names.has(token.name)) {
+      fail("duplicate-token", `${path}.tokens.${key}.name`, `duplicate token name ${token.name}`);
+    }
+    names.add(token.name);
     tokens[key] = token;
   }
   const set: TokenSet = { id, name: record.name, tokens };

@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  CUSTOM_SHADER_IDS,
   PAPER_SHADER_IDS,
+  SHADER_IDS,
   UnsupportedPaperShaderError,
   detectPaperShaderSupport,
   getPaperShaderDefinition,
+  getShaderDefinition,
+  isCustomShaderId,
+  isShaderId,
   loadPaperShader,
 } from "./registry";
 
@@ -63,5 +68,26 @@ describe("detectPaperShaderSupport", () => {
       supported: false,
       reason: "webgl2-unavailable",
     });
+  });
+});
+
+describe("custom shaders", () => {
+  it("registers Ferro Tide alongside the Paper catalog", () => {
+    expect(CUSTOM_SHADER_IDS).toEqual(["ferro-tide"]);
+    expect(SHADER_IDS).toContain("ferro-tide");
+    expect(SHADER_IDS.length).toBe(PAPER_SHADER_IDS.length + CUSTOM_SHADER_IDS.length);
+    expect(isCustomShaderId("ferro-tide")).toBe(true);
+    expect(isCustomShaderId("mesh-gradient")).toBe(false);
+    expect(isShaderId("ferro-tide")).toBe(true);
+    expect(isShaderId("mesh-gradient")).toBe(true);
+    expect(isShaderId("unknown-effect")).toBe(false);
+    expect(getShaderDefinition("ferro-tide")).toEqual({ label: "Ferro Tide" });
+  });
+
+  it("loads the local component with the shared mount contract", async () => {
+    const loaded = await loadPaperShader("ferro-tide");
+    expect(loaded.id).toBe("ferro-tide");
+    expect(loaded.definition.label).toBe("Ferro Tide");
+    expect(typeof loaded.Component).toBe("function");
   });
 });

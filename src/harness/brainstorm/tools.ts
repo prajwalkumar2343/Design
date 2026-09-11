@@ -7,6 +7,7 @@ import type {
   ConfirmedDecision,
   BriefReference,
 } from "../../session/model";
+import type { DocumentMode } from "../../editor/model";
 import { MainAgentHarness } from "../main/agent";
 import type { MainGenerationInput } from "../main/prompts";
 import { TraceLog } from "../trace";
@@ -18,6 +19,9 @@ export interface FrameResolution {
   name: string;
   width: number;
   height: number;
+  mode: DocumentMode;
+  x: number;
+  y: number;
 }
 
 export interface HarnessToolContext {
@@ -33,6 +37,8 @@ export interface HarnessToolContext {
   createId(prefix: string): string;
   /** Resolve a canvas frame to its document and dimensions, or null. */
   resolveFrame(frameId: string): FrameResolution | null;
+  /** All canvas frames in stable reading order (top-to-bottom, left-to-right). */
+  listFrames(): FrameResolution[];
 }
 
 export interface HarnessTool {
@@ -178,6 +184,8 @@ function requireFrame(context: HarnessToolContext, frameId: string): FrameResolu
   }
   return frame;
 }
+
+export { boundResult, requireFrame };
 
 interface WireframePlacementArgs {
   frameName: string;
@@ -367,6 +375,8 @@ function createWireframeOnCanvas(
     htmlBytes: created.htmlBytes,
   };
 }
+
+export { createWireframeOnCanvas };
 
 function replaceFrameHtml(
   context: HarnessToolContext,

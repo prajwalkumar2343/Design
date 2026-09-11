@@ -13,6 +13,7 @@ import {
   tokenTypeForCssProperty,
   TokenValidationError,
   validateToken,
+  validateTokenSet,
   validateTokenStore,
   type DesignToken,
   type TokenStoreState,
@@ -106,6 +107,26 @@ describe("token validation", () => {
       type: "motion",
       value: { duration: "soon", easing: "smoothly" },
     }), "t")).toThrowError(expect.objectContaining({ code: "invalid-token-value" }));
+  });
+
+  it("rejects duplicate token names inside one set", () => {
+    expect(() => validateTokenSet({
+      id: "s",
+      name: "S",
+      tokens: {
+        a: { id: "a", name: "color.accent", type: "color", value: "#ffffff" },
+        b: { id: "b", name: "color.accent", type: "color", value: "#e5484d" },
+      },
+    }, "set")).toThrowError(expect.objectContaining({ code: "duplicate-token" }));
+    // Distinct names still pass.
+    expect(validateTokenSet({
+      id: "s",
+      name: "S",
+      tokens: {
+        a: { id: "a", name: "color.accent", type: "color", value: "#ffffff" },
+        b: { id: "b", name: "color.muted", type: "color", value: "#e5484d" },
+      },
+    }, "set").tokens.b.name).toBe("color.muted");
   });
 
   it("blocks executable content in shadows", () => {

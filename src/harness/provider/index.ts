@@ -12,6 +12,13 @@ export {
   type ScriptedTurn,
 } from "./scripted";
 export {
+  SubscriptionModelProvider,
+  createSubscriptionModelProvider,
+  type ResolvedSubscriptionBackend,
+  type SubscriptionBackendId,
+  type SubscriptionProviderOptions,
+} from "./subscription";
+export {
   ProviderError,
   mapProviderStatus,
   type ModelProvider,

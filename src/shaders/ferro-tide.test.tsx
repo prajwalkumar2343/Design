@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { FERRO_TIDE_MOODS, FerroTide } from "./ferro-tide";
+import { FERRO_TIDE_MOODS, FerroTide, frameDeltaSeconds } from "./ferro-tide";
 
 describe("FerroTide", () => {
   it("ships five named currents starting with Abyss", () => {
@@ -22,5 +22,12 @@ describe("FerroTide", () => {
     // to a labelled placeholder instead of throwing during mount.
     render(<FerroTide width="320px" height="200px" />);
     expect(screen.getByTestId("ferro-tide-fallback")).toBeDefined();
+  });
+
+  it("never advances the simulation by a negative delta", () => {
+    expect(frameDeltaSeconds(1016, 1000)).toBeCloseTo(0.016, 5);
+    expect(frameDeltaSeconds(1100, 1000)).toBeCloseTo(0.05, 5);
+    expect(frameDeltaSeconds(900, 1000)).toBeCloseTo(0.016, 5);
+    expect(frameDeltaSeconds(1000, 1000)).toBeCloseTo(0.016, 5);
   });
 });

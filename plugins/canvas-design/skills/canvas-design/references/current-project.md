@@ -25,6 +25,9 @@ future CLI or host integrations.
 - `src/editor/commands.ts`, `src/editor/reducer.ts`, and `src/editor/store.ts` own typed
   editor commands, immutable state transitions, transactions, and undo/redo. The store's
   `replaceState` boundary is the atomic import replacement path.
+- `src/tokens/` owns the seed token store, sets, tokens, and themes; `src/router/tokens.ts`
+  exposes the Codex-facing `TokensService` (query/mutate with expected revisions).
+  Document transactions preserve token state; do not reset or omit tokens.
 - `src/frame/BriefFrameView.tsx` renders the editable Brief Frame as a canvas artifact.
 - `src/frame/FrameView.tsx` renders normalized documents in `sandbox="allow-scripts"`
   iframes. `src/frame/render-document.ts` selects render-time behavior by mode;
@@ -134,7 +137,7 @@ no Canvas CLI and no direct workspace filesystem router.
 - Embedded session: `kind: "brainstorm-session"`, `schemaVersion: 1`.
 - Exported durable state includes session/Brief/lifecycle/revisions, selection, exact
   document HTML/mode/revisions/metadata, pages, frame geometry/backgrounds, nodes,
-  `activePageId`, and active tool.
+  tokens (sets, tokens, and themes), `activePageId`, and active tool.
 - It excludes bridge/hover state, local form drafts, microphone state, and history internals.
 - Export MIME is `application/json`; the filename is
   `brainstorm-session.wirecanvas.json`.

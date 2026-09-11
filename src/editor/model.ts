@@ -6,6 +6,7 @@ export type DocumentMode = "design" | "wireframe";
 
 import type { ToolId } from "./tools";
 import type { DeviceCategory, DeviceChrome } from "../frame/presets";
+import { createSeedTokenStore, type TokenStoreState } from "../tokens";
 import {
   createEmptyBrainstormSession,
   type BrainstormSessionState,
@@ -69,6 +70,7 @@ export interface SelectionState {
 }
 
 export interface EditorState {
+  tokens: TokenStoreState;
   documents: Record<DocumentId, DocumentEntity>;
   pages: Record<PageId, PageEntity>;
   frames: Record<FrameId, FrameEntity>;
@@ -126,6 +128,7 @@ export function createEmptySelection(): SelectionState {
 
 export function createEmptyEditorState(): EditorState {
   return {
+    tokens: createSeedTokenStore(),
     documents: {},
     pages: {},
     frames: {},

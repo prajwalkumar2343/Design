@@ -1,14 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   GalleryHorizontal,
   Globe,
-  Grid3x3,
-  Hexagon,
   LayoutDashboard,
   Layers3,
   Megaphone,
-  Palette,
-  Shapes,
   ShoppingBag,
   Smartphone,
   Sparkles,
@@ -17,7 +13,6 @@ import {
   Copy,
   MoreHorizontal,
   FileText,
-  Star,
   X,
   Plus,
   LayoutGrid,
@@ -42,24 +37,17 @@ const KIND_ICONS: Record<ProjectKind, React.ComponentType<{ size?: number; class
   "mobile-blank": Smartphone,
   "mobile-app": Smartphone,
   "app-wireframe": Layers3,
-  "asset-blank": Shapes,
-  logo: Hexagon,
-  "icon-set": Grid3x3,
-  illustration: Palette,
-  "brand-kit": Shapes,
 };
 
 const CANVAS_ICONS: Record<CanvasCategory, React.ComponentType<{ size?: number; className?: string }>> = {
   website: Globe,
   mobile: Smartphone,
-  asset: Shapes,
 };
 
 // Maps blank chooser canvas -> internal blank kind
 const BLANK_KIND_FOR_CANVAS: Record<CanvasCategory, ProjectKind> = {
   website: "blank",
   mobile: "mobile-blank",
-  asset: "asset-blank",
 };
 
 // Mini preview for Figma-like thumbnail — abstract layout per kind
@@ -126,49 +114,6 @@ function KindThumbnail({ kind, accent }: { kind: ProjectKind; accent: string }) 
               <span /> <span /> <span />
             </div>
           </div>
-        ) : kind === "logo" ? (
-          <div className="figma-thumb-blank" style={{ alignItems: "center", justifyContent: "center" }}>
-            <div style={{ width: 38, height: 38, borderRadius: 12, background: accent, opacity: 0.92, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Hexagon size={18} color="white" />
-            </div>
-          </div>
-        ) : kind === "asset-blank" ? (
-          <div className="figma-thumb-blank" style={{ alignItems: "center", justifyContent: "center" }}>
-            <div style={{ width: 28, height: 28, borderRadius: 7, background: accent, opacity: 0.92, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Shapes size={14} color="white" />
-            </div>
-          </div>
-        ) : kind === "icon-set" ? (
-          <div className="figma-thumb-commerce">
-            <div className="figma-thumb-commerce-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-              <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} />
-              <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} /> <span style={{ aspectRatio: "1" }} />
-            </div>
-          </div>
-        ) : kind === "illustration" ? (
-          <div className="figma-thumb-portfolio">
-            <div className="figma-thumb-portfolio-row is-tall">
-              <span style={{ background: `${accent}22`, border: `1px solid ${accent}33` }} />
-              <span style={{ background: `${accent}14` }} />
-              <span style={{ background: `${accent}10` }} />
-            </div>
-            <div className="figma-thumb-portfolio-row">
-              <span /> <span />
-            </div>
-          </div>
-        ) : kind === "brand-kit" ? (
-          <div className="figma-thumb-blank">
-            <div className="figma-thumb-blank-lines">
-              <span style={{ background: accent, height: 6, borderRadius: 4 }} />
-              <span style={{ width: "70%" }} />
-              <span style={{ width: "55%" }} />
-            </div>
-            <div style={{ display: "flex", gap: 4, marginTop: 8 }}>
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: accent }} />
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: "#161615" }} />
-              <span style={{ width: 14, height: 14, borderRadius: 4, background: "#6b7280" }} />
-            </div>
-          </div>
         ) : (
           <div className="figma-thumb-blank">
             <div className="figma-thumb-blank-lines">
@@ -231,8 +176,6 @@ function BlankCanvasChooser({
           {CANVAS_CATEGORIES.map((canvas) => {
             const Icon = CANVAS_ICONS[canvas.id];
             const isWebsite = canvas.id === "website";
-            const isMobile = canvas.id === "mobile";
-            // const isAsset = canvas.id === "asset";
             return (
               <button
                 key={canvas.id}
@@ -250,9 +193,7 @@ function BlankCanvasChooser({
                   <small>
                     {isWebsite
                       ? "All devices · mobile / tablet / desktop"
-                      : isMobile
-                        ? "Phones & tablets only · no desktop"
-                        : "Artboards · SVG · logos, icons, illustrations"}
+                      : "Phones & tablets only · no desktop"}
                   </small>
                   <em>{canvas.hint}</em>
                 </span>
@@ -267,7 +208,7 @@ function BlankCanvasChooser({
 
         <div className="blank-chooser-foot">
           <span>
-            Agent: <code>agent.md</code> · <code>agent-mobile.md</code> · <code>agent-asset.md</code>
+            Agent: <code>agent.md</code> · <code>agent-mobile.md</code>
           </span>
           <button className="blank-chooser-cancel" onClick={onClose} type="button">
             Cancel
@@ -321,12 +262,39 @@ export function ProjectLake({
   const [renameValue, setRenameValue] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
   const [showBlankChooser, setShowBlankChooser] = useState(false);
+  // Guards the rename commit so an Enter keypress followed by the input
+  // unmount blur can only commit once per rename session.
+  const renameCommittedRef = useRef(false);
+
+  // Close the card overflow menu on outside pointer-down or Escape so a
+  // keyboard / touch user is never stuck with a stale open menu.
+  useEffect(() => {
+    if (menuId === null) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest(".figma-more-wrap") === null) {
+        setMenuId(null);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuId(null);
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuId]);
 
   const filtered = useFilteredProjects(projects, kindFilter, query);
   const hasProjects = projects.length > 0;
-  const recent = filtered.slice(0, 12);
+  // Show every matching file. The lake caps at 24 stored projects, and an
+  // arbitrary 12-card cut made files look missing / unopenable.
+  const recent = filtered;
 
   const handleRenameCommit = (id: string) => {
+    if (renameCommittedRef.current) return;
+    renameCommittedRef.current = true;
     const v = renameValue.trim();
     if (v && onRename) onRename(id, v);
     setRenameId(null);
@@ -340,7 +308,7 @@ export function ProjectLake({
 
   // Templates visible on home — hide internal blank variants, keep single blank card for chooser
   const templateKinds = useMemo(
-    () => PROJECT_KINDS.filter((k) => k.id !== "mobile-blank" && k.id !== "asset-blank"),
+    () => PROJECT_KINDS.filter((k) => k.id !== "mobile-blank"),
     [],
   );
 
@@ -509,17 +477,6 @@ export function ProjectLake({
                         </div>
 
                         <div className="figma-file-actions">
-                          <button
-                            className="figma-icon-btn"
-                            onClick={() => {
-                              // star placeholder — Figma has star
-                            }}
-                            type="button"
-                            aria-label="Star file"
-                            title="Star"
-                          >
-                            <Star size={14} />
-                          </button>
                           <div className="figma-more-wrap">
                             <button
                               className={`figma-icon-btn${isMenuOpen ? " is-active" : ""}`}
@@ -536,6 +493,7 @@ export function ProjectLake({
                                 <button
                                   role="menuitem"
                                   onClick={() => {
+                                    renameCommittedRef.current = false;
                                     setRenameId(p.id);
                                     setRenameValue(p.name);
                                     setMenuId(null);

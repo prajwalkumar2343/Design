@@ -22,6 +22,11 @@ import {
   parseCssColor,
 } from "../editor/effects";
 import type { FrameEntity, NodeEntity, SelectionState } from "../editor/model";
+import {
+  findTokenForCssValue,
+  tokenTypeForCssProperty,
+  type TokenStoreState,
+} from "../tokens";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
 import { elementProfile, mixedValue } from "./panel-model";
 
@@ -35,6 +40,7 @@ export interface PropertiesPanelProps {
   onEditNodeStyle: (property: SafeInlineStyleProperty, value: string | null) => void;
   onEditNodePosition: (frameId: string, nodeId: string, position: { x: number; y: number }) => void;
   onApplyGlassEffect: (level: number) => void;
+  tokens?: TokenStoreState;
   shapeRadius: number;
   shapeRadiusVisible: boolean;
   onShapeRadiusChange: (radius: number) => void;
@@ -213,6 +219,41 @@ function firstPosition(entries: OverlayBridgeTargetState[]): { x: string | null;
   };
 }
 
+function TokenHint({
+  tokens,
+  property,
+  value,
+}: {
+  tokens?: TokenStoreState;
+  property: string;
+  value: string | null;
+}) {
+  if (!tokens || value === null || value === "mixed") return null;
+  const match = findTokenForCssValue(tokens, property, value);
+  if (match) {
+    return (
+      <span
+        className="token-hint is-linked"
+        data-testid={`token-hint-${property}`}
+        title={`Linked to token ${match.tokenName}`}
+      >
+        <Palette size={11} />
+        {match.tokenName}
+      </span>
+    );
+  }
+  if (tokenTypeForCssProperty(property) === null) return null;
+  return (
+    <span
+      className="token-hint is-off-system"
+      data-testid={`token-offsystem-${property}`}
+      title="This value does not match any token in the active theme"
+    >
+      Off-system value
+    </span>
+  );
+}
+
 function PositionSizeSection({
   entries,
   onEditNodeStyle,
@@ -242,35 +283,45 @@ function PositionSizeSection({
   );
 }
 
-function TypographySection({ entries, onEditNodeStyle }: Pick<PropertiesPanelProps, "onEditNodeStyle"> & { entries: OverlayBridgeTargetState[] }) {
+function TypographySection({ entries, onEditNodeStyle, tokens }: Pick<PropertiesPanelProps, "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[] }) {
+  const size = styleValue(entries, "font-size");
+  const color = styleValue(entries, "color");
   return (
     <PropertySection title="Typography" icon={<Type size={13} />}>
       <div className="property-grid property-grid-single">
         <PropertyField label="Family" value={styleValue(entries, "font-family")} onCommit={(value) => onEditNodeStyle("font-family", value)} />
-        <div className="property-grid"><PropertyField label="Size" value={styleValue(entries, "font-size")} onCommit={(value) => onEditNodeStyle("font-size", value)} /><PropertyField label="Weight" value={styleValue(entries, "font-weight")} onCommit={(value) => onEditNodeStyle("font-weight", value)} /></div>
+        <div className="property-grid"><PropertyField label="Size" value={size} onCommit={(value) => onEditNodeStyle("font-size", value)} /><PropertyField label="Weight" value={styleValue(entries, "font-weight")} onCommit={(value) => onEditNodeStyle("font-weight", value)} /></div>
+        <TokenHint tokens={tokens} property="font-size" value={size} />
         <PropertyField label="Line height" value={styleValue(entries, "line-height")} onCommit={(value) => onEditNodeStyle("line-height", value)} />
-        <div className="property-grid"><ColorField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Align" value={styleValue(entries, "text-align")} onCommit={(value) => onEditNodeStyle("text-align", value)} /></div>
+        <div className="property-grid"><ColorField label="Color" value={color} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Align" value={styleValue(entries, "text-align")} onCommit={(value) => onEditNodeStyle("text-align", value)} /></div>
+        <TokenHint tokens={tokens} property="color" value={color} />
       </div>
     </PropertySection>
   );
 }
 
-function FillBorderSection({ entries, onEditNodeStyle }: Pick<PropertiesPanelProps, "onEditNodeStyle"> & { entries: OverlayBridgeTargetState[] }) {
+function FillBorderSection({ entries, onEditNodeStyle, tokens }: Pick<PropertiesPanelProps, "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[] }) {
+  const fill = styleValue(entries, "background-color") ?? styleValue(entries, "background");
+  const radius = styleValue(entries, "border-radius");
   return (
     <PropertySection title="Fill & border" icon={<Palette size={13} />}>
       <div className="property-grid property-grid-single">
-        <ColorField label="Fill" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+        <ColorField label="Fill" value={fill} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+        <TokenHint tokens={tokens} property="background-color" value={fill} />
         <div className="property-grid"><PropertyField label="Border" value={styleValue(entries, "border-color")} onCommit={(value) => onEditNodeStyle("border-color", value)} /><PropertyField label="Width" value={styleValue(entries, "border-width")} onCommit={(value) => onEditNodeStyle("border-width", value)} /></div>
-        <PropertyField label="Radius" value={styleValue(entries, "border-radius")} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
+        <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
+        <TokenHint tokens={tokens} property="border-radius" value={radius} />
       </div>
     </PropertySection>
   );
 }
 
-function OpacityEffectsSection({ entries, onEditNodeStyle }: Pick<PropertiesPanelProps, "onEditNodeStyle"> & { entries: OverlayBridgeTargetState[] }) {
+function OpacityEffectsSection({ entries, onEditNodeStyle, tokens }: Pick<PropertiesPanelProps, "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[] }) {
+  const opacity = styleValue(entries, "opacity");
+  const shadow = styleValue(entries, "box-shadow");
   return (
     <PropertySection title="Opacity & effects" icon={<SlidersHorizontal size={13} />}>
-      <div className="property-grid property-grid-single"><PropertyField label="Opacity" value={styleValue(entries, "opacity")} onCommit={(value) => onEditNodeStyle("opacity", value)} /><PropertyField label="Shadow" value={styleValue(entries, "box-shadow")} onCommit={(value) => onEditNodeStyle("box-shadow", value)} /></div>
+      <div className="property-grid property-grid-single"><PropertyField label="Opacity" value={opacity} onCommit={(value) => onEditNodeStyle("opacity", value)} /><TokenHint tokens={tokens} property="opacity" value={opacity} /><PropertyField label="Shadow" value={shadow} onCommit={(value) => onEditNodeStyle("box-shadow", value)} /><TokenHint tokens={tokens} property="box-shadow" value={shadow} /></div>
     </PropertySection>
   );
 }
@@ -300,8 +351,8 @@ function GlassSection({
       const shadow = style["box-shadow"];
       return (
         (typeof bf === "string" && bf.includes("blur(")) ||
-        (typeof bg === "string" && bg.includes("linear-gradient(135deg")) ||
-        (typeof shadow === "string" && shadow.includes("inset 0 1px"))
+        (typeof bg === "string" && bg.includes("linear-gradient(")) ||
+        (typeof shadow === "string" && shadow.includes("inset 0 1"))
       );
     }),
     [entries],
@@ -477,7 +528,8 @@ function NodeDesignPanel({
   onEditNodeStyle,
   onEditNodePosition,
   onApplyGlassEffect,
-}: Pick<PropertiesPanelProps, "nodes" | "onEditNodeStyle" | "onEditNodePosition" | "onApplyGlassEffect"> & { entries: OverlayBridgeTargetState[] }) {
+  tokens,
+}: Pick<PropertiesPanelProps, "nodes" | "onEditNodeStyle" | "onEditNodePosition" | "onApplyGlassEffect" | "tokens"> & { entries: OverlayBridgeTargetState[] }) {
   const primary = entries[0];
   const profile = primary ? elementProfile(primary.target, nodes[primary.target.elementId]) : null;
   const positionProps = { entries, onEditNodeStyle, onEditNodePosition };
@@ -502,33 +554,33 @@ function NodeDesignPanel({
               <div className="property-grid"><PropertyField label="Color" value={styleValue(entries, "color")} onCommit={(value) => onEditNodeStyle("color", value)} /><PropertyField label="Size" value={styleValue(entries, "font-size")} onCommit={(value) => onEditNodeStyle("font-size", value)} /></div>
             </div>
           </PropertySection>
-          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "text" ? (
         <>
           <PositionSizeSection {...positionProps} includeHeight={false} />
-          <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} />
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
-          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "shape" ? (
         <>
           <PositionSizeSection {...positionProps} />
           {glassSection}
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
-          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "image" ? (
         <>
           <PositionSizeSection {...positionProps} />
-          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : (
         <>
           <PositionSizeSection {...positionProps} />
           {glassSection}
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
-          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       )}
     </>
@@ -540,7 +592,7 @@ function FrameDesignPanel({ frame, selection, onUpdateFrame, onMoveFrame }: Pick
   return <><div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{multiple ? `${selection.frameIds.length} frames` : frame.name}</strong><small>{multiple ? "Mixed selection" : "Responsive frame"}</small></span></div><PropertySection title="Position & size" icon={<BoxSelect size={13} />}><div className="property-grid"><PropertyField label="X" value={multiple ? "mixed" : formatNumber(frame.x)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: next, y: frame.y }); }} /><PropertyField label="Y" value={multiple ? "mixed" : formatNumber(frame.y)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: frame.x, y: next }); }} /><PropertyField label="W" value={multiple ? "mixed" : formatNumber(frame.width)} type="number" suffix="px" testId="property-frame-width" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { width: Math.max(24, next) }); }} /><PropertyField label="H" value={multiple ? "mixed" : formatNumber(frame.height)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { height: Math.max(24, next) }); }} /></div></PropertySection><PropertySection title="Fill" icon={<Palette size={13} />}><PropertyField label="Background" value={multiple ? "mixed" : frame.background} onCommit={(value) => onUpdateFrame(frame.id, { background: value })} /></PropertySection></>;
 }
 
-export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, onApplyGlassEffect, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit }: PropertiesPanelProps) {
+export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, onApplyGlassEffect, tokens, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit }: PropertiesPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [width, setWidth] = useState(304);
   const [dragging, setDragging] = useState<{ x: number; width: number } | null>(null);
@@ -549,5 +601,5 @@ export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpd
   const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDragging({ x: event.clientX, width }); };
   const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => { if (dragging) setWidth(Math.min(420, Math.max(260, dragging.width - (event.clientX - dragging.x)))); };
   const stopResizing = () => setDragging(null);
-  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}      {selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} onApplyGlassEffect={onApplyGlassEffect} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopResizing} onPointerCancel={stopResizing} onLostPointerCapture={stopResizing} type="button" /></div> : null}</aside>;
+  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}      {selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer to inspect its properties.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopResizing} onPointerCancel={stopResizing} onLostPointerCapture={stopResizing} type="button" /></div> : null}</aside>;
 }

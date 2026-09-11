@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BRAINSTORM_OPENING_PROMPT } from "../router/brainstorm-session";
 import { applyEditorCommand, createEmptyEditorState, startBrainstormSessionCommand } from "../editor";
+import { createFrameCommand } from "../editor/commands";
 import { serializeWireCanvasProject } from "../persistence";
 import { CanvasSurface } from "./CanvasSurface";
 
@@ -102,5 +103,81 @@ describe("CanvasSurface brainstorming entry", () => {
 
     // projectUrl is the per-project design URL — refresh on that URL would stay on the design page
     expect(projectUrl).toMatch(/^\/design\//);
+  });
+
+  it("exports the designed canvas as working code via Export Code", () => {
+    const downloadProjectFile = vi.fn();
+    const seedHtml = `<!doctype html><html><head><title>Fieldwork</title></head><body><h1>Make room for better ideas.</h1></body></html>`;
+    let state = applyEditorCommand(
+      createEmptyEditorState(),
+      startBrainstormSessionCommand({
+        sessionId: "export-session",
+        briefFrameId: "export-brief",
+        content: {
+          projectDescription: "Fieldwork site",
+          audience: "",
+          goals: [],
+          successCriteria: [],
+          requiredFeatures: [],
+          requiredContent: [],
+          visualDirection: "",
+          constraints: [],
+          references: [],
+          openQuestions: [],
+          confirmedDecisions: [],
+        },
+      }),
+    );
+    state = applyEditorCommand(state, createFrameCommand({
+      id: "desktop",
+      name: "Desktop · 1440 × 900",
+      documentId: "fieldwork",
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 900,
+      srcDoc: seedHtml,
+      background: "#f3f0e9",
+    }));
+
+    window.localStorage.setItem("wirecanvas:projects:v1", JSON.stringify([{
+      id: "project-export-1",
+      name: "Fieldwork site",
+      kind: "blank",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      frameCount: 1,
+      lifecycle: "briefing",
+      data: serializeWireCanvasProject(state),
+    }]));
+    window.localStorage.setItem("wirecanvas:activeProjectId:v1", "project-export-1");
+    window.history.replaceState(null, "", "/design/project-export-1");
+    try {
+      render(<CanvasSurface downloadAdapter={{ downloadProjectFile }} />);
+
+      expect(screen.getByTestId("export-code-button")).toBeTruthy();
+      fireEvent.click(screen.getByTestId("export-code-button"));
+
+      expect(downloadProjectFile).toHaveBeenCalledTimes(1);
+      const payload = downloadProjectFile.mock.calls[0]![0]!;
+      expect(payload.filename).toBe("fieldwork-site.html");
+      expect(payload.mimeType).toBe("text/html;charset=utf-8");
+      expect(String(payload.text)).toContain("<h1>Make room for better ideas.</h1>");
+      expect(String(payload.text)).not.toContain("data-design-tool-iframe-bridge");
+      expect(screen.getByTestId("persistence-feedback").textContent).toContain("Exported your design as fieldwork-site.html");
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("reports honestly when Export Code is pressed before any page exists", () => {
+    const downloadProjectFile = vi.fn();
+    render(<CanvasSurface frames={[]} downloadAdapter={{ downloadProjectFile }} disableLocalPersistence />);
+
+    fireEvent.click(screen.getByTestId("start-brainstorming"));
+    fireEvent.click(screen.getByTestId("export-code-button"));
+
+    expect(downloadProjectFile).not.toHaveBeenCalled();
+    expect(screen.getByTestId("persistence-feedback").textContent).toContain("no page code to export yet");
   });
 });

@@ -25,13 +25,6 @@ import {
   type SelectionState,
 } from "../editor/model";
 import type { EditorStore } from "../editor/store";
-import {
-  createEmptyTokenStore,
-  TokenValidationError,
-  validateTokenStore,
-  type TokenStoreState,
-  type TokenValidationErrorCode,
-} from "../tokens";
 
 export const WIRECANVAS_FILE_KIND = "wirecanvas-project" as const;
 export const WIRECANVAS_FILE_SCHEMA_VERSION = 1 as const;
@@ -47,7 +40,6 @@ export const WIRECANVAS_LIMITS = {
 
 export interface WireCanvasDurableState {
   session: BrainstormSessionState;
-  tokens: TokenStoreState;
   documents: DocumentEntity[];
   pages: PageEntity[];
   frames: FrameEntity[];
@@ -578,50 +570,15 @@ function validateRelations(state: WireCanvasDurableState): void {
   for (const nodeId of state.selection.nodeIds) if (!nodes.has(nodeId)) fail("invalid-reference", "state.selection.nodeIds", `unknown node ${nodeId}`);
 }
 
-function tokenCodecError(error: TokenValidationError): WireCanvasCodecErrorCode {
-  const code: TokenValidationErrorCode = error.code;
-  if (code === "invalid-token-id") return "invalid-id";
-  if (code === "duplicate-token" || code === "duplicate-set" || code === "duplicate-theme") {
-    return "duplicate-id";
-  }
-  if (code === "unknown-token" || code === "unknown-set" || code === "unknown-theme") {
-    return "invalid-reference";
-  }
-  if (code === "invalid-revision" || code === "stale-revision") return "invalid-revision";
-  return "invalid-field";
-}
-
-function readTokens(value: unknown, path: string): TokenStoreState {
-  // Backwards compatibility: files written before the token store existed carry
-  // no tokens. They import as an empty store and are never rejected for it.
-  if (value === undefined) return createEmptyTokenStore();
-  try {
-    const store = validateTokenStore(value, path);
-    if (Object.keys(store.sets).length > WIRECANVAS_LIMITS.maxCollectionItems) {
-      fail("collection-too-large", path, "token set collection is too large");
-    }
-    if (Object.keys(store.themes).length > WIRECANVAS_LIMITS.maxCollectionItems) {
-      fail("collection-too-large", path, "theme collection is too large");
-    }
-    return store;
-  } catch (error) {
-    if (error instanceof TokenValidationError) {
-      fail(tokenCodecError(error), error.path, error.message);
-    }
-    throw error;
-  }
-}
-
 function readDurableState(value: unknown, path: string): WireCanvasDurableState {
   const input = record(value, path);
-  expectKeys(input, ["session", "tokens", "documents", "pages", "frames", "nodes", "activePageId", "selection", "activeTool"], path);
+  expectKeys(input, ["session", "documents", "pages", "frames", "nodes", "activePageId", "selection", "activeTool"], path);
   const documents = collection(input.documents, `${path}.documents`).map((item, index) => readDocument(item, `${path}.documents[${index}]`));
   const pages = collection(input.pages, `${path}.pages`).map((item, index) => readPage(item, `${path}.pages[${index}]`));
   const frames = collection(input.frames, `${path}.frames`).map((item, index) => readFrame(item, `${path}.frames[${index}]`));
   const nodes = collection(input.nodes, `${path}.nodes`).map((item, index) => readNode(item, `${path}.nodes[${index}]`));
   const state: WireCanvasDurableState = {
     session: readSession(input.session, `${path}.session`),
-    tokens: readTokens(input.tokens, `${path}.tokens`),
     documents,
     pages,
     frames,
@@ -701,36 +658,6 @@ function durableStateFromEditorState(state: EditorState): WireCanvasDurableState
       primaryNodeId: state.selection.primaryNodeId,
     },
     activeTool: state.activeTool,
-    tokens: cloneTokenStore(state.tokens),
-  };
-}
-
-function cloneTokenStore(store: TokenStoreState): TokenStoreState {
-  return {
-    sets: Object.fromEntries(
-      Object.entries(store.sets).map(([id, set]) => [
-        id,
-        {
-          ...set,
-          tokens: Object.fromEntries(
-            Object.entries(set.tokens).map(([tokenId, token]) => [
-              tokenId,
-              {
-                ...token,
-                value: typeof token.value === "object" && token.value !== null
-                  ? { ...token.value }
-                  : token.value,
-              },
-            ]),
-          ),
-        },
-      ]),
-    ),
-    themes: Object.fromEntries(
-      Object.entries(store.themes).map(([id, theme]) => [id, { ...theme, setIds: [...theme.setIds] }]),
-    ),
-    activeThemeId: store.activeThemeId,
-    revision: store.revision,
   };
 }
 
@@ -765,7 +692,6 @@ export function parseWireCanvasProject(text: string): EditorState {
   }
   const durable = readDurableState(root.state, "file.state");
   return {
-    tokens: durable.tokens,
     documents: Object.fromEntries(durable.documents.map((item) => [item.id, item])),
     pages: Object.fromEntries(durable.pages.map((item) => [item.id, item])),
     frames: Object.fromEntries(durable.frames.map((item) => [item.id, item])),

@@ -5,8 +5,6 @@ test-results
 *.tsbuildinfo
 .DS_Store
 experiments/
-tmp/
-.canvas/
 
 # Local LLM credentials (see .env.example) — never commit real keys.
 .env

@@ -18,9 +18,7 @@
   color: var(--ink);
   background: var(--canvas);
   font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
 }
 
 * {
@@ -1285,10 +1283,7 @@ button:focus-visible,
 .node-resize-handle-nw { left: 0; top: 0; }
 .node-resize-handle-n { top: 0; }
 .node-resize-handle-ne { right: 0; top: 0; transform: translate(50%, -50%); }
-.node-resize-handle-e {
-  right: 0;
-  transform: translate(50%, -50%);
-}
+.node-resize-handle-e { right: 0; }
 .node-resize-handle-se { right: 0; bottom: 0; transform: translate(50%, 50%); }
 .node-resize-handle-s { bottom: 0; transform: translate(-50%, 50%); }
 .node-resize-handle-sw { left: 0; bottom: 0; transform: translate(-50%, 50%); }
@@ -1383,15 +1378,6 @@ button:focus-visible,
   color: var(--ink);
   border-color: var(--line-strong);
   background: rgba(255, 255, 255, 0.82);
-}
-
-.workspace-export-code-button {
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.workspace-export-code-button:hover {
-  color: var(--ink);
 }
 
 .workspace-feedback {
@@ -1592,182 +1578,46 @@ button:focus-visible,
 .shader-menu {
   position: absolute;
   bottom: calc(100% + 12px);
-  left: 50%;
-  display: flex;
-  flex-direction: column;
-  width: min(600px, calc(100vw - 48px));
-  max-height: min(76vh, 600px);
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: rgba(252, 252, 250, 0.98);
-  box-shadow: 0 24px 70px rgba(20, 20, 18, 0.18), 0 2px 8px rgba(20, 20, 18, 0.07);
-  transform-origin: bottom center;
-  animation: shader-menu-in var(--duration-base) var(--ease-out) both;
-}
-
-@keyframes shader-menu-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(6px) scale(0.97); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
-}
-
-.shader-menu-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-.shader-menu-header div {
-  display: flex;
-  flex-direction: column;
-}
-
-.shader-menu-header strong {
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.shader-menu-header span {
-  margin-top: 2px;
-  color: var(--ink-faint);
-  font-size: 10.5px;
-}
-
-.shader-menu-toolbar {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.shader-menu-search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--ink-faint);
-  background: white;
-  cursor: text;
-  transition:
-    border-color var(--duration-fast) ease,
-    box-shadow var(--duration-fast) ease;
-}
-
-.shader-menu-search:focus-within {
-  border-color: var(--selection);
-  box-shadow: 0 0 0 3px var(--selection-soft);
-}
-
-.shader-menu-search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  color: var(--ink);
-  background: transparent;
-  font-size: 11.5px;
-  font-family: inherit;
-}
-
-.shader-menu-search input::placeholder {
-  color: var(--ink-faint);
-}
-
-.shader-menu-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.canvas-dock .shader-chip {
-  height: 24px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--ink-soft);
-  background: white;
-  font-size: 10.5px;
-  font-weight: 500;
-  transition:
-    color var(--duration-fast) ease,
-    background-color var(--duration-fast) ease,
-    border-color var(--duration-fast) ease;
-}
-
-.canvas-dock .shader-chip:hover {
-  color: var(--ink);
-  background: rgba(20, 20, 18, 0.04);
-}
-
-.canvas-dock .shader-chip.is-active {
-  border-color: rgba(93, 92, 226, 0.38);
-  color: var(--selection);
-  background: var(--selection-soft);
-}
-
-.shader-menu-body {
-  flex: 1;
-  min-height: 0;
-  padding: 6px 14px 14px;
+  left: 0;
+  width: 348px;
+  max-height: min(72vh, 520px);
+  padding: 7px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(252, 252, 250, 0.98);
+  box-shadow: 0 18px 55px rgba(20, 20, 18, 0.16), 0 2px 8px rgba(20, 20, 18, 0.07);
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
+  transform-origin: bottom left;
+  animation: menu-in var(--duration-base) var(--ease-out) both;
 }
 
-.shader-menu-body::-webkit-scrollbar {
+.shader-menu::-webkit-scrollbar {
   width: 8px;
 }
 
-.shader-menu-body::-webkit-scrollbar-thumb {
+.shader-menu::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: 8px;
   background: var(--line-strong);
   background-clip: padding-box;
 }
 
-.shader-menu-section + .shader-menu-section {
-  margin-top: 12px;
-}
-
-.shader-menu-group-label {
-  display: flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 7px 2px 6px;
-  color: var(--ink-faint);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
-
-.shader-menu-group-label small {
-  font-size: 9.5px;
-  opacity: 0.75;
-}
-
 .shader-menu-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding-top: 4px;
 }
 
-.canvas-dock .shader-card {
-  position: relative;
+.shader-card {
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-  height: auto;
-  padding: 0;
-  overflow: hidden;
+  gap: 6px;
+  padding: 5px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: white;
@@ -1780,95 +1630,35 @@ button:focus-visible,
 
 .canvas-dock .shader-card:hover {
   border-color: var(--selection);
-  background: white;
-  box-shadow: 0 8px 22px rgba(20, 20, 18, 0.12);
+  box-shadow: 0 6px 18px rgba(20, 20, 18, 0.1);
   transform: translateY(-1px);
 }
 
 .canvas-dock .shader-card:active {
-  background: white;
-  transform: scale(0.985);
-}
-
-.canvas-dock .shader-card:focus-visible {
-  outline: 2px solid var(--selection);
-  outline-offset: 1px;
+  transform: scale(0.98);
 }
 
 .shader-card-preview {
   position: relative;
-  width: 100%;
   aspect-ratio: 16 / 10;
   overflow: hidden;
-  border-radius: 0;
+  border-radius: 7px;
   background:
     linear-gradient(135deg, rgba(93, 92, 226, 0.14), rgba(240, 106, 82, 0.12) 55%, rgba(255, 255, 255, 0));
 }
 
-.shader-card-caption {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 6px 8px 7px;
-}
-
-.shader-card-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
+.shader-card span {
+  padding: 0 2px 1px;
   color: var(--ink-soft);
   font-size: 10.5px;
   font-weight: 500;
-  text-align: left;
   white-space: nowrap;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.canvas-dock .shader-card:hover .shader-card-name {
+.canvas-dock .shader-card:hover span {
   color: var(--ink);
-}
-
-.shader-card-plus {
-  display: grid;
-  width: 16px;
-  height: 16px;
-  flex: none;
-  place-items: center;
-  border-radius: 50%;
-  color: var(--selection);
-  background: var(--selection-soft);
-  opacity: 0;
-  transform: scale(0.6);
-  transition:
-    opacity var(--duration-fast) ease,
-    transform var(--duration-fast) var(--ease-out);
-}
-
-.canvas-dock .shader-card:hover .shader-card-plus,
-.canvas-dock .shader-card:focus-visible .shader-card-plus {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.shader-menu-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 34px 16px;
-  text-align: center;
-}
-
-.shader-menu-empty strong {
-  color: var(--ink-soft);
-  font-size: 11.5px;
-  font-weight: 600;
-}
-
-.shader-menu-empty span {
-  color: var(--ink-faint);
-  font-size: 10.5px;
 }
 
 .shader-preview-mount,
@@ -3713,15 +3503,6 @@ kbd {
 }
 .figma-file-card:hover .figma-file-actions { opacity: 1; }
 .figma-file-card.is-menu-open .figma-file-actions { opacity: 1; }
-.figma-file-card:focus-within .figma-file-actions { opacity: 1; }
-/* An open overflow menu must escape the card bounds. Cards keep
-   overflow:hidden for rounded thumbnails by default, but the open card
-   lifts clipping and stacking so Rename / Duplicate / Delete stay visible
-   instead of rendering cut off inside the card. */
-.figma-file-card.is-menu-open {
-  overflow: visible;
-  z-index: 20;
-}
 
 .figma-icon-btn {
   width: 28px;
@@ -3735,7 +3516,6 @@ kbd {
   cursor: pointer;
 }
 .figma-icon-btn:hover { background: #f4f4f1; color: var(--ink); }
-.figma-icon-btn:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
 .figma-icon-btn.is-active { background: var(--ink); color: #FFF; }
 
 .figma-more-wrap { position: relative; }
@@ -3743,7 +3523,7 @@ kbd {
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 30;
+  z-index: 10;
   min-width: 160px;
   padding: 6px;
   background: #FFFFFF;
@@ -3787,7 +3567,6 @@ kbd {
   pointer-events: none;
 }
 .figma-file-card:hover .figma-card-hover { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.figma-file-card:focus-within .figma-card-hover { opacity: 1; transform: translateY(0); pointer-events: auto; }
 .figma-card-hover button {
   display: inline-flex;
   align-items: center;
@@ -3806,7 +3585,6 @@ kbd {
 }
 .figma-card-hover button:first-child { background: var(--ink); color: #FFF; border-color: var(--ink); }
 .figma-card-hover button:hover { transform: translateY(-1px); }
-.figma-card-hover button:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
 
 .figma-rename input {
   width: 100%;
@@ -4089,7 +3867,7 @@ kbd {
 .project-not-found-card h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; letter-spacing: -0.015em; }
 .project-not-found-card p { margin: 0; color: #666661; font-size: 13px; line-height: 1.5; }
 .project-not-found-card code { display: inline-block; margin-top: 6px; padding: 4px 8px; background: #f4f4f1; border: 1px solid #e7e7e2; border-radius: 6px; font-size: 12px; }
-.project-not-found-actions { display: flex; gap: 8px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+.project-not-found-actions { display: flex; gap: 8px; justify-content: center; margin-top: 16px; }
 .project-not-found-actions button {
   height: 36px;
   padding: 0 16px;
@@ -4102,20 +3880,7 @@ kbd {
   cursor: pointer;
 }
 .project-not-found-actions button.is-secondary { background: #f4f4f1; color: var(--ink); border: 1px solid #e7e7e2; }
-.project-not-found-actions button.is-danger { background: #FFF0F0; color: #E5484D; border: 1px solid #f3c2c4; }
-.project-not-found-actions button.is-danger:hover { background: #FFE5E6; opacity: 1; }
 .project-not-found-actions button:hover { opacity: 0.9; }
-
-
-/* Design tokens */
-.tokens-panel { display: flex; flex-direction: column; padding: 2px 0 14px; }
-.tokens-empty { margin: 2px 0 8px; color: var(--ink-faint); font-size: 10px; }
-.token-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--ink-soft); cursor: pointer; flex: none; }
-.token-icon-button:hover:not(:disabled) { background: rgba(0,0,0,.06); }
-.token-icon-button:disabled { opacity: .35; cursor: default; }
-.tokens-error { margin: 2px 0; color: #b3261e; font-size: 10px; }
-.tokens-export-row { display: flex; gap: 6px; }
-.property-input-wrap select { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 10px; color: inherit; }
 
 /* Responsive */
 @media (max-width: 900px) {
@@ -4130,556 +3895,4 @@ kbd {
 @media (max-width: 560px) {
   .figma-template-grid { grid-template-columns: 1fr; }
   .figma-lake-heading span { display: none; }
-}
-
-/* __BUTTON_SYSTEM_POLISH__ */
-/* Button System Polish — visual-audit fix (overflow-proof + cool subtle hover).
-   Keeps existing look; adds: no-wrap/ellipsis guards, unified lift hover,
-   press feedback, and consistent motion tokens. */
-button { min-width: 0; }
-button svg { flex: none; }
-
-/* Header: keep 7+ actions on one line, never wrap to two lines. */
-.project-identity { min-width: 0; flex: 1 1 auto; justify-content: center; overflow: hidden; }
-.project-name {
-  min-width: 0; max-width: min(320px, 24vw);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto;
-}
-.project-meta { flex: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.project-canvas-badge { flex: none; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.workspace-header-right { flex: 1 1 auto; overflow: hidden; }
-.workspace-project-actions {
-  display: flex; align-items: center; gap: 3px;
-  min-width: 0; flex: 1 1 auto; justify-content: flex-end;
-  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
-}
-.workspace-project-actions::-webkit-scrollbar { display: none; }
-.workspace-file-button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  min-width: 0; max-width: 100%; flex: none;
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) ease,
-    background-color var(--duration-fast) ease,
-    border-color var(--duration-fast) ease,
-    color var(--duration-fast) ease;
-}
-.workspace-file-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(20, 20, 18, 0.10);
-}
-.workspace-file-button:active { transform: translateY(0) scale(0.96); box-shadow: none; }
-
-/* Generic text/action buttons: never overflow, ellipsis instead of wrap. */
-.empty-canvas-state button,
-.agent-connection-form button,
-.brief-add-button,
-.figma-close,
-.figma-file-open,
-.figma-canvas-tab,
-.figma-tab,
-.figma-more-menu button,
-.frame-menu-back,
-.frame-menu-category,
-.frame-preset,
-.shape-menu-item,
-.shader-chip,
-.sidebar-tab,
-.blank-chooser-cancel,
-.blank-chooser-option,
-.project-not-found-actions button,
-.tokens-add-button {
-  min-width: 0; max-width: 100%;
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-}
-.empty-canvas-state button span,
-.agent-connection-form button span,
-.brief-add-button span,
-.figma-close span,
-.frame-menu-category strong,
-.frame-menu-category small,
-.frame-preset strong,
-.frame-preset small,
-.shape-menu-item span,
-.blank-chooser-option-copy strong,
-.blank-chooser-option-copy small,
-.blank-chooser-option-copy em {
-  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.frame-menu-category > span:nth-child(2),
-.frame-preset > span:last-child,
-.blank-chooser-option-copy { min-width: 0; overflow: hidden; }
-
-/* Cool + subtle hover: gentle lift + soft shadow (unified language). */
-.empty-canvas-state button,
-.agent-connection-form button {
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) ease,
-    background-color var(--duration-fast) ease;
-}
-.empty-canvas-state button:hover:not(:disabled),
-.agent-connection-form button:hover:not(:disabled) {
-  background: #2a2a28;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 20px rgba(20, 20, 18, 0.18), 0 2px 6px rgba(20, 20, 18, 0.12);
-}
-.empty-canvas-state button:active:not(:disabled),
-.agent-connection-form button:active:not(:disabled) { transform: translateY(0) scale(0.97); box-shadow: none; }
-.brief-add-button {
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) ease,
-    background-color var(--duration-fast) ease,
-    color var(--duration-fast) ease;
-}
-.brief-add-button:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(20, 20, 18, 0.10); }
-.brief-add-button:active { transform: translateY(0) scale(0.97); box-shadow: none; }
-.figma-close,
-.blank-chooser-cancel,
-.figma-canvas-tab,
-.tokens-add-button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) ease,
-    background-color var(--duration-fast) ease,
-    border-color var(--duration-fast) ease,
-    color var(--duration-fast) ease;
-}
-.figma-close:hover,
-.blank-chooser-cancel:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(20, 20, 18, 0.10); }
-.figma-close:active,
-.blank-chooser-cancel:active { transform: translateY(0) scale(0.97); box-shadow: none; }
-.figma-canvas-tab:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(20, 20, 18, 0.10); }
-.figma-canvas-tab:active { transform: translateY(0) scale(0.97); box-shadow: none; }
-.figma-tab { transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease; }
-.figma-file-open {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) ease,
-    opacity var(--duration-fast) ease;
-}
-
-/* Icon buttons: consistent press + lift (was instant bg-only on several). */
-.sidebar-collapse-button,
-.sidebar-rail-tab,
-.sidebar-icon-button,
-.properties-collapse-button,
-.page-more-button,
-.layer-action-button,
-.brief-icon-button,
-.token-icon-button,
-.figma-search-clear,
-.figma-icon-btn,
-.blank-chooser-close,
-.corner-radius-step {
-  transition:
-    transform var(--duration-fast) var(--ease-out),
-    background-color var(--duration-fast) ease,
-    color var(--duration-fast) ease,
-    border-color var(--duration-fast) ease,
-    box-shadow var(--duration-fast) ease;
-}
-.sidebar-collapse-button:hover:not(:disabled),
-.sidebar-rail-tab:hover,
-.sidebar-icon-button:hover,
-.properties-collapse-button:hover,
-.page-more-button:hover,
-.layer-action-button:hover:not(:disabled),
-.brief-icon-button:hover,
-.token-icon-button:hover:not(:disabled),
-.figma-icon-btn:hover,
-.blank-chooser-close:hover,
-.corner-radius-step:hover:not(:disabled) { transform: translateY(-1px); }
-.sidebar-collapse-button:active:not(:disabled),
-.sidebar-icon-button:active:not(:disabled),
-.properties-collapse-button:active,
-.page-more-button:active,
-.layer-action-button:active:not(:disabled),
-.brief-icon-button:active,
-.token-icon-button:active:not(:disabled),
-.figma-icon-btn:active,
-.blank-chooser-close:active,
-.corner-radius-step:active:not(:disabled) { transform: scale(0.92); }
-.sidebar-collapse-button:disabled:hover,
-.layer-action-button:disabled:hover,
-.token-icon-button:disabled:hover,
-.corner-radius-step:disabled:hover,
-.tokens-add-button:disabled:hover { transform: none; box-shadow: none; }
-
-/* Dock: keep flat aesthetic but add the same subtle lift language. */
-.canvas-dock button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(20, 20, 18, 0.10); }
-.canvas-dock button:active:not(:disabled) { transform: scale(0.92); box-shadow: none; }
-.canvas-dock button:disabled:hover { transform: none; box-shadow: none; }
-.canvas-dock .shader-card:hover { transform: translateY(-1px); }
-.canvas-dock .shader-card:active { transform: scale(0.985); }
-
-/* Page list: long names ellipsis instead of pushing the more-button out. */
-.page-copy { flex: 1 1 auto; min-width: 0; overflow: hidden; }
-.page-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.page-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.page-more-button { flex: none; }
-
-/* Lake empty-state CTA: never wrap mid-label on narrow screens. */
-.figma-empty .figma-file-open,
-.project-lake .figma-file-open { white-space: nowrap; }
-
-@media (max-width: 760px) {
-  .workspace-file-button { padding: 0 6px; }
-  .project-name { max-width: 140px; }
-  .project-canvas-badge { max-width: 120px; }
-}
-
-/* __BUTTON_SYSTEM_POLISH_2__ */
-/* Button System Polish pt.2 — mobile overflow + lake CTA guard.
-   Follows the pt.1 audit fix; keeps desktop untouched. */
-.figma-primary {
-  min-width: 0; max-width: 100%;
-  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
-  flex: none;
-}
-.figma-onboarding-actions { min-width: 0; flex-wrap: wrap; }
-
-@media (max-width: 760px) {
-  /* Right cell may shrink so the actions strip scrolls inside it
-     instead of overlapping the brand. */
-  .workspace-header { grid-template-columns: auto minmax(0, 1fr); }
-  .workspace-brand { flex: none; }
-  .workspace-header-right { min-width: 0; max-width: 100%; overflow: hidden; }
-  .workspace-project-actions { min-width: 0; max-width: 100%; }
-  /* Dock tools scroll instead of clipping off-screen. */
-  .canvas-dock {
-    max-width: calc(100vw - 16px);
-    overflow-x: auto; overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .canvas-dock::-webkit-scrollbar { display: none; }
-  .canvas-dock > * { flex: none; }
-}
-
-/* __BUTTON_PRESS_MODERN__ */
-/* Modern press system — researched via Exa (UXPin/NN/g/Figma/Material/Spring-physics
-   guides, Sep 2026): press compresses FAST (~70ms scale-down + darken + collapsed
-   shadow), release springs back with a whisper of overshoot. Hover keeps its lift;
-   press is a separate, snappier gesture. Touch gets larger hit areas. */
-
-/* Pointer affordance net: every enabled button shows the hand. */
-button:not(:disabled) { cursor: pointer; }
-
-:root {
-  --duration-press: 70ms;
-}
-
-/* Snappy compress: every enabled button's press transition drops to press speed
-   (release still uses the springy base transition below). */
-button:active:not(:disabled) { transition-duration: var(--duration-press); }
-
-/* Springy release: transform settles with a slight overshoot instead of a dead stop. */
-.workspace-file-button,
-.empty-canvas-state button,
-.agent-connection-form button,
-.brief-add-button,
-.figma-close,
-.blank-chooser-cancel,
-.figma-canvas-tab,
-.figma-primary,
-.tokens-add-button,
-.corner-radius-step,
-.sidebar-collapse-button,
-.sidebar-rail-tab,
-.sidebar-icon-button,
-.properties-collapse-button,
-.page-more-button,
-.layer-action-button,
-.brief-icon-button,
-.token-icon-button,
-.figma-icon-btn,
-.blank-chooser-close,
-.canvas-dock button {
-  transition:
-    transform 140ms var(--ease-out),
-    box-shadow 140ms ease,
-    background-color 140ms ease,
-    border-color 140ms ease,
-    color 140ms ease,
-    filter 140ms ease;
-}
-
-/* Tactile press shading for light buttons: darken + pushed-in shadow
-   (replaces the hover lift shadow while held). */
-.workspace-file-button:active:not(:disabled),
-.brief-add-button:active:not(:disabled),
-.figma-close:active:not(:disabled),
-.blank-chooser-cancel:active:not(:disabled),
-.figma-canvas-tab:active:not(.is-active),
-.tokens-add-button:active:not(:disabled),
-.corner-radius-step:active:not(:disabled) {
-  filter: brightness(0.93);
-  box-shadow: inset 0 1px 3px rgba(20, 20, 18, 0.16);
-}
-
-/* Dark primaries can't darken visibly: press reads via state-layer lighten. */
-.empty-canvas-state button:active:not(:disabled),
-.agent-connection-form button:active:not(:disabled),
-.figma-primary:active:not(:disabled) {
-  filter: brightness(1.28);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
-}
-
-/* Larger touch targets for sub-32px icon buttons (visual size unchanged). */
-@media (pointer: coarse) {
-  .layer-action-button,
-  .page-more-button,
-  .token-icon-button,
-  .brief-icon-button {
-    position: relative;
-  }
-  .layer-action-button::after,
-  .page-more-button::after,
-  .token-icon-button::after,
-  .brief-icon-button::after {
-    content: "";
-    position: absolute;
-    inset: -11px;
-  }
-}
-
-/* Mobile rail was a clipped 48px column: reflow to a horizontal strip. */
-@media (max-width: 900px) {
-  .left-sidebar { width: auto !important; max-width: calc(100vw - 16px); }
-  .sidebar-rail {
-    flex: 0 0 auto;
-    flex-direction: row;
-    align-items: center;
-    gap: 2px;
-    padding: 6px 8px;
-    border-radius: 12px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .sidebar-rail::-webkit-scrollbar { display: none; }
-  .sidebar-rail-divider { width: 1px; height: 24px; margin: 0 4px; }
-  .sidebar-rail-tab { flex: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  button:active:not(:disabled) { transition-duration: 0.01ms !important; }
-}
-
-/* Mobile header strip must scroll from its START (flex-end would clip
-   the leftmost buttons unreachable). */
-@media (max-width: 760px) {
-  .workspace-project-actions { justify-content: flex-start; }
-}
-
-/* ===== Tokens panel v2 — Figma Variables + Paper (via Exa research) ===== */
-/* Figma: collections sidebar, variables table rows, modes as columns, groups,
-   search + type filter, inline edit, code-syntax handoff.
-   Paper: quiet minimal surfaces, token pills, segmented theme modes,
-   dropdown-like property UI. See https://help.figma.com/hc/en-us/articles/15145852043927
-   and https://paper.design/docs/tokens */
-.tkn-root { display: flex; flex-direction: column; gap: 2px; padding: 10px 10px 16px; }
-.tkn-root [hidden] { display: none !important; }
-.tkn-top { padding: 2px 2px 8px; }
-.tkn-title-row { display: flex; align-items: center; gap: 8px; }
-.tkn-title-row strong { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
-.tkn-count { min-width: 20px; height: 18px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 650; color: var(--ink-soft); background: rgba(18,18,17,.06); border-radius: 999px; }
-.tkn-subtitle { margin: 3px 0 0; font-size: 10px; line-height: 1.45; color: var(--ink-faint); }
-
-.tkn-section { padding: 10px 0; border-top: 1px solid var(--line); }
-.tkn-section:first-of-type { border-top: 0; }
-.tkn-section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-.tkn-section-title { font-size: 10px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
-.tkn-section-hint { font-size: 10px; color: var(--ink-faint); }
-
-/* Modes: segmented switcher like Figma modes / Paper theme modes */
-.tkn-modes { display: flex; flex-direction: column; gap: 4px; }
-.tkn-mode { display: flex; align-items: center; gap: 4px; padding: 2px; border-radius: 8px; }
-.tkn-mode.is-active { background: var(--selection-soft); }
-.tkn-mode-pill { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; border: 1px solid transparent; background: transparent; border-radius: 7px; padding: 5px 8px; cursor: pointer; font-size: 11px; color: var(--ink); text-align: left; }
-.tkn-mode-pill:hover { background: rgba(18,18,17,.05); }
-.tkn-mode.is-active .tkn-mode-pill { background: rgba(255,255,255,.8); border-color: rgba(93,92,226,.35); }
-.tkn-mode-dot { width: 8px; height: 8px; border-radius: 50%; background: #c9c9c5; flex: none; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
-.tkn-mode.is-active .tkn-mode-dot { background: #5d5ce2; box-shadow: 0 0 0 3px var(--selection-soft); }
-.tkn-mode-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.tkn-mode-count { font-size: 9px; font-weight: 650; color: var(--ink-faint); background: rgba(18,18,17,.06); border-radius: 999px; padding: 1px 6px; }
-
-/* Collections: Figma sidebar style */
-.tkn-collections { display: flex; flex-direction: column; gap: 2px; }
-.tkn-collection { display: flex; align-items: center; gap: 4px; border-radius: 8px; padding: 2px; border: 1px solid transparent; }
-.tkn-collection:hover { background: rgba(18,18,17,.04); }
-.tkn-collection.is-active { background: #fff; border-color: var(--line-strong); box-shadow: 0 1px 2px rgba(20,20,18,.06); }
-.tkn-collection-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; cursor: pointer; padding: 4px; text-align: left; color: var(--ink); }
-.tkn-collection-swatch { width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #5d5ce2, #9d7bea); border-radius: 6px; }
-.tkn-collection-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.tkn-collection-meta strong { font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tkn-collection-meta small { font-size: 9px; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tkn-inline-create { display: flex; gap: 6px; margin-top: 8px; }
-.tkn-inline-input { flex: 1; }
-
-/* Toolbar: Figma search + filter pills, Paper quiet inputs */
-.tkn-toolbar { display: flex; flex-direction: column; gap: 7px; margin: 8px 0; }
-.tkn-search { display: flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--ink-faint); }
-.tkn-search input { flex: 1; border: 0; outline: 0; background: transparent; font-size: 11px; padding: 0; }
-.tkn-clear { display: inline-flex; border: 0; background: transparent; cursor: pointer; color: var(--ink-faint); padding: 2px; }
-.tkn-filters { display: flex; flex-wrap: wrap; gap: 4px; }
-.tkn-filter { border: 1px solid var(--line); background: rgba(255,255,255,.6); color: var(--ink-soft); font-size: 9px; font-weight: 600; border-radius: 999px; padding: 3px 8px; cursor: pointer; }
-.tkn-filter:hover { border-color: rgba(93,92,226,.5); color: var(--ink); }
-.tkn-filter.is-on { background: var(--ink); border-color: var(--ink); color: #fff; }
-
-.tkn-mode-columns { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }
-.tkn-mode-columns-label { font-size: 9px; color: var(--ink-faint); font-weight: 600; }
-.tkn-mode-tag { font-size: 9px; font-weight: 650; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 999px; padding: 1px 7px; background: rgba(255,255,255,.6); }
-.tkn-mode-tag.is-active { color: #5d5ce2; border-color: rgba(93,92,226,.5); background: var(--selection-soft); }
-.tkn-empty { margin: 8px 2px; }
-
-/* Groups: Figma variable groups, collapsible */
-.tkn-group { border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.55); margin-bottom: 8px; overflow: hidden; }
-.tkn-group-head { width: 100%; display: flex; align-items: center; gap: 6px; border: 0; background: rgba(18,18,17,.03); padding: 6px 8px; cursor: pointer; font-size: 10px; color: var(--ink-soft); }
-.tkn-group-head:hover { background: rgba(18,18,17,.06); }
-.tkn-group-name { font-weight: 700; letter-spacing: .04em; text-transform: uppercase; font-size: 9px; }
-.tkn-group-count { margin-left: auto; font-size: 9px; font-weight: 700; background: rgba(18,18,17,.07); border-radius: 999px; padding: 1px 7px; }
-.tkn-group-rows { display: flex; flex-direction: column; }
-
-/* Rows: Figma table density, Paper pills */
-.tkn-row { padding: 7px 8px; border-top: 1px solid var(--line); }
-.tkn-row:first-child { border-top: 0; }
-.tkn-row:hover { background: rgba(93,92,226,.04); }
-.tkn-row-main { display: flex; align-items: center; gap: 8px; min-height: 30px; }
-.tkn-row-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.tkn-name-row { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.tkn-name { flex: 1; min-width: 0; font-size: 11px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tkn-copy { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex: none; border: 0; border-radius: 5px; background: transparent; color: var(--ink-faint); cursor: pointer; }
-.tkn-copy:hover { background: rgba(18,18,17,.07); color: var(--ink); }
-.tkn-var { font-size: 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tkn-value { font-size: 10px; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tkn-type-pill { flex: none; font-size: 8px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); border: 1px solid var(--line); background: rgba(255,255,255,.7); border-radius: 999px; padding: 2px 7px; }
-.tkn-modes-present { display: inline-flex; align-items: center; gap: 3px; margin-top: 2px; }
-.tkn-modes-present em { font-style: normal; font-size: 8px; color: var(--ink-faint); margin-left: 3px; }
-.tkn-mode-tick { width: 7px; height: 7px; border-radius: 50%; background: #d8d8d3; box-shadow: inset 0 0 0 1px rgba(0,0,0,.1); }
-.tkn-mode-tick.is-same { background: #34c77b; }
-.tkn-mode-tick.is-diff { background: #f5a524; }
-.tkn-mode-tick.is-missing { background: transparent; border: 1px dashed rgba(0,0,0,.2); box-shadow: none; }
-.tkn-per-mode { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.tkn-per-mode-cell { flex: 1 1 70px; min-width: 0; display: flex; flex-direction: column; gap: 1px; border: 1px solid var(--line); border-radius: 7px; padding: 4px 6px; background: rgba(255,255,255,.7); }
-.tkn-per-mode-cell em { font-style: normal; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-faint); }
-.tkn-per-mode-cell strong { font-size: 9px; font-weight: 500; color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* Previews */
-.tkn-preview { position: relative; width: 30px; height: 30px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: rgba(255,255,255,.8); border: 1px solid var(--line); overflow: hidden; }
-.tkn-checker { position: absolute; inset: 0; background-image: linear-gradient(45deg, rgba(0,0,0,.09) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.09) 75%), linear-gradient(45deg, rgba(0,0,0,.09) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.09) 75%); background-size: 8px 8px; background-position: 0 0, 4px 4px; }
-.tkn-preview-color .tkn-color-fill { position: absolute; inset: 0; }
-.tkn-color-dots { position: absolute; right: 2px; bottom: 2px; display: grid; grid-template-columns: repeat(2, 3px); gap: 1px; opacity: .85; }
-.tkn-color-dots i { width: 3px; height: 3px; border-radius: 50%; background: rgba(255,255,255,.9); box-shadow: 0 0 0 .5px rgba(0,0,0,.35); }
-.tkn-spacing-bar { height: 6px; border-radius: 3px; background: linear-gradient(90deg, #5d5ce2, #9d7bea); }
-.tkn-radius-box { width: 18px; height: 18px; background: #5d5ce2; opacity: .85; }
-.tkn-shadow-box { width: 16px; height: 16px; border-radius: 4px; background: #fff; }
-.tkn-preview-type { font-size: 14px; color: var(--ink); border: 0; background: rgba(18,18,17,.05); }
-.tkn-preview-motion { gap: 3px; }
-.tkn-motion-dot { width: 6px; height: 6px; border-radius: 50%; background: #5d5ce2; }
-.tkn-motion-track { width: 14px; height: 2px; border-radius: 2px; background: rgba(18,18,17,.2); }
-.tkn-opacity-fill { position: absolute; inset: 0; background: #161615; }
-.tkn-fallback-glyph { font-size: 12px; font-weight: 700; color: var(--ink-faint); }
-
-/* Sheets + buttons: Paper quiet */
-.tkn-sheet { display: flex; flex-direction: column; gap: 7px; margin-top: 8px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.75); padding: 10px; }
-.tkn-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 27px; font-size: 10px; color: var(--ink-soft); }
-.tkn-field-label { flex: none; width: 64px; font-weight: 600; }
-.tkn-input { flex: 1; width: auto; }
-.tkn-check-grid { display: flex; flex-wrap: wrap; gap: 5px; }
-.tkn-check { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--ink-soft); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px 3px 7px; cursor: pointer; background: rgba(255,255,255,.6); }
-.tkn-check.is-on { border-color: rgba(93,92,226,.55); background: var(--selection-soft); color: var(--ink); }
-.tkn-sheet-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 2px; }
-.tkn-ghost-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 27px; padding: 0 11px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.7); color: var(--ink); font-size: 10px; font-weight: 600; cursor: pointer; }
-.tkn-ghost-button:hover:not(:disabled) { border-color: rgba(93,92,226,.6); }
-.tkn-ghost-button:disabled { opacity: .45; cursor: default; }
-.tkn-primary-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 27px; padding: 0 12px; border: 1px solid var(--ink); border-radius: 8px; background: var(--ink); color: #fff; font-size: 10px; font-weight: 650; cursor: pointer; }
-.tkn-primary-button:hover:not(:disabled) { opacity: .88; }
-.tkn-primary-button:disabled { opacity: .45; cursor: default; }
-.tkn-create-open { width: 100%; margin-top: 4px; }
-.tkn-create-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.tkn-create-head strong { font-size: 11px; }
-.tkn-var-preview { font-size: 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ink-faint); }
-.tkn-mini { width: 24px; height: 24px; }
-.tkn-export-hint { margin: 0 0 8px; font-size: 10px; color: var(--ink-faint); }
-.tkn-export-row { display: flex; gap: 6px; }
-.tkn-export-row .tkn-ghost-button { flex: 1; }
-
-/* Property panel token pills: Paper-style (was plain tiny text) */
-.token-hint { display: inline-flex; align-items: center; gap: 5px; margin-top: 4px; font-size: 9px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; background: rgba(255,255,255,.7); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.token-hint.is-linked { color: #3b74c2; border-color: rgba(59,116,194,.4); background: rgba(59,116,194,.08); }
-.token-hint.is-off-system { color: #b3541e; border-color: rgba(179,84,30,.35); background: rgba(179,84,30,.07); }
-
-/* __LAKE_PANELS_POLISH__ */
-/* Lake + side panels polish (canvas surface untouched).
-   Part A — header hit fix: the center identity cell could paint over the
-   first header actions and swallow their clicks. Truncate instead + stack. */
-.project-identity { min-width: 0; max-width: 100%; overflow: hidden; }
-.workspace-header-right { position: relative; z-index: 1; }
-/* Center track must be allowed to shrink (an `auto` track sizes to max-content
-   and lets long project titles cover the header actions). */
-.workspace-header { grid-template-columns: auto minmax(0, 1fr) auto; }
-
-/* Part B — view toggle: instant snap -> smooth hover + press. */
-.figma-view-toggle button {
-  transition:
-    transform 140ms var(--ease-out),
-    background-color 140ms ease,
-    color 140ms ease,
-    box-shadow 140ms ease;
-}
-.figma-view-toggle button:hover:not(.is-active) {
-  transform: translateY(-1px);
-  color: var(--ink);
-  background: rgba(23, 23, 21, 0.05);
-}
-.figma-view-toggle button:active:not(:disabled) { transform: scale(0.88); }
-
-/* Part C — cards press down (hover lift already exists). */
-.figma-file-card:active { transform: scale(0.985); }
-.figma-file-card:active { transition-duration: var(--duration-press); }
-.figma-template-card:active { transform: scale(0.985); }
-
-/* Part D — file-open pill press (beats the thumb-hover reveal). */
-.figma-file-thumb:hover .figma-file-open:active { transform: scale(0.93); }
-
-/* Part E — sidebar tabs had no hover at all. */
-.sidebar-tab {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  transition:
-    transform 140ms var(--ease-out),
-    background-color 140ms ease,
-    color 140ms ease;
-}
-.sidebar-tab:hover:not(.is-active) {
-  color: var(--ink);
-  background: rgba(23, 23, 21, 0.045);
-}
-.sidebar-tab:active:not(.is-active) { transform: scale(0.96); }
-
-/* Part G — tabs must keep natural width; the STRIP scrolls, not the labels. */
-.figma-tab { flex: none; }
-
-/* __HOVER_CLIP_FIX__ */
-/* Hover lift clips against scroll strips' overflow edge (top 1px chopped).
-   Inside these strips hover keeps its glow/shadow but stays put.
-   Press still compresses inward via scale, which never exceeds bounds. */
-.workspace-project-actions .workspace-file-button:hover:not(:disabled) {
-  transform: none;
-}
-.figma-canvas-tabs .figma-canvas-tab:hover:not(:disabled) {
-  transform: none;
-}
-@media (max-width: 760px) {
-  .canvas-dock button:hover:not(:disabled) { transform: none; }
-}
-@media (max-width: 900px) {
-  .sidebar-rail-tab:hover { transform: none; }
 }

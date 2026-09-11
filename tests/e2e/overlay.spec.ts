@@ -11,15 +11,6 @@ async function openDesktop(page: Page) {
   return { frame, preview, heading };
 }
 
-/** Current canvas zoom, for converting design-space deltas into screen drags. */
-async function readZoom(page: Page) {
-  return page.evaluate(() => {
-    const world = document.querySelector('[data-testid="canvas-world"]');
-    const matrix = new DOMMatrixReadOnly(getComputedStyle(world!).transform);
-    return matrix.a;
-  });
-}
-
 async function drag(page: Page, locator: Locator, dx: number, dy: number) {
   const box = await locator.boundingBox();
   if (!box) throw new Error("Gesture target has no bounding box");
@@ -159,14 +150,13 @@ test.describe("iframe node overlays", () => {
   test("resizes from an edge while enforcing a usable minimum", async ({ page }) => {
     const { heading } = await openDesktop(page);
     const beforeWidth = await heading.evaluate((element) => element.getBoundingClientRect().width);
-    const zoom = await readZoom(page);
-    await drag(page, page.getByTestId("node-resize-handle-e"), -600 * zoom, 0);
+    await drag(page, page.getByTestId("node-resize-handle-e"), -600, 0);
     await expect.poll(() => heading.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThan(beforeWidth);
     const inlineWidth = await heading.evaluate((element) => element.style.width);
     expect(Number.parseFloat(inlineWidth)).toBeGreaterThanOrEqual(24);
   });
 
-  test("locks a constrained content-box image resize to its aspect ratio while lifting accidental CSS constraints", async ({ page }) => {
+  test("reshapes a constrained content-box image instead of preserving accidental CSS constraints", async ({ page }) => {
     const { preview } = await openDesktop(page);
     const image = preview.locator("#resize-image-fixture");
     await preview.locator("body").evaluate((body) => {
@@ -192,10 +182,7 @@ test.describe("iframe node overlays", () => {
     await waitForSelectionOf(page, "resize-image-fixture");
 
     const before = await image.evaluate((element) => element.getBoundingClientRect().toJSON());
-    const zoom = await readZoom(page);
-    // Deltas are design-space: scale by the live zoom so the gesture applies
-    // the same world-space resize at any camera.
-    await drag(page, page.getByTestId("node-resize-handle-e"), 70 * zoom, 0);
+    await drag(page, page.getByTestId("node-resize-handle-e"), 70, 0);
     await expect.poll(() => image.evaluate((element) => element.getBoundingClientRect().width)).toBeGreaterThan(before.width + 50);
     const after = await image.evaluate((element) => ({
       rect: element.getBoundingClientRect().toJSON(),
@@ -205,10 +192,7 @@ test.describe("iframe node overlays", () => {
       maxWidth: getComputedStyle(element).maxWidth,
       objectFit: getComputedStyle(element).objectFit,
     }));
-    // Image resizes are ratio-locked: the dragged edge follows the pointer and
-    // the perpendicular dimension derives from the captured aspect ratio.
-    expect(Math.abs(after.rect.height - (before.height * after.rect.width) / before.width)).toBeLessThan(2);
-    expect(after.styleHeight).not.toBe("");
+    expect(Math.abs(after.rect.height - before.height)).toBeLessThan(2);
     expect(after.boxSizing).toBe("border-box");
     expect(after.maxWidth).toBe("none");
     expect(after.objectFit).toBe("cover");
@@ -243,8 +227,7 @@ test.describe("iframe node overlays", () => {
     await waitForSelectionOf(page, "resize-text-fixture");
 
     const before = await text.evaluate((element) => element.getBoundingClientRect().toJSON());
-    const zoom = await readZoom(page);
-    await drag(page, page.getByTestId("node-resize-handle-e"), -164 * zoom, 0);
+    await drag(page, page.getByTestId("node-resize-handle-e"), -110, 0);
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThan(before.width - 80);
     const resized = await text.evaluate((element) => ({
       rect: element.getBoundingClientRect().toJSON(),

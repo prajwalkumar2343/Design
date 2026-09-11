@@ -13,7 +13,6 @@ import {
 import { CanvasDock } from "../components/CanvasDock";
 import { LeftSidebar } from "../components/LeftSidebar";
 import { PropertiesPanel } from "../components/PropertiesPanel";
-import { TokensPanel } from "../components/TokensPanel";
 import { ShaderElementView } from "../components/ShaderElementView";
 import { WorkspaceHeader } from "../components/WorkspaceHeader";
 import { CommentPopover } from "../comments/CommentPopover";
@@ -36,18 +35,11 @@ import {
   createPageCommand,
   moveBriefFrameCommand,
   moveFrameCommand,
-  removeTokenCommand,
-  removeTokenSetCommand,
-  removeTokenThemeCommand,
   renamePageCommand,
   selectBriefFrameCommand,
   setSelectionCommand,
   switchPageCommand,
-  switchTokenThemeCommand,
   updateBriefFieldCommand,
-  upsertTokenCommand,
-  upsertTokenSetCommand,
-  upsertTokenThemeCommand,
 } from "../editor/commands";
 import {
   createEditorStateFromFrameSeeds,
@@ -57,7 +49,7 @@ import {
   type NodeEntity,
 } from "../editor/model";
 import {
-  glassFallbackBackdropFilter,
+  glassBackdropFilter,
   glassLiquidShadow,
   glassTintBackground,
 } from "../editor/effects";
@@ -73,8 +65,6 @@ import {
   type EditorStore,
 } from "../editor/store";
 import { prependTranslationTransform } from "../editor/position";
-import { buildCodeExportPayload } from "../export/code-export";
-import { buildDTCGExportFile, buildTokenCssExportFile } from "../export/tokens-export";
 import { BriefFrameView } from "../frame/BriefFrameView";
 import { FrameView } from "../frame/FrameView";
 import { createFrameFromPreset, type FramePreset } from "../frame/presets";
@@ -83,16 +73,10 @@ import { useBrainstormSessionController } from "./brainstorm-session-controller"
 import { ProjectLake } from "./ProjectLake";
 import {
   looksLikeHtml,
-  PASTED_FRAME_DEFAULT_HEIGHT,
-  PASTED_FRAME_DEFAULT_WIDTH,
   pasteHtmlIntoStore,
   preparePastedHtml,
   resolvePastedFrameSize,
 } from "../clipboard/paste-html";
-import {
-  importHtmlFileIntoStore,
-  prepareHtmlFileImport,
-} from "../import-html/html-file-import";
 import {
   BrowserPersistenceAdapter,
   FIGMA_FILE_MIME_TYPE,
@@ -128,12 +112,11 @@ import {
   type ProjectKind,
 } from "../persistence/local-projects";
 import { parseWireCanvasProject } from "../persistence/wirecanvas";
-import { buildThemeCssVariables, type DesignToken, type TokenSet, type TokenTheme } from "../tokens";
 import {
   createCanvasShaderElement,
   detectPaperShaderSupport,
   type CanvasShaderElement,
-  type ShaderId,
+  type PaperShaderId,
 } from "../shaders";
 import {
   buildProjectUrl,
@@ -169,41 +152,6 @@ const CAMERA_SETTLE_MS = 140;
 
 function cameraFitPadding(viewport: Size): number {
   return viewport.width < 760 ? 18 : CAMERA_FIT_PADDING;
-}
-
-/** Chrome-free screen box the opening camera may use (sidebars, header, dock). */
-interface FitInsets {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
-
-function fitInsets(viewport: Size): FitInsets {
-  if (viewport.width < 760) {
-    return { left: 18, right: 18, top: 18, bottom: 18 };
-  }
-  // Left sidebar (12 + 324), properties panel (12 + 304), header (12 + 48),
-  // dock (~18 + 62). Fitting inside this box keeps every frame's handles and
-  // body clear of the floating chrome so gestures start on the canvas. The
-  // top/bottom allowances also cover frame-label handles that protrude
-  // ~37px above their frame's top edge.
-  return { left: 340, right: 320, top: 108, bottom: 100 };
-}
-
-function fitRectWithInsets(rect: Rect, viewport: Size, insets: FitInsets): Camera {
-  const availWidth = Math.max(0, viewport.width - insets.left - insets.right);
-  const availHeight = Math.max(0, viewport.height - insets.top - insets.bottom);
-  const widthZoom = rect.width > 0 ? availWidth / rect.width : 4;
-  const heightZoom = rect.height > 0 ? availHeight / rect.height : 4;
-  const zoom = Math.max(0.05, Math.min(4, Math.min(widthZoom, heightZoom)));
-  const boxCenterX = insets.left + availWidth / 2;
-  const boxCenterY = insets.top + availHeight / 2;
-  return {
-    x: rect.x + rect.width / 2 - boxCenterX / zoom,
-    y: rect.y + rect.height / 2 - boxCenterY / zoom,
-    zoom,
-  };
 }
 
 const surfaceStyle: CSSProperties = {
@@ -466,7 +414,6 @@ export function CanvasSurface({
   const [bridgeTargets, setBridgeTargets] = useState<Record<string, OverlayBridgeTargetState>>({});
   const [bridgeHierarchies, setBridgeHierarchies] = useState<Record<string, BridgeHierarchySnapshot>>({});
   const [hoveredOverlayTarget, setHoveredOverlayTarget] = useState<OverlayNodeTarget | null>(null);
-  const [textEditingNode, setTextEditingNode] = useState<{ frameId: string; nodeId: string } | null>(null);
   const [sidebarHoveredNode, setSidebarHoveredNode] = useState<{ frameId: string; nodeId: string } | null>(null);
   const selectedFrameId = editorState.selection.primaryFrameId;
   const selectedBriefFrameId = editorState.session.selection.type === "brief-frame"
@@ -482,8 +429,6 @@ export function CanvasSurface({
   const [isShaderMenuOpen, setIsShaderMenuOpen] = useState(false);
   const [shaderElements, setShaderElements] = useState<CanvasShaderElement[]>([]);
   const [selectedShaderElementId, setSelectedShaderElementId] = useState<string | null>(null);
-  const selectedShaderElementIdRef = useRef<string | null>(null);
-  selectedShaderElementIdRef.current = selectedShaderElementId;
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
   const [shapeRadius, setShapeRadius] = useState(0);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -498,21 +443,6 @@ export function CanvasSurface({
     message: string;
   } | null>(null);
   const persistenceFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showPersistenceFeedback = useCallback(
-    (feedback: { kind: "success" | "error"; message: string }) => {
-      if (persistenceFeedbackTimerRef.current !== null) {
-        clearTimeout(persistenceFeedbackTimerRef.current);
-        persistenceFeedbackTimerRef.current = null;
-      }
-      setPersistenceFeedback(feedback);
-      persistenceFeedbackTimerRef.current = setTimeout(() => {
-        setPersistenceFeedback(null);
-        persistenceFeedbackTimerRef.current = null;
-      }, feedback.kind === "error" ? 5000 : 3600);
-    },
-    [],
-  );
-
   const [localProjects, setLocalProjects] = useState<LocalProjectSummary[]>(() =>
     shouldUseLocalMemory ? getLocalProjectSummaries() : [],
   );
@@ -536,9 +466,6 @@ export function CanvasSurface({
   const [pendingCanvasCategory, setPendingCanvasCategory] = useState<CanvasCategory | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSerializedRef = useRef<string | null>(null);
-  // Tracks whether the quota-full warning is already showing so a failing
-  // autosave does not re-trigger (and re-time) the same toast on every edit.
-  const autosaveQuotaWarnedRef = useRef(false);
   const {
     comments,
     selectedCommentId,
@@ -749,8 +676,9 @@ export function CanvasSurface({
         setRouteProjectId(id);
         setRouteNotFound(false);
         navigateToProject(id);
-        // Opening is a read, not an edit: leave updatedAt / lake order alone
-        // so "Recently viewed" and relative timestamps stay honest.
+        const filtered = idx.filter((p) => p.id !== id);
+        filtered.unshift({ ...rec, updatedAt: Date.now() });
+        saveProjectIndex(filtered);
         refreshLocalProjects();
         setPersistenceVersion((v) => v + 1);
         setShowLakeOverlay(false);
@@ -769,7 +697,7 @@ export function CanvasSurface({
               const right = Math.max(...rects.map((r) => r.x + r.width));
               const bottom = Math.max(...rects.map((r) => r.y + r.height));
               const bounds = { x: left, y: top, width: right - left, height: bottom - top };
-              const nextCam = fitRectWithInsets(bounds, vp, fitInsets(vp));
+              const nextCam = fitRect(bounds, vp, vp.width < 760 ? 18 : 148);
               cameraRef.current = nextCam;
               setCamera(nextCam);
             }
@@ -877,45 +805,6 @@ export function CanvasSurface({
     }
   }, [bridgeTargets, editorStore]);
 
-  const exportCodeProject = useCallback(() => {
-    if (editorStore.getState().session.lifecycle === "not-started") {
-      showPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
-      return;
-    }
-    try {
-      const state = editorStore.getState();
-      const activeId = getActiveProjectId();
-      const record = shouldUseLocalMemory && activeId
-        ? loadProjectIndex().find((p) => p.id === activeId)
-        : undefined;
-      const projectName = deriveProjectName(state, record?.kind ?? pendingKindRef.current ?? "blank");
-      const payload = buildCodeExportPayload(state, projectName);
-      if (!payload) {
-        showPersistenceFeedback({
-          kind: "error",
-          message: "There is no page code to export yet — design a frame first.",
-        });
-        return;
-      }
-      downloadAdapterRef.current?.downloadProjectFile({
-        text: payload.text,
-        filename: payload.filename,
-        mimeType: payload.mimeType,
-      });
-      showPersistenceFeedback({
-        kind: "success",
-        message: payload.fileCount === 1
-          ? `Exported your design as ${payload.filename} — open it in any browser.`
-          : `Exported ${payload.fileCount} pages of code as ${payload.filename}.`,
-      });
-    } catch (error) {
-      showPersistenceFeedback({
-        kind: "error",
-        message: `Could not export code: ${error instanceof Error ? error.message : "download failed"}`,
-      });
-    }
-  }, [editorStore, shouldUseLocalMemory]);
-
   const importProject = useCallback(async (file: File) => {
     try {
       const text = await persistenceAdapterRef.current!.readProjectFile(file);
@@ -986,7 +875,6 @@ export function CanvasSurface({
     }
   }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
 
-
   // Continuous memory autosave — every meaningful editor change is persisted to this device
   useEffect(() => {
     if (!shouldUseLocalMemory) return;
@@ -1022,14 +910,7 @@ export function CanvasSurface({
               data: serialized,
             };
             idx.unshift(newRec);
-            if (!saveProjectIndex(idx)) {
-              if (!autosaveQuotaWarnedRef.current) {
-                autosaveQuotaWarnedRef.current = true;
-                showPersistenceFeedback({ kind: "error", message: "Browser storage is full — new changes are not being saved. Export or delete a project to free space." });
-              }
-              return;
-            }
-            autosaveQuotaWarnedRef.current = false;
+            saveProjectIndex(idx);
             setActiveProjectId(newId);
             setActiveProjectIdState(newId);
             setRouteProjectId(newId);
@@ -1044,14 +925,7 @@ export function CanvasSurface({
           rec.lifecycle = state.session.lifecycle;
           const without = idx.filter((p) => p.id !== rec!.id);
           without.unshift(rec);
-          if (!saveProjectIndex(without)) {
-            if (!autosaveQuotaWarnedRef.current) {
-              autosaveQuotaWarnedRef.current = true;
-              showPersistenceFeedback({ kind: "error", message: "Browser storage is full — new changes are not being saved. Export or delete a project to free space." });
-            }
-            return;
-          }
-          autosaveQuotaWarnedRef.current = false;
+          saveProjectIndex(without);
           setLocalProjects(without.map(({ data: _d, ...rest }) => rest));
         } catch {}
       }, 650);
@@ -1114,7 +988,7 @@ export function CanvasSurface({
                   const right = Math.max(...rects.map((r) => r.x + r.width));
                   const bottom = Math.max(...rects.map((r) => r.y + r.height));
                   const bounds = { x: left, y: top, width: right - left, height: bottom - top };
-                  const nextCam = fitRectWithInsets(bounds, vp, fitInsets(vp));
+                  const nextCam = fitRect(bounds, vp, vp.width < 760 ? 18 : 148);
                   cameraRef.current = nextCam;
                   setCamera(nextCam);
                 }
@@ -1249,13 +1123,8 @@ export function CanvasSurface({
       const frame = editorStore.getState().frames[frameId];
       if (!surface || !frame) return;
 
-      if (message.event === "text-edit-start") {
-        frameTextEditRef.current.add(frameId);
-        setTextEditingNode({ frameId, nodeId: message.target?.elementId ?? "" });
-      } else if (message.event === "text-commit" || message.event === "text-cancel") {
-        frameTextEditRef.current.delete(frameId);
-        setTextEditingNode((current) => (current?.frameId === frameId ? null : current));
-      }
+      if (message.event === "text-edit-start") frameTextEditRef.current.add(frameId);
+      else if (message.event === "text-commit" || message.event === "text-cancel") frameTextEditRef.current.delete(frameId);
 
       const currentTool = activeToolRef.current;
       const currentShape = activeShapeRef.current;
@@ -1302,9 +1171,7 @@ export function CanvasSurface({
         return;
       }
       if (message.event === "keydown") {
-        // While the frame's text editor is open, Backspace/Delete edit
-        // characters; only a committed selection may be deleted as a layer.
-        if (!frameTextEditRef.current.has(frameId) && currentTool === "select" && (message.key === "Delete" || message.key === "Backspace")) {
+        if (currentTool === "select" && (message.key === "Delete" || message.key === "Backspace")) {
           void deleteSelectedNodesRef.current();
           return;
         }
@@ -1523,87 +1390,6 @@ export function CanvasSurface({
     [],
   );
 
-  // Active theme variables for design-mode frames. Wireframe frames ignore
-  // this and keep the neutral grayscale theme (see render-document).
-  const tokenThemeCss = useMemo(
-    () => buildThemeCssVariables(editorState.tokens),
-    [editorState.tokens],
-  );
-
-  const runTokenMutation = useCallback((label: string, command: Parameters<EditorStore["execute"]>[0]) => {
-    try {
-      editorStore.execute(command, { label });
-    } catch (error) {
-      showPersistenceFeedback({
-        kind: "error",
-        message: error instanceof Error ? error.message : "Token update failed.",
-      });
-    }
-  }, [editorStore, showPersistenceFeedback]);
-
-  const upsertTokenSet = useCallback((set: TokenSet) => {
-    runTokenMutation(`Upsert token set ${set.name}`, upsertTokenSetCommand(set));
-  }, [runTokenMutation]);
-
-  const removeTokenSet = useCallback((setId: string) => {
-    runTokenMutation("Remove token set", removeTokenSetCommand(setId));
-  }, [runTokenMutation]);
-
-  const upsertToken = useCallback((setId: string, token: DesignToken) => {
-    runTokenMutation(`Upsert token ${token.name}`, upsertTokenCommand(setId, token));
-  }, [runTokenMutation]);
-
-  const removeToken = useCallback((setId: string, tokenId: string) => {
-    runTokenMutation("Remove token", removeTokenCommand(setId, tokenId));
-  }, [runTokenMutation]);
-
-  const upsertTokenTheme = useCallback((theme: TokenTheme) => {
-    runTokenMutation(`Upsert theme ${theme.name}`, upsertTokenThemeCommand(theme));
-  }, [runTokenMutation]);
-
-  const removeTokenTheme = useCallback((themeId: string) => {
-    runTokenMutation("Remove theme", removeTokenThemeCommand(themeId));
-  }, [runTokenMutation]);
-
-  const switchTokenTheme = useCallback((themeId: string | null) => {
-    runTokenMutation("Switch theme", switchTokenThemeCommand(themeId));
-  }, [runTokenMutation]);
-
-  const exportDTCGTokens = useCallback(() => {
-    try {
-      const file = buildDTCGExportFile(editorStore.getState().tokens);
-      downloadAdapterRef.current?.downloadProjectFile({
-        text: file.text,
-        filename: file.filename,
-        mimeType: file.mimeType,
-      });
-      showPersistenceFeedback({ kind: "success", message: `Exported tokens as ${file.filename}.` });
-    } catch (error) {
-      showPersistenceFeedback({
-        kind: "error",
-        message: `Could not export tokens: ${error instanceof Error ? error.message : "download failed"}`,
-      });
-    }
-  }, [editorStore, showPersistenceFeedback]);
-
-  const exportTokenCss = useCallback(() => {
-    try {
-      const file = buildTokenCssExportFile(editorStore.getState().tokens);
-      downloadAdapterRef.current?.downloadProjectFile({
-        text: file.text,
-        filename: file.filename,
-        mimeType: file.mimeType,
-      });
-      showPersistenceFeedback({ kind: "success", message: `Exported tokens as ${file.filename}.` });
-    } catch (error) {
-      showPersistenceFeedback({
-        kind: "error",
-        message: `Could not export tokens: ${error instanceof Error ? error.message : "download failed"}`,
-      });
-    }
-  }, [editorStore, showPersistenceFeedback]);
-
-
   const handleBridgeSnapshot = useCallback(
     (frameId: string, snapshot: BridgeHierarchySnapshot, requestSequence?: number) => {
       if (requestSequence !== undefined) {
@@ -1758,11 +1544,6 @@ export function CanvasSurface({
       }
       await refreshBridgeSnapshot(frameId);
       setCreationError(null);
-      // A fresh text layer enters editing immediately: focus lands in the
-      // frame's contenteditable so typing goes to the text, not shortcuts.
-      if (command.kind === "text" && command.editable !== false) {
-        void controller.startTextEdit(target.elementId).catch(() => undefined);
-      }
       if (command.kind !== "text" && command.kind !== "image" && command.kind !== "path") {
         editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
       }
@@ -2242,7 +2023,7 @@ export function CanvasSurface({
       const changes = surfaceEntries.flatMap((entry) => {
         const currentFill = entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null;
         return [
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: level > 0 ? glassFallbackBackdropFilter(level) : null },
+          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: level > 0 ? glassBackdropFilter(level) : null },
           { frameId: entry.frameId, targetId: entry.target.elementId, property: "background" as const, value: level > 0 ? glassTintBackground(currentFill, level) : null },
           { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? glassLiquidShadow(level) : null },
         ];
@@ -2301,24 +2082,6 @@ export function CanvasSurface({
     return entry ? toOverlayTarget(entry) : null;
   }, [bridgeTargets, editorState.frames, sidebarHoveredNode, toOverlayTarget]);
 
-  // While a text layer is being edited inline, its box chrome disappears —
-  // Figma-style, only the caret shows until the edit commits.
-  const isEditingOverlayTarget = useCallback(
-    (target: OverlayNodeTarget | null) =>
-      textEditingNode !== null &&
-      target !== null &&
-      target.frameId === textEditingNode.frameId &&
-      target.nodeId === textEditingNode.nodeId,
-    [textEditingNode],
-  );
-  const overlayHoveredTarget = isEditingOverlayTarget(sidebarHoveredOverlayTarget ?? hoveredOverlayTarget)
-    ? null
-    : (sidebarHoveredOverlayTarget ?? hoveredOverlayTarget);
-  const overlaySelectedTargets = useMemo(
-    () => selectedOverlayTargets.filter((target) => !isEditingOverlayTarget(target)),
-    [isEditingOverlayTarget, selectedOverlayTargets],
-  );
-
   const setActiveTool = useCallback(
     (tool: ToolId, options?: { force?: boolean }) => {
       const current = normalizeActiveTool(editorStore.getState().activeTool);
@@ -2373,7 +2136,7 @@ export function CanvasSurface({
   }, [editorStore]);
 
   const addShaderElement = useCallback(
-    (shaderId: ShaderId) => {
+    (shaderId: PaperShaderId) => {
       if (!detectPaperShaderSupport().supported) {
         setCreationError("This browser cannot render shaders. WebGL2 is required.");
         return;
@@ -2555,10 +2318,8 @@ export function CanvasSurface({
     }
     if (renderRects.length === 0) return;
     cameraInitializedRef.current = true;
-    // Open showing every frame inside the chrome-free box — fitting only the
-    // first frame parks the rest beneath the floating panels, and fitting
-    // without insets tucks frames (and their handles) under the sidebars.
-    updateCamera(fitRectWithInsets(getFramesBounds(renderRects), viewport, fitInsets(viewport)));
+    const openingFrame = renderRects[0];
+    updateCamera(fitRect(openingFrame, viewport, cameraFitPadding(viewport)));
   }, [renderRects, updateCamera, viewport]);
 
   useEffect(
@@ -2658,7 +2419,20 @@ export function CanvasSurface({
     [],
   );
 
-
+  const showPersistenceFeedback = useCallback(
+    (feedback: { kind: "success" | "error"; message: string }) => {
+      if (persistenceFeedbackTimerRef.current !== null) {
+        clearTimeout(persistenceFeedbackTimerRef.current);
+        persistenceFeedbackTimerRef.current = null;
+      }
+      setPersistenceFeedback(feedback);
+      persistenceFeedbackTimerRef.current = setTimeout(() => {
+        setPersistenceFeedback(null);
+        persistenceFeedbackTimerRef.current = null;
+      }, feedback.kind === "error" ? 5000 : 3600);
+    },
+    [],
+  );
 
   const handlePasteClipboard = useCallback(
     async (event: ClipboardEvent) => {
@@ -2684,7 +2458,7 @@ export function CanvasSurface({
       }
       event.preventDefault();
       try {
-        const { srcDoc, metadata, removedExecutables } = preparePastedHtml(candidate);
+        const { srcDoc, metadata } = preparePastedHtml(candidate);
         const measuredViewport = surfaceRef.current ? getViewportSize(surfaceRef.current) : viewport;
         const usableViewport = measuredViewport.width > 0 && measuredViewport.height > 0
           ? measuredViewport
@@ -2697,12 +2471,7 @@ export function CanvasSurface({
         });
         cancelZoomAnimation();
         updateCamera(fitRect(result.rect, usableViewport, cameraFitPadding(usableViewport)));
-        showPasteFeedback(
-          "success",
-          removedExecutables
-            ? `"${result.name}" pasted onto the canvas. Scripts and event handlers were removed.`
-            : `"${result.name}" pasted onto the canvas.`,
-        );
+        showPasteFeedback("success", `"${result.name}" pasted onto the canvas.`);
       } catch (error) {
         showPasteFeedback(
           "error",
@@ -2712,36 +2481,6 @@ export function CanvasSurface({
     },
     [cancelZoomAnimation, editorStore, renderRects, showPasteFeedback, updateCamera, viewport],
   );
-
-  const importHtmlFile = useCallback(async (file: File) => {
-    try {
-      // File bytes cross the same PersistenceAdapter file-like boundary as
-      // project import; the editor never touches the filesystem directly.
-      const text = await persistenceAdapterRef.current!.readProjectFile(file);
-      const prepared = prepareHtmlFileImport(text, file.name);
-      const measuredViewport = surfaceRef.current ? getViewportSize(surfaceRef.current) : viewport;
-      const usableViewport = measuredViewport.width > 0 && measuredViewport.height > 0
-        ? measuredViewport
-        : { width: Math.max(viewport.width, 1), height: Math.max(viewport.height, 1) };
-      const size = { width: PASTED_FRAME_DEFAULT_WIDTH, height: PASTED_FRAME_DEFAULT_HEIGHT };
-      const center = computeFramePlacement(renderRects, usableViewport, cameraRef.current, size);
-      const result = importHtmlFileIntoStore(editorStore, prepared.srcDoc, prepared.name, {
-        x: center.x - size.width / 2,
-        y: center.y - size.height / 2,
-      });
-      cancelZoomAnimation();
-      updateCamera(fitRect(result.rect, usableViewport, cameraFitPadding(usableViewport)));
-      showPersistenceFeedback({
-        kind: "success",
-        message: prepared.removedExecutables
-          ? `Imported "${result.name}" as a new frame. Scripts and event handlers were removed for safety.`
-          : `Imported "${result.name}" as a new frame.`,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "The file could not be imported.";
-      showPersistenceFeedback({ kind: "error", message: `Could not import HTML: ${message}` });
-    }
-  }, [cancelZoomAnimation, editorStore, renderRects, showPersistenceFeedback, updateCamera, viewport]);
 
   const beginFramePointer = useCallback(
     (frameId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -3111,11 +2850,6 @@ export function CanvasSurface({
       if (isTypingTarget(event.target)) {
         return;
       }
-      // An in-frame text editor owns the keyboard while it is open; tool
-      // shortcuts, delete, and undo must not fire from stray keystrokes.
-      if (frameTextEditRef.current.size > 0) {
-        return;
-      }
       // Space/Enter activate the focused control; only hijack them for canvas use otherwise.
       const activatableControl = isActivatableControlTarget(event.target);
       if (isSpaceShortcut(event.key)) {
@@ -3181,13 +2915,7 @@ export function CanvasSurface({
           void duplicateSelectedNode();
           break;
         case "delete-selection":
-          // Shader elements live outside the editor store's node selection,
-          // so a selected shader must be deleted through its own path.
-          if (selectedShaderElementIdRef.current) {
-            deleteShaderElement(selectedShaderElementIdRef.current);
-          } else {
-            void deleteSelectedNodes();
-          }
+          void deleteSelectedNodes();
           break;
         case "escape":
           handleEscape();
@@ -3215,7 +2943,7 @@ export function CanvasSurface({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [activeTool, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
+  }, [activeTool, deleteSelectedNodes, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
@@ -3337,7 +3065,6 @@ export function CanvasSurface({
             onCreationPointerMove={moveCreationPointer}
             onCreationPointerUp={finishCreationPointer}
             onCreationPointerCancel={cancelCreationPointer}
-            tokenCss={tokenThemeCss}
           />
         ))}
         {shaderElements.map((element) => (
@@ -3353,8 +3080,8 @@ export function CanvasSurface({
         ))}
         <NodeOverlayLayer
           zoom={camera.zoom}
-          hoveredTarget={overlayHoveredTarget}
-          selectedTargets={overlaySelectedTargets}
+          hoveredTarget={sidebarHoveredOverlayTarget ?? hoveredOverlayTarget}
+          selectedTargets={selectedOverlayTargets}
           interactive={!creationMode}
           guides={alignmentGuides}
           onGestureStart={beginNodeGesture}
@@ -3443,29 +3170,10 @@ export function CanvasSurface({
       {shouldUseLocalMemory && routeNotFound ? (
         <div className="project-not-found" data-testid="project-not-found" data-canvas-control>
           <div className="project-not-found-card">
-            {(() => {
-              const stale = routeProjectId ? localProjects.find((p) => p.id === routeProjectId) : undefined;
-              if (stale) {
-                return (
-                  <>
-                    <h2>Could not open “{stale.name}”</h2>
-                    <p>
-                      This file exists in your lake but its saved data could not be read
-                      (<code>{routeProjectId}</code>). It may have been written by a newer
-                      version or damaged by a storage failure. Your other files are unaffected.
-                    </p>
-                  </>
-                );
-              }
-              return (
-                <>
-                  <h2>Project not found</h2>
-                  <p>
-                    No local project matches <code>{routeProjectId}</code>. It may have been deleted on this device or the link is incorrect.
-                  </p>
-                </>
-              );
-            })()}
+            <h2>Project not found</h2>
+            <p>
+              No local project matches <code>{routeProjectId}</code>. It may have been deleted on this device or the link is incorrect.
+            </p>
             <div className="project-not-found-actions">
               <button
                 onClick={() => {
@@ -3480,6 +3188,7 @@ export function CanvasSurface({
               <button
                 onClick={() => {
                   if (routeProjectId) {
+                    // Offer to create a new project with that id? For now just go home
                     setRouteNotFound(false);
                     setRouteProjectId(null);
                     navigateToHome();
@@ -3490,17 +3199,6 @@ export function CanvasSurface({
               >
                 Browse lake
               </button>
-              {routeProjectId && localProjects.some((p) => p.id === routeProjectId) ? (
-                <button
-                  onClick={() => {
-                    handleDeleteLakeProject(routeProjectId);
-                  }}
-                  type="button"
-                  className="is-secondary is-danger"
-                >
-                  Delete damaged file
-                </button>
-              ) : null}
             </div>
           </div>
         </div>
@@ -3546,8 +3244,7 @@ export function CanvasSurface({
         projectName={
           shouldUseLocalMemory
             ? routeProjectId
-              ? (localProjects.find((p) => p.id === routeProjectId)?.name
-                ?? deriveProjectName(editorState, "blank"))
+              ? deriveProjectName(editorState, localProjects.find((p) => p.id === routeProjectId)?.kind ?? "blank")
               : "Home"
             : isEmptyState
               ? "Untitled canvas"
@@ -3559,10 +3256,8 @@ export function CanvasSurface({
         canvasLabel={shouldUseLocalMemory && routeProjectId ? CANVAS_CATEGORIES.find((c) => c.id === activeCanvasCategory)?.label : undefined}
         canExport={editorState.session.lifecycle !== "not-started"}
         onImportFile={importProject}
-        onImportHtmlFile={importHtmlFile}
         onExport={exportProject}
         onExportFigma={exportFigmaProject}
-        onExportCode={exportCodeProject}
         persistenceFeedback={persistenceFeedback}
         onShowLake={
           shouldUseLocalMemory
@@ -3680,27 +3375,12 @@ export function CanvasSurface({
             onHoverNode={(frameId, nodeId) => setSidebarHoveredNode({ frameId, nodeId })}
             onHoverNodeEnd={() => setSidebarHoveredNode(null)}
             hoveredLayerNode={hoveredOverlayTarget ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId } : null}
-            tokensPanel={
-              <TokensPanel
-                tokens={editorState.tokens}
-                onUpsertSet={upsertTokenSet}
-                onRemoveSet={removeTokenSet}
-                onUpsertToken={upsertToken}
-                onRemoveToken={removeToken}
-                onUpsertTheme={upsertTokenTheme}
-                onRemoveTheme={removeTokenTheme}
-                onSwitchTheme={switchTokenTheme}
-                onExportDTCG={exportDTCGTokens}
-                onExportCss={exportTokenCss}
-              />
-            }
           />
           <PropertiesPanel
             frames={editorState.frames}
             nodes={editorState.nodes}
             selection={editorState.selection}
             bridgeTargets={bridgeTargets}
-            tokens={editorState.tokens}
             onUpdateFrame={updateFrameFromPanel}
             onMoveFrame={moveFrameFromPanel}
             onEditNodeStyle={editNodeStyle}

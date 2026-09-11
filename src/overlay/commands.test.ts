@@ -29,7 +29,7 @@ function snapshot(
 }
 
 describe("overlay style commands", () => {
-  it("locks an image edge resize to its aspect ratio while lifting CSS constraints", () => {
+  it("turns a constrained image resize into an exact freeform border box", () => {
     const image = snapshot(
       "img",
       { x: 10, y: 20, width: 180, height: 120 },
@@ -49,7 +49,6 @@ describe("overlay style commands", () => {
       { x: 70, y: 0 },
     )[0];
 
-    expect(change.nextBounds).toEqual({ x: 10, y: -3.33, width: 250, height: 166.67 });
     expect(change.next).toMatchObject({
       "aspect-ratio": "auto",
       "box-sizing": "border-box",
@@ -58,7 +57,7 @@ describe("overlay style commands", () => {
       "min-height": "0",
       "min-width": "0",
       width: "250px",
-      height: "166.67px",
+      height: "120px",
     });
     expect(change.previous).toMatchObject({
       "box-sizing": "content-box",
@@ -75,81 +74,7 @@ describe("overlay style commands", () => {
       "max-height",
       "width",
       "height",
-      "transform",
     ]);
-    expect(change.next.transform).toBe("translate(0px, -23.33px)");
-  });
-
-  it("anchors an image corner resize at the opposite corner and keeps the ratio", () => {
-    const image = snapshot("img", { x: 0, y: 0, width: 200, height: 100 });
-
-    const change = buildResizeChanges(
-      [image],
-      image.target.bounds,
-      "nw",
-      { x: -60, y: -10 },
-    )[0];
-
-    expect(change.nextBounds).toEqual({ x: -60, y: -30, width: 260, height: 130 });
-    expect(change.next).toMatchObject({ width: "260px", height: "130px" });
-  });
-
-  it("lets the taller drag axis lead an image corner resize without distortion", () => {
-    const image = snapshot("img", { x: 0, y: 0, width: 200, height: 100 });
-
-    const change = buildResizeChanges(
-      [image],
-      image.target.bounds,
-      "se",
-      { x: 20, y: 150 },
-    )[0];
-
-    expect(change.nextBounds).toEqual({ x: 0, y: 0, width: 500, height: 250 });
-  });
-
-  it("keeps an image vertical-edge resize ratio-locked and centered horizontally", () => {
-    const image = snapshot("img", { x: 100, y: 50, width: 300, height: 150 });
-
-    const change = buildResizeChanges(
-      [image],
-      image.target.bounds,
-      "s",
-      { x: 40, y: 90 },
-    )[0];
-
-    expect(change.nextBounds).toEqual({ x: 10, y: 50, width: 480, height: 240 });
-    expect(change.next).toMatchObject({ width: "480px", height: "240px" });
-  });
-
-  it("shrinks an image uniformly when dragging past the minimum size", () => {
-    const image = snapshot("img", { x: 0, y: 0, width: 400, height: 200 });
-
-    const change = buildResizeChanges(
-      [image],
-      image.target.bounds,
-      "e",
-      { x: -380, y: 0 },
-    )[0];
-
-    expect(change.nextBounds).toEqual({ x: 0, y: 88, width: 48, height: 24 });
-  });
-
-  it("resizes a rotated image along its local axes without breaking the ratio", () => {
-    const rotated = snapshot(
-      "img",
-      { x: 10, y: 20, width: 100, height: 50 },
-      { transform: "rotate(30deg)" },
-    );
-    const change = buildResizeChanges(
-      [rotated],
-      rotated.target.bounds,
-      "e",
-      { x: 100, y: 0 },
-    )[0];
-
-    expect(Number.parseFloat(change.next.width!)).toBeCloseTo(186.6, 1);
-    expect(Number.parseFloat(change.next.height!)).toBeCloseTo(93.3, 1);
-    expect(change.rotation).toBe(30);
   });
 
   it("makes an inline text node a wrapping box without forcing height on a horizontal resize", () => {

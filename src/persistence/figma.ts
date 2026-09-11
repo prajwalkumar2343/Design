@@ -100,18 +100,9 @@ function translateTransform(x: number, y: number): { m00: number; m01: number; m
   return { m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y };
 }
 
-function fillPaints(fill: string | undefined, fallback: string): unknown[] | undefined {
-  const value = !fill || fill === "none" ? fallback : fill;
-  if (!value || value === "none") return undefined;
-  return [makeSolidPaint(value)];
-}
-
-function strokePaints(
-  stroke: string | undefined,
-  width: number,
-): { strokePaints?: unknown[]; strokeWeight: number } {
-  if (!stroke || stroke === "none") return { strokeWeight: 0 };
-  return { strokePaints: [makeSolidPaint(stroke)], strokeWeight: width };
+function solidPaints(fill: string | undefined, fallback: string): unknown[] {
+  if (!fill || fill === "none") return [];
+  return [makeSolidPaint(fill)];
 }
 
 function baseNode(
@@ -177,14 +168,9 @@ function convertShapeNode(
         rectangleTopRightCornerRadius: radius,
         rectangleBottomLeftCornerRadius: radius,
         rectangleBottomRightCornerRadius: radius,
-        ...(fillPaints(fill, "#d9d9d9") ? { fillPaints: fillPaints(fill, "#d9d9d9") as never } : {}),
-        ...(() => {
-          const st = strokePaints(stroke, strokeWidth);
-          return {
-            ...(st.strokePaints ? { strokePaints: st.strokePaints as never } : {}),
-            strokeWeight: st.strokeWeight,
-          };
-        })(),
+        fillPaints: solidPaints(fill, "#d9d9d9") as never,
+        strokePaints: solidPaints(stroke, "#222222") as never,
+        strokeWeight: strokeWidth,
         strokeAlign: "INSIDE",
         strokeJoin: "MITER",
       },
@@ -201,16 +187,10 @@ function convertShapeNode(
   if (kind === "ellipse") {
     doc.message.nodeChanges.push(baseNode(
       {
-        ...(fillPaints(fill, "#d9d9d9") ? { fillPaints: fillPaints(fill, "#d9d9d9") as never } : {}),
-        ...(() => {
-          const st = strokePaints(stroke, strokeWidth);
-          return {
-            ...(st.strokePaints ? { strokePaints: st.strokePaints as never } : {}),
-            strokeWeight: st.strokeWeight,
-          };
-        })(),
+        fillPaints: solidPaints(fill, "#d9d9d9") as never,
+        strokePaints: solidPaints(stroke, "#222222") as never,
+        strokeWeight: strokeWidth,
         strokeAlign: "INSIDE",
-        strokeJoin: "MITER",
       },
       guid,
       name,
@@ -228,16 +208,10 @@ function convertShapeNode(
         ...(kind === "polygon"
           ? { count: 5 }
           : { starInnerScale: 0.382 }),
-        ...(fillPaints(fill, "#d9d9d9") ? { fillPaints: fillPaints(fill, "#d9d9d9") as never } : {}),
-        ...(() => {
-          const st = strokePaints(stroke, strokeWidth);
-          return {
-            ...(st.strokePaints ? { strokePaints: st.strokePaints as never } : {}),
-            strokeWeight: st.strokeWeight,
-          };
-        })(),
+        fillPaints: solidPaints(fill, "#d9d9d9") as never,
+        strokePaints: solidPaints(stroke, "#222222") as never,
+        strokeWeight: strokeWidth,
         strokeAlign: "INSIDE",
-        strokeJoin: "MITER",
       },
       guid,
       name,
@@ -278,13 +252,8 @@ function convertShapeNode(
       visible: true,
       opacity: 1,
       blendMode: "PASS_THROUGH",
-      ...(() => {
-        const st = strokePaints(stroke ?? "#222222", strokeWidth);
-        return {
-          ...(st.strokePaints ? { strokePaints: st.strokePaints as never } : {}),
-          strokeWeight: st.strokeWeight,
-        };
-      })(),
+      strokePaints: solidPaints(stroke, "#222222") as never,
+      strokeWeight: strokeWidth,
       strokeAlign: "CENTER",
       strokeCap: "ROUND",
       strokeJoin: "ROUND",
@@ -341,9 +310,7 @@ function convertShapeNode(
     });
     doc.message.nodeChanges.push(baseNode(
       {
-        ...(fillPaints(stroke ?? "#222222", "#222222")
-          ? { fillPaints: fillPaints(stroke ?? "#222222", "#222222") as never }
-          : {}),
+        fillPaints: solidPaints(stroke ?? "#222222", "#222222") as never,
         ...payload,
       },
       guid,
@@ -357,9 +324,7 @@ function convertShapeNode(
   }
 
   if (kind === "text") {
-    // Figma rejects empty text runs; a single space keeps the layer importable.
-    const rawCharacters = inspection?.text ?? "";
-    const characters = rawCharacters === "" ? " " : rawCharacters;
+    const characters = inspection?.text ?? "";
     doc.message.nodeChanges.push(baseNode(
       {
         textData: { characters },
@@ -371,13 +336,9 @@ function convertShapeNode(
         textAlignHorizontal: "LEFT",
         textAlignVertical: "TOP",
         textAutoResize: "HEIGHT",
-        ...(fillPaints(fill ?? "#171717", "#171717")
-          ? { fillPaints: fillPaints(fill ?? "#171717", "#171717") as never }
-          : {}),
+        fillPaints: solidPaints(fill ?? "#171717", "#171717") as never,
         strokeWeight: 0,
         strokeAlign: "OUTSIDE",
-        strokeJoin: "MITER",
-        textTracking: 0,
       },
       guid,
       name,
@@ -405,13 +366,6 @@ export async function serializeFigmaProject(input: FigmaExportInput): Promise<Ui
   let nextLocalId = 1;
   const allocate = () => ({ sessionID: 1, localID: nextLocalId++ });
 
-  const documentNode = (doc.message.nodeChanges as unknown[]).find(
-    (entry) => (entry as { type?: string }).type === "DOCUMENT",
-  ) as unknown as Record<string, unknown> | undefined;
-  if (documentNode && documentNode["documentColorProfile"] === undefined) {
-    documentNode["documentColorProfile"] = "SRGB";
-  }
-
   frames.forEach((frame, frameIndex) => {
     const guid = allocate();
     frameGuids.set(frame.id, guid);
@@ -426,18 +380,9 @@ export async function serializeFigmaProject(input: FigmaExportInput): Promise<Ui
       visible: true,
       opacity: 1,
       blendMode: "PASS_THROUGH",
-      cornerRadius: 0,
-      rectangleTopLeftCornerRadius: 0,
-      rectangleTopRightCornerRadius: 0,
-      rectangleBottomLeftCornerRadius: 0,
-      rectangleBottomRightCornerRadius: 0,
-      strokeWeight: 0,
-      strokeAlign: "CENTER",
-      strokeJoin: "MITER",
-      frameMaskDisabled: false,
-      ...(fillPaints(frame.background, "#ffffff")
-        ? { fillPaints: fillPaints(frame.background, "#ffffff") as never }
-        : {}),
+      backgroundColor: makeSolidPaint(frame.background).color ?? { r: 1, g: 1, b: 1, a: 1 },
+      backgroundEnabled: true,
+      fillPaints: solidPaints(frame.background, "#ffffff") as never,
     });
   });
 
@@ -459,12 +404,6 @@ export async function serializeFigmaProject(input: FigmaExportInput): Promise<Ui
     });
   });
 
-  // Real Figma exports always carry these envelope fields; the empty template omits them.
-  const message = doc.message as unknown as Record<string, unknown>;
-  if (message["sessionID"] === undefined) message["sessionID"] = 0;
-  if (message["ackID"] === undefined) message["ackID"] = 0;
-  if (!Array.isArray(message["blobs"])) message["blobs"] = [];
-
   const parts = encodeFigParts(doc);
   const zstd = await loadZstd();
   const messageCompressed = zstd.compress(parts.messageRaw, 3);
@@ -473,23 +412,11 @@ export async function serializeFigmaProject(input: FigmaExportInput): Promise<Ui
     version: parts.version,
     schemaCompressed: parts.schemaCompressed,
     messageCompressed,
-    passThrough: parts.passThrough,
   });
 
-  const exportedAt = new Date().toISOString();
   return createFigZip({
     canvasFig,
-    meta: {
-      client_meta: {
-        background_color: { r: 1, g: 1, b: 1, a: 1 },
-        thumbnail_size: { width: 320, height: 180 },
-      },
-      file_name: "brainstorm-session",
-      developer_related_links: [],
-      exported_at: exportedAt,
-      version: "1",
-    },
+    meta: { file_name: "brainstorm-session", version: "1" },
     thumbnail: base64ToBytes(THUMBNAIL_PNG_BASE64),
-    images: new Map(),
   });
 }

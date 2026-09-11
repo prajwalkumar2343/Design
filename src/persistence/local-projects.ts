@@ -3,7 +3,7 @@ import { parseWireCanvasProject, serializeWireCanvasProject } from "./wirecanvas
 import type { BrainstormSessionLifecycle } from "../session/model";
 import { getProjectIdFromUrl } from "../routing";
 
-export type CanvasCategory = "website" | "mobile";
+export type CanvasCategory = "website" | "mobile" | "asset";
 
 export interface CanvasCategoryDef {
   id: CanvasCategory;
@@ -31,6 +31,14 @@ export const CANVAS_CATEGORIES: readonly CanvasCategoryDef[] = [
     hint: "Native-feeling screens, gestures, no desktop.",
     accent: "#0e7a5a",
   },
+  {
+    id: "asset",
+    label: "Asset Design",
+    shortLabel: "Asset",
+    description: "Logos, icons, illustrations — SVG.",
+    hint: "Vector assets, brand kits, export-ready.",
+    accent: "#b45309",
+  },
 ] as const;
 
 /**
@@ -41,6 +49,7 @@ export const CANVAS_CATEGORIES: readonly CanvasCategoryDef[] = [
 export const CANVAS_AGENT_FILES: Record<CanvasCategory, string> = {
   website: "agent.md",
   mobile: "agent-mobile.md",
+  asset: "agent-asset.md",
 };
 
 export type ProjectKind =
@@ -52,7 +61,12 @@ export type ProjectKind =
   | "commerce"
   | "mobile-app"
   | "mobile-blank"
-  | "app-wireframe";
+  | "app-wireframe"
+  | "logo"
+  | "icon-set"
+  | "illustration"
+  | "brand-kit"
+  | "asset-blank";
 
 export interface ProjectKindDef {
   id: ProjectKind;
@@ -137,6 +151,47 @@ export const PROJECT_KINDS: readonly ProjectKindDef[] = [
     hint: "Grayscale, phones & tablets.",
     accent: "#6b7280",
     canvas: "mobile",
+  },
+  // — Asset — logos, icons, illustrations, brand kits (SVG / export-ready)
+  {
+    id: "asset-blank",
+    label: "Blank asset",
+    description: "Start from the project brief. No presets — logos, icons, illustrations.",
+    hint: "A clear, minimal beginning for assets.",
+    accent: "#b45309",
+    canvas: "asset",
+  },
+  {
+    id: "logo",
+    label: "Logo / Mark",
+    description: "Logotype and symbol — geometric, wordmark, emblem.",
+    hint: "Single mark, SVG-first.",
+    accent: "#b45309",
+    canvas: "asset",
+  },
+  {
+    id: "icon-set",
+    label: "Icon Set",
+    description: "Consistent icon family at multiple sizes.",
+    hint: "Grid, stroke, rounded.",
+    accent: "#5d5ce2",
+    canvas: "asset",
+  },
+  {
+    id: "illustration",
+    label: "Illustration",
+    description: "Editorial or product illustration on an artboard.",
+    hint: "Flat, line, textured.",
+    accent: "#c2416a",
+    canvas: "asset",
+  },
+  {
+    id: "brand-kit",
+    label: "Brand Kit",
+    description: "Type, color, logo lockups and usage tiles.",
+    hint: "Tokens, specimens, guidelines.",
+    accent: "#161615",
+    canvas: "asset",
   },
 ] as const;
 
@@ -284,7 +339,36 @@ export function getBriefPresetForKind(kind: ProjectKind): Partial<import("../ses
         goals: ["Expose navigation and hierarchy", "Keep fidelity deliberately low (grayscale boxes)", "Validate flow on phones & tablets only"],
         visualDirection: "Strict grayscale, neutral boxes, no color — structure only. Phones & tablets, no desktop.",
       };
+    case "logo":
+      return {
+        projectDescription: "Logo / mark — wordmark, symbol, or emblem for a new brand.",
+        audience: "Anyone encountering the brand at a glance.",
+        goals: ["Read at 16px and 512px", "Work in single color and full color", "Own a distinct silhouette"],
+        visualDirection: "Geometric, SVG-first, precise spacing, minimal ornament — artboard-centered.",
+      };
+    case "icon-set":
+      return {
+        projectDescription: "Icon set — consistent family at 16 / 24 / 32px grid with stroke and corner rules.",
+        audience: "Product and marketing surfaces reusing the same icon language.",
+        goals: ["One stroke weight, one corner radius", "Pixel-snapped at all sizes", "Read in outline and filled variants"],
+        visualDirection: "2px stroke, 2px grid, rounded joins, monochrome first — SVG export-ready.",
+      };
+    case "illustration":
+      return {
+        projectDescription: "Editorial illustration — hero or spot for a product story.",
+        audience: "Readers pausing on a feature or empty state.",
+        goals: ["Support the headline, don't compete with it", "Work on light and dark surfaces", "Scale from card to cover"],
+        visualDirection: "Flat or line style, limited palette, artboard composition — SVG or high-res export.",
+      };
+    case "brand-kit":
+      return {
+        projectDescription: "Brand kit — type scale, color tokens, logo lockups, and usage tiles.",
+        audience: "Team members applying the brand consistently.",
+        goals: ["Tokens documented, not just shown", "Logo clearspace and misuse rules", "Type and color specimens"],
+        visualDirection: "Systematic, specimen-led, generous whitespace — design tokens as source of truth.",
+      };
     case "mobile-blank":
+    case "asset-blank":
     case "blank":
     default:
       return {};
@@ -324,21 +408,19 @@ export function loadProjectIndex(): LocalProjectRecord[] {
   }
 }
 
-export function saveProjectIndex(records: LocalProjectRecord[]): boolean {
+export function saveProjectIndex(records: LocalProjectRecord[]): void {
   const storage = safeStorage();
-  if (!storage) return false;
+  if (!storage) return;
   try {
     const sorted = [...records].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_PROJECTS);
     storage.setItem(LS_KEY_PROJECTS, JSON.stringify(sorted));
-    return true;
   } catch {
     // quota exceeded — try to drop oldest and retry once
     try {
       const trimmed = [...records].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, MAX_PROJECTS - 4));
       storage.setItem(LS_KEY_PROJECTS, JSON.stringify(trimmed));
-      return true;
     } catch {
-      return false;
+      // give up silently
     }
   }
 }

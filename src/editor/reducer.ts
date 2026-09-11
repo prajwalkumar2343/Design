@@ -14,17 +14,6 @@ import {
   BrainstormSessionReducerError,
   type BrainstormSessionAction,
 } from "../session/reducer";
-import {
-  TokenValidationError,
-  validateToken,
-  validateTokenId,
-  validateTokenSet,
-  validateTokenTheme,
-  type TokenStoreState,
-  type TokenSet,
-  type DesignToken,
-  type TokenTheme,
-} from "../tokens";
 
 export type EditorAction =
   | { type: "document/create"; document: DocumentEntity }
@@ -60,16 +49,7 @@ export type EditorAction =
   | { type: "node/reorder"; nodeId: string; direction: "up" | "down" }
   | { type: "selection/set"; selection: SelectionState }
   | { type: "tool/set"; tool: ActiveTool }
-  | { type: "tokens/upsert-set"; set: TokenSet; expectedRevision?: number }
-  | { type: "tokens/remove-set"; setId: string; expectedRevision?: number }
-  | { type: "tokens/upsert-token"; setId: string; token: DesignToken; expectedRevision?: number }
-  | { type: "tokens/remove-token"; setId: string; tokenId: string; expectedRevision?: number }
-  | { type: "tokens/upsert-theme"; theme: TokenTheme; expectedRevision?: number }
-  | { type: "tokens/remove-theme"; themeId: string; expectedRevision?: number }
-  | { type: "tokens/switch-theme"; themeId: string | null; expectedRevision?: number }
   | BrainstormSessionAction;
-
-export type TokenAction = Extract<EditorAction, { type: `tokens/${string}` }>;
 
 export class EditorReducerError extends Error {
   readonly cause?: unknown;
@@ -161,144 +141,6 @@ function replaceChildOrder(
     ...state,
     documents: { ...state.documents, [document.id]: { ...document, rootNodeIds: nextIds } },
   };
-}
-
-function requireTokenRevision(store: TokenStoreState, expectedRevision: number | undefined): void {
-  if (expectedRevision === undefined) return;
-  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-    throw new EditorReducerError(`Invalid token revision: ${expectedRevision}`);
-  }
-  if (store.revision !== expectedRevision) {
-    throw new EditorReducerError(
-      `Stale token revision: expected ${expectedRevision}, current ${store.revision}`,
-    );
-  }
-}
-
-function validateTokenInput<T>(callback: () => T): T {
-  try {
-    return callback();
-  } catch (error) {
-    if (error instanceof TokenValidationError) {
-      throw new EditorReducerError(error.message, { cause: error });
-    }
-    throw error;
-  }
-}
-
-function sameJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function reduceTokenAction(state: EditorState, action: TokenAction): EditorState {
-  const store = state.tokens;
-  switch (action.type) {
-    case "tokens/upsert-set": {
-      requireTokenRevision(store, action.expectedRevision);
-      const set = validateTokenInput(() => validateTokenSet(action.set, "tokens.set"));
-      if (store.sets[set.id] && sameJson(store.sets[set.id], set)) return state;
-      return {
-        ...state,
-        tokens: {
-          ...store,
-          sets: { ...store.sets, [set.id]: set },
-          revision: store.revision + 1,
-        },
-      };
-    }
-    case "tokens/remove-set": {
-      requireTokenRevision(store, action.expectedRevision);
-      const setId = validateTokenInput(() => validateTokenId(action.setId, "tokens.setId"));
-      if (!store.sets[setId]) throw new EditorReducerError(`Unknown token set: ${setId}`);
-      const usedBy = Object.values(store.themes)
-        .filter((theme) => theme.setIds.includes(setId))
-        .map((theme) => theme.id);
-      if (usedBy.length > 0) {
-        throw new EditorReducerError(
-          `Token set ${setId} is used by theme(s): ${usedBy.join(", ")}`,
-        );
-      }
-      const { [setId]: _removed, ...sets } = store.sets;
-      return { ...state, tokens: { ...store, sets, revision: store.revision + 1 } };
-    }
-    case "tokens/upsert-token": {
-      requireTokenRevision(store, action.expectedRevision);
-      const setId = validateTokenInput(() => validateTokenId(action.setId, "tokens.setId"));
-      const set = store.sets[setId];
-      if (!set) throw new EditorReducerError(`Unknown token set: ${setId}`);
-      const token = validateTokenInput(() => validateToken(action.token, "tokens.token"));
-      if (set.tokens[token.id] && sameJson(set.tokens[token.id], token)) return state;
-      return {
-        ...state,
-        tokens: {
-          ...store,
-          sets: { ...store.sets, [setId]: { ...set, tokens: { ...set.tokens, [token.id]: token } } },
-          revision: store.revision + 1,
-        },
-      };
-    }
-    case "tokens/remove-token": {
-      requireTokenRevision(store, action.expectedRevision);
-      const setId = validateTokenInput(() => validateTokenId(action.setId, "tokens.setId"));
-      const tokenId = validateTokenInput(() => validateTokenId(action.tokenId, "tokens.tokenId"));
-      const set = store.sets[setId];
-      if (!set) throw new EditorReducerError(`Unknown token set: ${setId}`);
-      if (!set.tokens[tokenId]) throw new EditorReducerError(`Unknown token: ${tokenId}`);
-      const { [tokenId]: _removed, ...tokens } = set.tokens;
-      return {
-        ...state,
-        tokens: {
-          ...store,
-          sets: { ...store.sets, [setId]: { ...set, tokens } },
-          revision: store.revision + 1,
-        },
-      };
-    }
-    case "tokens/upsert-theme": {
-      requireTokenRevision(store, action.expectedRevision);
-      const theme = validateTokenInput(() =>
-        validateTokenTheme(action.theme, "tokens.theme", new Set(Object.keys(store.sets))),
-      );
-      if (store.themes[theme.id] && sameJson(store.themes[theme.id], theme)) return state;
-      return {
-        ...state,
-        tokens: {
-          ...store,
-          themes: { ...store.themes, [theme.id]: theme },
-          revision: store.revision + 1,
-        },
-      };
-    }
-    case "tokens/remove-theme": {
-      requireTokenRevision(store, action.expectedRevision);
-      const themeId = validateTokenInput(() => validateTokenId(action.themeId, "tokens.themeId"));
-      if (!store.themes[themeId]) throw new EditorReducerError(`Unknown theme: ${themeId}`);
-      const { [themeId]: _removed, ...themes } = store.themes;
-      return {
-        ...state,
-        tokens: {
-          ...store,
-          themes,
-          activeThemeId: store.activeThemeId === themeId ? null : store.activeThemeId,
-          revision: store.revision + 1,
-        },
-      };
-    }
-    case "tokens/switch-theme": {
-      requireTokenRevision(store, action.expectedRevision);
-      const themeId = action.themeId === null
-        ? null
-        : validateTokenInput(() => validateTokenId(action.themeId, "tokens.themeId"));
-      if (themeId !== null && !store.themes[themeId]) {
-        throw new EditorReducerError(`Unknown theme: ${themeId}`);
-      }
-      if (store.activeThemeId === themeId) return state;
-      return {
-        ...state,
-        tokens: { ...store, activeThemeId: themeId, revision: store.revision + 1 },
-      };
-    }
-  }
 }
 
 function reduceBrainstormSession(
@@ -577,15 +419,6 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return state.activeTool === action.tool
         ? state
         : { ...state, activeTool: action.tool };
-
-    case "tokens/upsert-set":
-    case "tokens/remove-set":
-    case "tokens/upsert-token":
-    case "tokens/remove-token":
-    case "tokens/upsert-theme":
-    case "tokens/remove-theme":
-    case "tokens/switch-theme":
-      return reduceTokenAction(state, action);
 
     case "session/start":
     case "session/brief-update":

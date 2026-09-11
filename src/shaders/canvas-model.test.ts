@@ -28,12 +28,3 @@ describe("canvas shader elements", () => {
     expect(clampShaderElementSize(320.6, 199.4)).toEqual({ width: 321, height: 199 });
   });
 });
-
-describe("custom canvas shader elements", () => {
-  it("places Ferro Tide like any registered shader", () => {
-    const element = createCanvasShaderElement("ferro-tide", { x: 50, y: 60 });
-    expect(element?.shaderId).toBe("ferro-tide");
-    expect(element?.width).toBe(SHADER_ELEMENT_DEFAULT_SIZE.width);
-    expect(element?.x).toBe(Math.round(50 - SHADER_ELEMENT_DEFAULT_SIZE.width / 2));
-  });
-});

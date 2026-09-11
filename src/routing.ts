@@ -18,32 +18,14 @@ export function getProjectIdFromPath(pathname: string): string | null {
       return null;
     }
   }
-  // Also support legacy /project/:id and /p/:id for robustness.
-  // Decode defensively: a malformed escape (e.g. a stray "%") must never
-  // throw out of routing and wedge popstate / hydration.
+  // Also support legacy /project/:id and /p/:id for robustness
   if (clean.startsWith("/project/")) {
     const id = clean.slice("/project/".length);
-    if (!id) return null;
-    try {
-      const decoded = decodeURIComponent(id);
-      if (decoded.length === 0 || decoded.length > 256) return null;
-      if (decoded.includes("/") || decoded.includes("?") || decoded.includes("#")) return null;
-      return decoded;
-    } catch {
-      return null;
-    }
+    return id ? decodeURIComponent(id) : null;
   }
   if (clean.startsWith("/p/")) {
     const id = clean.slice("/p/".length);
-    if (!id) return null;
-    try {
-      const decoded = decodeURIComponent(id);
-      if (decoded.length === 0 || decoded.length > 256) return null;
-      if (decoded.includes("/") || decoded.includes("?") || decoded.includes("#")) return null;
-      return decoded;
-    } catch {
-      return null;
-    }
+    return id ? decodeURIComponent(id) : null;
   }
   return null;
 }

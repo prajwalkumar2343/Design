@@ -1,5 +1,4 @@
 import { BRIDGE_RUNTIME_MARKER } from "../bridge/runtime";
-import { TOKEN_THEME_MARKER } from "../frame/token-theme";
 import { WIREFRAME_THEME_MARKER } from "../frame/wireframe-theme";
 
 export const MAX_ROUTER_HTML_BYTES = 2 * 1024 * 1024;
@@ -8,7 +7,6 @@ export type HtmlAdmissionErrorCode =
   | "invalid-html"
   | "reserved-runtime-marker"
   | "reserved-wireframe-theme-marker"
-  | "reserved-token-theme-marker"
   | "html-too-large";
 
 export interface HtmlValidationResult {
@@ -65,12 +63,6 @@ export function validateCompleteHtml(html: string): HtmlValidationResult {
     throw new HtmlAdmissionError(
       "reserved-wireframe-theme-marker",
       `HTML cannot define the reserved ${WIREFRAME_THEME_MARKER} theme marker`,
-    );
-  }
-  if (parsed.querySelector(`[${TOKEN_THEME_MARKER}]`)) {
-    throw new HtmlAdmissionError(
-      "reserved-token-theme-marker",
-      `HTML cannot define the reserved ${TOKEN_THEME_MARKER} theme marker`,
     );
   }
 

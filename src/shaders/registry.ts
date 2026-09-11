@@ -181,32 +181,6 @@ export const PAPER_SHADER_DEFINITIONS = {
 
 export type PaperShaderId = keyof typeof PAPER_SHADER_DEFINITIONS;
 
-/**
- * Local, first-party shaders that ship with the canvas instead of coming
- * from `@paper-design/shaders-react`. They expose the same mount contract
- * (a component taking optional width/height) so menus, previews, and canvas
- * elements treat them identically.
- */
-export const CUSTOM_SHADER_DEFINITIONS = {
-  "ferro-tide": {
-    label: "Ferro Tide",
-  },
-} as const satisfies Record<string, { label: string }>;
-
-export type CustomShaderId = keyof typeof CUSTOM_SHADER_DEFINITIONS;
-
-/** Any shader the library can place: upstream Paper or local custom. */
-export type ShaderId = PaperShaderId | CustomShaderId;
-
-export const CUSTOM_SHADER_IDS = Object.freeze(
-  Object.keys(CUSTOM_SHADER_DEFINITIONS) as CustomShaderId[],
-);
-
-export const SHADER_IDS: readonly ShaderId[] = Object.freeze([
-  ...(Object.keys(PAPER_SHADER_DEFINITIONS) as PaperShaderId[]),
-  ...(Object.keys(CUSTOM_SHADER_DEFINITIONS) as CustomShaderId[]),
-]);
-
 export type PaperShaderDefinition<Id extends PaperShaderId = PaperShaderId> =
   (typeof PAPER_SHADER_DEFINITIONS)[Id];
 
@@ -228,19 +202,6 @@ export function isPaperShaderId(value: string): value is PaperShaderId {
   return Object.hasOwn(PAPER_SHADER_DEFINITIONS, value);
 }
 
-export function isCustomShaderId(value: string): value is CustomShaderId {
-  return Object.hasOwn(CUSTOM_SHADER_DEFINITIONS, value);
-}
-
-export function isShaderId(value: string): value is ShaderId {
-  return isPaperShaderId(value) || isCustomShaderId(value);
-}
-
-export function getShaderDefinition(shaderId: ShaderId): { readonly label: string } {
-  if (isCustomShaderId(shaderId)) return CUSTOM_SHADER_DEFINITIONS[shaderId];
-  return getPaperShaderDefinition(shaderId);
-}
-
 export function getPaperShaderDefinition(
   shaderId: string,
 ): PaperShaderDefinition {
@@ -260,34 +221,13 @@ export type LoadedPaperShader<Id extends PaperShaderId = PaperShaderId> = {
   presets: PaperShadersModule[PaperShaderDefinition<Id>["presetsExport"]];
 };
 
-export type LoadedCustomShader<Id extends CustomShaderId = CustomShaderId> = {
-  id: Id;
-  definition: (typeof CUSTOM_SHADER_DEFINITIONS)[Id];
-  Component: ComponentType<{ width?: string; height?: string }>;
-};
-
 /** Loads the shader implementation only when a consumer requests it. */
 export async function loadPaperShader<Id extends PaperShaderId>(
   shaderId: Id,
-): Promise<LoadedPaperShader<Id>>;
-export async function loadPaperShader(
-  shaderId: CustomShaderId,
-): Promise<LoadedCustomShader>;
-export async function loadPaperShader(
-  shaderId: ShaderId,
-): Promise<LoadedPaperShader | LoadedCustomShader>;
-export async function loadPaperShader(
-  shaderId: ShaderId,
-): Promise<LoadedPaperShader | LoadedCustomShader> {
-  if (isCustomShaderId(shaderId)) {
-    const { FerroTide } = await import("./ferro-tide");
-    return {
-      id: shaderId,
-      definition: CUSTOM_SHADER_DEFINITIONS[shaderId],
-      Component: FerroTide,
-    };
-  }
-  const definition = getPaperShaderDefinition(shaderId);
+): Promise<LoadedPaperShader<Id>> {
+  const definition = getPaperShaderDefinition(
+    shaderId,
+  ) as PaperShaderDefinition<Id>;
   const shaderModule = await import("@paper-design/shaders-react");
 
   return {
@@ -295,7 +235,7 @@ export async function loadPaperShader(
     definition,
     Component: shaderModule[definition.componentExport],
     presets: shaderModule[definition.presetsExport],
-  } as LoadedPaperShader;
+  } as LoadedPaperShader<Id>;
 }
 
 export type PaperShaderSupport =

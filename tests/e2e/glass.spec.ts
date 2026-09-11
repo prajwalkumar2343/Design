@@ -10,7 +10,7 @@ async function openCanvas(page: Page) {
 interface ShapeState {
   glassAttr: string | null;
   childFill: string | null;
-  backdropFilter: string;
+  gradientCount: number;
 }
 
 function shapeState(page: Page) {
@@ -20,7 +20,7 @@ function shapeState(page: Page) {
     .evaluate((element): ShapeState => ({
       glassAttr: element.getAttribute("data-design-tool-glass"),
       childFill: element.querySelector("rect")?.getAttribute("fill") ?? null,
-      backdropFilter: element.style.backdropFilter || "",
+      gradientCount: element.querySelectorAll("linearGradient").length,
     }));
 }
 
@@ -52,15 +52,14 @@ async function selectRectangle(page: Page) {
 
 test.describe("glass effect asset", () => {
   test("applies frosted glass to a drawn shape through the step control", async ({ page }) => {
-    await openCanvas(page);
     await drawRectangle(page);
     await selectRectangle(page);
 
     await page.getByTestId("glass-level-increment").click();
     await expect.poll(() => shapeState(page)).toEqual({
       glassAttr: "10",
-      childFill: "transparent",
-      backdropFilter: expect.stringContaining("blur"),
+      childFill: expect.stringContaining("url(#"),
+      gradientCount: 1,
     });
   });
 
@@ -96,35 +95,33 @@ test.describe("glass effect asset", () => {
   });
 
   test("keeps glass across undo and redo", async ({ page }) => {
-    await openCanvas(page);
     await drawRectangle(page);
     await selectRectangle(page);
     await page.getByTestId("glass-level-increment").click();
     await expect.poll(() => shapeState(page)).toEqual({
       glassAttr: "10",
-      childFill: "transparent",
-      backdropFilter: expect.stringContaining("blur"),
+      childFill: expect.stringContaining("url(#"),
+      gradientCount: 1,
     });
 
     await page.keyboard.press("Control+z");
-    await expect.poll(() => shapeState(page)).toEqual({ glassAttr: null, childFill: "#d9d9d9", backdropFilter: "" });
+    await expect.poll(() => shapeState(page)).toEqual({ glassAttr: null, childFill: "#d9d9d9", gradientCount: 0 });
 
     await page.keyboard.press("Control+Shift+z");
-    await expect.poll(() => shapeState(page).then((state) => state.backdropFilter)).toContain("blur");
+    await expect.poll(() => shapeState(page).then((state) => state.childFill)).toContain("url(#");
   });
 
   test("carries glass into duplicates and delete-undo restores", async ({ page }) => {
-    await openCanvas(page);
     await drawRectangle(page);
     await selectRectangle(page);
     await page.getByTestId("glass-level-increment").click();
     await expect.poll(() => shapeState(page)).toEqual({
       glassAttr: "10",
-      childFill: "transparent",
-      backdropFilter: expect.stringContaining("blur"),
+      childFill: expect.stringContaining("url(#"),
+      gradientCount: 1,
     });
 
-    // Duplicate carries the glass pane over.
+    // Duplicate carries the gradient over.
     await page.keyboard.press("Control+d");
     const iframe = page.locator('[data-frame-id="desktop"] iframe').contentFrame();
     await expect.poll(() => iframe.locator('[data-design-tool-kind="rectangle"]').count()).toBe(2);
@@ -138,37 +135,21 @@ test.describe("glass effect asset", () => {
     );
     for (const entry of fills) {
       expect(entry.glass).toBe("10");
-      expect(entry.fill).toBe("transparent");
+      expect(entry.fill).toContain("url(#");
     }
 
-    // Deleting and undoing restores the glassy duplicate from the snapshot.
+    // Deleting and undoing restores the glassy appearance from the snapshot.
     await page.keyboard.press("Delete");
-    await expect.poll(() => iframe.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
-    const survivor = await iframe
-      .locator('[data-design-tool-kind="rectangle"]')
-      .evaluateAll((elements) =>
-        elements.map((element) => ({
-          glass: element.getAttribute("data-design-tool-glass"),
-          fill: element.querySelector("rect")?.getAttribute("fill") ?? null,
-        })),
-      );
-    for (const entry of survivor) {
-      expect(entry.glass).toBe("10");
-      expect(entry.fill).toBe("transparent");
-    }
+    await expect.poll(() => iframe.locator('[data-design-tool-kind="rectangle"]').count()).toBe(0);
     await page.keyboard.press("Control+z");
     await expect.poll(() => iframe.locator('[data-design-tool-kind="rectangle"]').count()).toBe(2);
     const restored = await Promise.all(
       (await iframe.locator('[data-design-tool-kind="rectangle"]').all()).map((shape) =>
-        shape.evaluate((element) => ({
-          glass: element.getAttribute("data-design-tool-glass"),
-          fill: element.querySelector("rect")?.getAttribute("fill") ?? null,
-        })),
+        shape.evaluate((element) => element.querySelector("rect")?.getAttribute("fill") ?? null),
       ),
     );
-    for (const entry of restored) {
-      expect(entry.glass).toBe("10");
-      expect(entry.fill).toBe("transparent");
+    for (const fill of restored) {
+      expect(fill).toContain("#d9d9d9");
     }
   });
 });

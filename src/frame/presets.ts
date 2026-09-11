@@ -90,6 +90,22 @@ const punchHoleTab: DeviceChrome = { type: "punch-hole", width: 18, height: 18, 
 const noChrome: DeviceChrome = { type: "none", bezelRadius: 16 };
 const desktopChrome: DeviceChrome = { type: "none", bezelRadius: 10 };
 
+/**
+ * Asset artboard presets — vector-first, chrome-free.
+ * Used only when the active canvas category is "asset".
+ * Sizes chosen for logo / icon export: square artboards at
+ * common export resolutions plus a flexible brand-sheet.
+ */
+export const ASSET_PRESETS: FramePreset[] = [
+  preset("asset-logo-512", "desktop", "Logo", "Logo · 512", "512 × 512 · single mark · SVG", 512, 512, desktopChrome, "Artboard · export SVG"),
+  preset("asset-logo-1024", "desktop", "Logo", "Logo · 1024", "1024 × 1024 · large mark · SVG", 1024, 1024, desktopChrome, "Artboard · export SVG"),
+  preset("asset-icon-64", "desktop", "Icons", "Icon · 64", "64 × 64 · grid", 64, 64, noChrome, "Icon cell"),
+  preset("asset-icon-256", "desktop", "Icons", "Icon · 256", "256 × 256 · grid", 256, 256, noChrome, "Icon cell"),
+  preset("asset-icon-512", "desktop", "Icons", "Icon · 512", "512 × 512 · family sheet", 512, 512, noChrome, "Icon sheet"),
+  preset("asset-illustration", "desktop", "Illustration", "Illustration · 800", "800 × 600 · hero / spot", 800, 600, noChrome, "Flexible artboard"),
+  preset("asset-brand-kit", "desktop", "Brand Kit", "Brand sheet · 1440", "1440 × 1024 · tokens & lockups", 1440, 1024, desktopChrome, "Brand sheet"),
+];
+
 export const FRAME_PRESETS: FramePreset[] = [
   // Mobile · Standard — modern Android punch-hole as default
   preset("mobile", "mobile", "Standard", "Mobile", "390 × 844 · punch-hole 6″", 390, 844, punchHole, "Center punch-hole · 6″"),
@@ -206,6 +222,19 @@ function buildSections(presets: readonly FramePreset[]): FramePresetSection[] {
 
 export const FRAME_PRESET_SECTIONS: FramePresetSection[] = buildSections(FRAME_PRESETS);
 
+export const ASSET_PRESET_SECTIONS: FramePresetSection[] = [
+  {
+    category: "desktop",
+    title: "Asset",
+    groups: [
+      { title: "Logo", items: ASSET_PRESETS.filter((p) => p.group === "Logo") },
+      { title: "Icons", items: ASSET_PRESETS.filter((p) => p.group === "Icons") },
+      { title: "Illustration", items: ASSET_PRESETS.filter((p) => p.group === "Illustration") },
+      { title: "Brand Kit", items: ASSET_PRESETS.filter((p) => p.group === "Brand Kit") },
+    ].filter((g) => g.items.length > 0),
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Canvas category aware helpers
 // ---------------------------------------------------------------------------
@@ -216,6 +245,8 @@ export function getFramePresetsForCanvasCategory(canvas: CanvasCategory): readon
       return FRAME_PRESETS;
     case "mobile":
       return FRAME_PRESETS.filter((p) => p.category !== "desktop");
+    case "asset":
+      return ASSET_PRESETS;
     default:
       return FRAME_PRESETS;
   }
@@ -227,6 +258,8 @@ export function getFramePresetSectionsForCanvasCategory(canvas: CanvasCategory):
       return FRAME_PRESET_SECTIONS;
     case "mobile":
       return buildSections(FRAME_PRESETS.filter((p) => p.category !== "desktop"));
+    case "asset":
+      return ASSET_PRESET_SECTIONS;
     default:
       return FRAME_PRESET_SECTIONS;
   }

@@ -13,7 +13,6 @@ import {
   Menu,
   MoreHorizontal,
   MousePointerClick,
-  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
@@ -32,7 +31,7 @@ import type { BridgeHierarchySnapshot } from "../bridge/protocol";
 import type { FrameRenderModel, NodeEntity, PageEntity, SelectionState } from "../editor/model";
 import { buildLayerTree, countLayerNodes, type LayerIconKind, type LayerTreeNode } from "./panel-model";
 
-type SidebarTab = "pages" | "layers" | "tokens" | "assets";
+type SidebarTab = "pages" | "layers" | "assets";
 
 const LAYER_ICONS: Record<LayerIconKind, ReactNode> = {
   frame: <Frame size={11} />,
@@ -61,7 +60,6 @@ export interface LeftSidebarProps {
   onHoverNode?: (frameId: string, nodeId: string) => void;
   onHoverNodeEnd?: () => void;
   hoveredLayerNode?: { frameId: string; nodeId: string } | null;
-  tokensPanel?: ReactNode;
 }
 
 function PageRenameInput({
@@ -336,7 +334,6 @@ export function LeftSidebar(props: LeftSidebarProps) {
   const tabs: Array<{ id: SidebarTab; label: string; icon: typeof FolderOpen }> = [
     { id: "pages", label: "Pages", icon: FolderOpen },
     { id: "layers", label: "Layers", icon: Layers3 },
-    ...(props.tokensPanel ? [{ id: "tokens" as SidebarTab, label: "Tokens", icon: Palette }] : []),
     { id: "assets", label: "Assets", icon: SquareStack },
   ];
   return (
@@ -350,7 +347,6 @@ export function LeftSidebar(props: LeftSidebarProps) {
         <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label }) => <button key={id} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} type="button">{label}</button>)}</div>
         {tab === "pages" ? <PagesPanel {...props} /> : null}
         {tab === "layers" ? <LayersPanel {...props} /> : null}
-        {tab === "tokens" && props.tokensPanel ? props.tokensPanel : null}
         {tab === "assets" ? <AssetsPanel /> : null}
         <button className="sidebar-resize-handle" aria-label="Resize left sidebar" onPointerDown={onResizePointerDown} onPointerMove={onResizePointerMove} onPointerUp={onResizePointerUp} onPointerCancel={onResizePointerUp} onLostPointerCapture={onResizePointerUp} type="button" />
       </div> : null}

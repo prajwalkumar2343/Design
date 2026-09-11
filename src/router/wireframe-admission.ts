@@ -103,7 +103,6 @@ export type WireframeViolationCode =
   | "invalid-html"
   | "reserved-runtime-marker"
   | "reserved-wireframe-theme-marker"
-  | "reserved-token-theme-marker"
   | "html-too-large"
   | "script"
   | "event-handler"

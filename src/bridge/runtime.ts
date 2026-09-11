@@ -337,104 +337,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return true;
   }
 
-  function syncCreatedSvgSize(element) {
-    try {
-      if (!(element instanceof Element)) return;
-      if (element.getAttribute("data-design-tool-created") !== "true") return;
-      const tag = (element.tagName || "").toLowerCase();
-      if (tag !== "svg") return;
-      const kind = element.getAttribute("data-design-tool-kind") || "rectangle";
-      const wRaw = element.style.getPropertyValue("width") || element.style.width || "";
-      const hRaw = element.style.getPropertyValue("height") || element.style.height || "";
-      const W = Number.parseFloat(wRaw);
-      const H = Number.parseFloat(hRaw);
-      if (!Number.isFinite(W) || !Number.isFinite(H) || W < 1 || H < 1) return;
-      const oldViewBox = element.getAttribute("viewBox") || "";
-      const vb = /^0 0 ([\d.]+) ([\d.]+)$/.exec(oldViewBox.trim());
-      const oldW = vb ? Number(vb[1]) : 0;
-      const oldH = vb ? Number(vb[2]) : 0;
-      const viewBoxMatches = oldW === W && oldH === H;
-      const strokeWidth = Number(element.getAttribute("data-design-tool-stroke-width") || 2) || 2;
-      const radiusRaw = Number(element.getAttribute("data-design-tool-radius") || 0) || 0;
-      const inset = Math.max(0, strokeWidth / 2);
-      const child = element.querySelector("rect,ellipse,line,polyline,polygon,path");
-      let scaleX = 1;
-      let scaleY = 1;
-      if (oldW > 0 && oldH > 0 && !viewBoxMatches) {
-        scaleX = W / oldW;
-        scaleY = H / oldH;
-      }
-      let oldBounds = null;
-      try { oldBounds = JSON.parse(element.getAttribute("data-design-tool-bounds") || "null"); } catch {}
-      element.setAttribute("viewBox", "0 0 " + W + " " + H);
-      if (child) {
-        const childTag = (child.tagName || "").toLowerCase();
-        if (childTag === "rect") {
-          child.setAttribute("x", String(inset));
-          child.setAttribute("y", String(inset));
-          child.setAttribute("width", String(Math.max(1, W - strokeWidth)));
-          child.setAttribute("height", String(Math.max(1, H - strokeWidth)));
-          const r = Math.min(Math.max(0, radiusRaw), W / 2, H / 2);
-          if (r > 0) {
-            child.setAttribute("rx", String(r));
-            child.setAttribute("ry", String(r));
-          } else {
-            child.removeAttribute("rx");
-            child.removeAttribute("ry");
-          }
-        } else if (childTag === "ellipse") {
-          child.setAttribute("cx", String(W / 2));
-          child.setAttribute("cy", String(H / 2));
-          child.setAttribute("rx", String(Math.max(0.5, W / 2 - inset)));
-          child.setAttribute("ry", String(Math.max(0.5, H / 2 - inset)));
-        } else if (childTag === "line") {
-          if (oldW > 0 && oldH > 0 && (scaleX !== 1 || scaleY !== 1)) {
-            const x1 = Number(child.getAttribute("x1") || 0) * scaleX;
-            const y1 = Number(child.getAttribute("y1") || 0) * scaleY;
-            const x2 = Number(child.getAttribute("x2") || 0) * scaleX;
-            const y2 = Number(child.getAttribute("y2") || 0) * scaleY;
-            child.setAttribute("x1", String(Math.round(x1 * 100) / 100));
-            child.setAttribute("y1", String(Math.round(y1 * 100) / 100));
-            child.setAttribute("x2", String(Math.round(x2 * 100) / 100));
-            child.setAttribute("y2", String(Math.round(y2 * 100) / 100));
-          }
-        } else if (childTag === "polyline" || childTag === "polygon") {
-          if (oldW > 0 && oldH > 0 && (scaleX !== 1 || scaleY !== 1)) {
-            const pts = (child.getAttribute("points") || "").trim().split(/\s+/).filter(Boolean).map(function(pair) {
-              const parts = pair.split(",");
-              if (parts.length !== 2) return null;
-              const x = Number(parts[0]) * scaleX;
-              const y = Number(parts[1]) * scaleY;
-              if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-              return (Math.round(x * 100) / 100) + "," + (Math.round(y * 100) / 100);
-            }).filter(Boolean);
-            if (pts.length > 0) child.setAttribute("points", pts.join(" "));
-          }
-        }
-      }
-      try {
-        if (oldBounds && Number.isFinite(oldBounds.x) && Number.isFinite(oldBounds.y)) {
-          element.setAttribute("data-design-tool-bounds", JSON.stringify({ x: oldBounds.x, y: oldBounds.y, width: W, height: H }));
-        }
-      } catch {}
-      try {
-        if (kind !== "rectangle" && kind !== "ellipse" && oldW > 0 && oldH > 0 && (scaleX !== 1 || scaleY !== 1) && oldBounds && Number.isFinite(oldBounds.x) && Number.isFinite(oldBounds.y)) {
-          const rawPts = element.getAttribute("data-design-tool-points");
-          const arr = JSON.parse(rawPts || "[]");
-          if (Array.isArray(arr) && arr.length >= 2) {
-            const ox = oldBounds.x;
-            const oy = oldBounds.y;
-            const scaled = arr.map(function(pt) {
-              if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return pt;
-              return { x: Math.round((ox + (pt.x - ox) * scaleX) * 100) / 100, y: Math.round((oy + (pt.y - oy) * scaleY) * 100) / 100 };
-            });
-            element.setAttribute("data-design-tool-points", JSON.stringify(scaled));
-          }
-        }
-      } catch {}
-    } catch {}
-  }
-
   const GLASS_VECTOR_KINDS = ["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"];
 
   function clamp01(value) {
@@ -484,63 +386,42 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   }
 
   // ── Liquid Glass helpers (Apple iOS 26) ──────────────────────────────────
-  // Lens blur stays low so the edge refraction survives; the frosted
-  // fallback (no backdrop-filter:url support) diffuses more. Saturate holds
-  // Apple's 180% vibrancy, contrast 1.04. Displacement scale is NEGATIVE —
-  // a magnifying lens bulge; positive scales pinch/fish-eye instead.
   function glassBlur(level) {
     const t = clamp01(level / 100);
-    return Math.round(2 + 3 * t);
-  }
-  function glassFallbackBlur(level) {
-    const t = clamp01(level / 100);
-    return Math.round(10 + 6 * t);
+    return Math.round(6 + 18 * t);
   }
   function glassSaturate(level) {
-    return 180;
+    const t = clamp01(level / 100);
+    return Math.round(140 + 60 * t);
   }
   function glassBrightness(level) {
     const t = clamp01(level / 100);
-    return Math.round((1.06 + 0.06 * t) * 100) / 100;
-  }
-  function glassContrast() {
-    return 1.04;
+    return Math.round((1.02 + 0.12 * t) * 100) / 100;
   }
   function glassTintAlpha(level) {
     const t = clamp01(level / 100);
-    return Math.round((0.1 + 0.08 * t) * 100) / 100;
+    return Math.round((0.08 + 0.16 * t) * 100) / 100;
   }
   function glassBackdropFilter(level) {
-    return "blur(" + glassBlur(level) + "px) saturate(" + glassSaturate(level) + "%) brightness(" + glassBrightness(level) + ") contrast(" + glassContrast() + ")";
-  }
-  function glassFallbackBackdropFilter(level) {
-    return "blur(" + glassFallbackBlur(level) + "px) saturate(" + glassSaturate(level) + "%) brightness(" + glassBrightness(level) + ") contrast(" + glassContrast() + ")";
-  }
-  function glassBackdropFilterWithRefraction(level, filterId) {
-    return "blur(" + glassBlur(level) + "px) url(#" + filterId + ") saturate(" + glassSaturate(level) + "%) brightness(" + glassBrightness(level) + ") contrast(" + glassContrast() + ")";
+    return "blur(" + glassBlur(level) + "px) saturate(" + glassSaturate(level) + "%) brightness(" + glassBrightness(level) + ")";
   }
   function glassDisplacementScale(level) {
     const t = clamp01(level / 100);
-    return Math.round(-(12 + 30 * t));
-  }
-  function glassChromaDelta() {
-    return 3;
+    return Math.round(4 + 26 * t);
   }
   function glassTintBackground(base, level) {
     const t = clamp01(level / 100);
-    const topAlpha = Math.round((0.3 + 0.08 * t) * 100) / 100;
-    const bottomAlpha = Math.round((0.12 + 0.06 * t) * 100) / 100;
-    const topSheen = "linear-gradient(to bottom, rgba(255, 255, 255, " + topAlpha + ") 0%, rgba(255, 255, 255, 0) 36%)";
-    const bottomSheen = "linear-gradient(to top, rgba(255, 255, 255, " + bottomAlpha + ") 0%, rgba(255, 255, 255, 0) 26%)";
-    if (!base) return topSheen + ", " + bottomSheen + ", rgba(255, 255, 255, 0.08)";
+    const sheenTop = Math.min(0.62, 0.38 + 0.18 * t);
+    const sheenMid = Math.min(0.22, 0.08 + 0.1 * t);
+    const sheen = "linear-gradient(135deg, rgba(255, 255, 255, " + sheenTop + ") 0%, rgba(255, 255, 255, " + sheenMid + ") 26%, rgba(255, 255, 255, 0) 58%)";
+    if (!base) return sheen;
     const alpha = glassTintAlpha(level);
     const tint = rgba(base, alpha);
-    return topSheen + ", " + bottomSheen + ", " + tint;
+    return sheen + ", " + tint;
   }
 
-  const GLASS_RIM_BORDER = "rgba(255, 255, 255, 0.35)";
-  const GLASS_LIQUID_RIM = "inset 0 1.5px 0.5px rgba(255, 255, 255, 0.6), inset 0 -1.5px 1px rgba(255, 255, 255, 0.35), inset 2px 0 3px -2px rgba(255, 255, 255, 0.35), inset -2px 0 3px -2px rgba(255, 255, 255, 0.35), inset 0 0 0 1px rgba(255, 255, 255, 0.12)";
-  const GLASS_LIQUID_DROP = "0 10px 30px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.09)";
+  const GLASS_LIQUID_RIM = "inset 0 1px 1px rgba(255, 255, 255, 0.65), inset 0 -1px 1px rgba(255, 255, 255, 0.32), inset 1px 0 1px rgba(255, 255, 255, 0.22), inset -1px 0 1px rgba(255, 255, 255, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.18)";
+  const GLASS_LIQUID_DROP = "0 8px 32px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.14)";
   const GLASS_LIQUID_SHADOW = GLASS_LIQUID_RIM + ", " + GLASS_LIQUID_DROP;
   // Keep legacy name for any external read; now points at liquid shadow
   const GLASS_RIM_SHADOW = GLASS_LIQUID_SHADOW;
@@ -793,57 +674,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return backdropUrlSupported;
   }
 
-  // Builds the Apple lens: one feImage displacement map, three
-  // feDisplacementMap passes at staggered scales (R/G/B prism fringe via
-  // feColorMatrix isolation) recombined with screen blending.
-  // color-interpolation-filters="sRGB" on the filter is mandatory — without
-  // it the map's neutral gray remaps and injects phantom displacement.
-  function appendLiquidGlassLens(filter, dataUrl, w, h, scale) {
-    const NS = "http://www.w3.org/2000/svg";
-    const XLINK = "http://www.w3.org/1999/xlink";
-    const delta = glassChromaDelta();
-    const feImage = document.createElementNS(NS, "feImage");
-    feImage.setAttribute("href", dataUrl);
-    feImage.setAttributeNS(XLINK, "href", dataUrl);
-    feImage.setAttribute("x", "0");
-    feImage.setAttribute("y", "0");
-    feImage.setAttribute("width", String(w));
-    feImage.setAttribute("height", String(h));
-    feImage.setAttribute("preserveAspectRatio", "none");
-    feImage.setAttribute("result", "liquidDispMap");
-    filter.appendChild(feImage);
-    const channels = [
-      { s: scale - delta, m: "1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0", r: "dR" },
-      { s: scale, m: "0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0", r: "dG" },
-      { s: scale + delta, m: "0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0", r: "dB" },
-    ];
-    for (let i = 0; i < channels.length; i++) {
-      const disp = document.createElementNS(NS, "feDisplacementMap");
-      disp.setAttribute("in", "SourceGraphic");
-      disp.setAttribute("in2", "liquidDispMap");
-      disp.setAttribute("scale", String(channels[i].s));
-      disp.setAttribute("xChannelSelector", "R");
-      disp.setAttribute("yChannelSelector", "G");
-      filter.appendChild(disp);
-      const mat = document.createElementNS(NS, "feColorMatrix");
-      mat.setAttribute("type", "matrix");
-      mat.setAttribute("values", channels[i].m);
-      mat.setAttribute("result", channels[i].r);
-      filter.appendChild(mat);
-    }
-    const blendRG = document.createElementNS(NS, "feBlend");
-    blendRG.setAttribute("in", "dR");
-    blendRG.setAttribute("in2", "dG");
-    blendRG.setAttribute("mode", "screen");
-    blendRG.setAttribute("result", "dRG");
-    filter.appendChild(blendRG);
-    const blendRGB = document.createElementNS(NS, "feBlend");
-    blendRGB.setAttribute("in", "dRG");
-    blendRGB.setAttribute("in2", "dB");
-    blendRGB.setAttribute("mode", "screen");
-    filter.appendChild(blendRGB);
-  }
-
   function shapeGeometryChild(element) {
     return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
   }
@@ -897,13 +727,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     rememberOriginalFill(element, child);
     const fillAttr = child.getAttribute("fill") || element.getAttribute("data-design-tool-fill") || "";
     const isTransparentFill = fillAttr.trim().toLowerCase() === "transparent";
-    // Re-applying glass reads a transparent live fill (the previous pass
-    // cleared it), so reuse the stored explicit fill for the tint — unless
-    // the user explicitly chose transparent, which stays pure glass.
-    const storedFill = element.getAttribute("data-design-tool-fill") || "";
-    const storedBase = storedFill.trim().toLowerCase() === "transparent" ? null : parseColorChannels(storedFill);
-    const base = isTransparentFill ? storedBase : (parseColorChannels(fillAttr) ||
-      storedBase || { r: 217, g: 217, b: 217 });
+    const base = isTransparentFill ? null : (parseColorChannels(fillAttr) ||
+      parseColorChannels(element.getAttribute("data-design-tool-fill")) || { r: 217, g: 217, b: 217 });
     const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
     const kind = element.getAttribute("data-design-tool-kind") || "rectangle";
     let bounds = null;
@@ -913,14 +738,13 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const radiusAttr = Number(element.getAttribute("data-design-tool-radius") || 0);
     const radius = Math.max(0, Math.min(64, radiusAttr));
 
-    // Build liquid visual — backdrop blur + tinted sheen + rim + refraction.
-    // Without url() support the pane falls back to the frosted recipe so it
-    // still reads as glass instead of clear film.
+    // Build liquid visual — backdrop blur + tinted sheen + rim
+    const bfBase = glassBackdropFilter(level);
     const bg = glassTintBackground(base, level);
     const shadow = GLASS_LIQUID_SHADOW;
 
     // Try to add edge refraction via SVG displacement (Chromium only, rectangle/ellipse)
-    let backdropValue = glassFallbackBackdropFilter(level);
+    let backdropValue = bfBase;
     let hadRefraction = false;
     if ((kind === "rectangle" || kind === "ellipse") && isBackdropUrlSupported()) {
       try {
@@ -942,8 +766,25 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
           } else {
             while (filter.firstChild) filter.removeChild(filter.firstChild);
           }
-          appendLiquidGlassLens(filter, dataUrl, w, h, glassDisplacementScale(level));
-          backdropValue = glassBackdropFilterWithRefraction(level, fid);
+          const scale = glassDisplacementScale(level);
+          const feImage = document.createElementNS("http://www.w3.org/2000/svg", "feImage");
+          feImage.setAttribute("href", dataUrl);
+          feImage.setAttributeNS("http://www.w3.org/1999/xlink", "href", dataUrl);
+          feImage.setAttribute("x", "0");
+          feImage.setAttribute("y", "0");
+          feImage.setAttribute("width", String(w));
+          feImage.setAttribute("height", String(h));
+          feImage.setAttribute("preserveAspectRatio", "none");
+          feImage.setAttribute("result", "liquidDispMap");
+          filter.appendChild(feImage);
+          const feDisp = document.createElementNS("http://www.w3.org/2000/svg", "feDisplacementMap");
+          feDisp.setAttribute("in", "SourceGraphic");
+          feDisp.setAttribute("in2", "liquidDispMap");
+          feDisp.setAttribute("scale", String(scale));
+          feDisp.setAttribute("xChannelSelector", "R");
+          feDisp.setAttribute("yChannelSelector", "G");
+          filter.appendChild(feDisp);
+          backdropValue = "url(#" + fid + ") " + bfBase;
           hadRefraction = true;
         }
       } catch {}
@@ -960,7 +801,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     try { element.style.setProperty("-webkit-backdrop-filter", backdropValue, "important"); } catch {}
     element.style.setProperty("background", bg, "important");
     element.style.setProperty("box-shadow", shadow, "important");
-    element.style.setProperty("border", "1px solid " + GLASS_RIM_BORDER, "important");
     element.style.setProperty("isolation", "isolate");
     // Ensure the pane clips to its shape so blur follows rounded corners / ellipse
     if (kind === "rectangle") {
@@ -1006,7 +846,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       try { element.style.removeProperty("-webkit-backdrop-filter"); } catch {}
       element.style.removeProperty("background");
       element.style.removeProperty("box-shadow");
-      element.style.removeProperty("border");
       element.style.removeProperty("border-radius");
       element.style.removeProperty("overflow");
       element.style.removeProperty("clip-path");
@@ -1018,6 +857,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const bgColorRaw = element.style.backgroundColor || computed.backgroundColor || "";
     const isTransparentBg = bgColorRaw.trim().toLowerCase() === "transparent" || bgColorRaw.trim() === "rgba(0, 0, 0, 0)";
     const base = isTransparentBg ? null : (parseColorChannels(bgColorRaw) || { r: 255, g: 255, b: 255 });
+    const bfBase = glassBackdropFilter(level);
     const bg = glassTintBackground(base, level);
     const shadow = GLASS_LIQUID_SHADOW;
 
@@ -1031,7 +871,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       if (rect && rect.width > 0) w = rect.width;
       if (rect && rect.height > 0) h = rect.height;
     } catch {}
-    let backdropValue = glassFallbackBackdropFilter(level);
+    let backdropValue = bfBase;
     const rawIdS = element.getAttribute("data-design-element-id") || element.id || "surface";
     if (isBackdropUrlSupported()) {
       try {
@@ -1053,8 +893,25 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
           } else {
             while (filter.firstChild) filter.removeChild(filter.firstChild);
           }
-          appendLiquidGlassLens(filter, dataUrl, w, h, glassDisplacementScale(level));
-          backdropValue = glassBackdropFilterWithRefraction(level, fid);
+          const scale = glassDisplacementScale(level);
+          const feImage = document.createElementNS("http://www.w3.org/2000/svg", "feImage");
+          feImage.setAttribute("href", dataUrl);
+          feImage.setAttributeNS("http://www.w3.org/1999/xlink", "href", dataUrl);
+          feImage.setAttribute("x", "0");
+          feImage.setAttribute("y", "0");
+          feImage.setAttribute("width", String(w));
+          feImage.setAttribute("height", String(h));
+          feImage.setAttribute("preserveAspectRatio", "none");
+          feImage.setAttribute("result", "liquidDispMap");
+          filter.appendChild(feImage);
+          const feDisp = document.createElementNS("http://www.w3.org/2000/svg", "feDisplacementMap");
+          feDisp.setAttribute("in", "SourceGraphic");
+          feDisp.setAttribute("in2", "liquidDispMap");
+          feDisp.setAttribute("scale", String(scale));
+          feDisp.setAttribute("xChannelSelector", "R");
+          feDisp.setAttribute("yChannelSelector", "G");
+          filter.appendChild(feDisp);
+          backdropValue = "url(#" + fid + ") " + bfBase;
         }
       } catch {}
     }
@@ -1063,7 +920,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     try { element.style.setProperty("-webkit-backdrop-filter", backdropValue, "important"); } catch {}
     element.style.setProperty("background", bg, "important");
     element.style.setProperty("box-shadow", shadow, "important");
-    element.style.setProperty("border", "1px solid " + GLASS_RIM_BORDER, "important");
     element.style.setProperty("isolation", "isolate");
     // Keep existing radius but ensure clipping so backdrop follows it
     if (radius > 0) element.style.setProperty("overflow", "hidden", "important");
@@ -1097,7 +953,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       element.style.overflowWrap = "break-word";
       element.style.textAlign = "left";
       element.style.padding = "4px 6px";
-      element.style.outline = "none";
       element.style.position = "fixed";
       element.style.left = bounds.x + "px";
       element.style.top = bounds.y + "px";
@@ -1312,8 +1167,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     else edit.element.setAttribute("contenteditable", edit.contentEditable);
     if (edit.spellcheck === null) edit.element.removeAttribute("spellcheck");
     else edit.element.setAttribute("spellcheck", edit.spellcheck);
-    if (edit.outline === null) edit.element.style.removeProperty("outline");
-    else edit.element.style.outline = edit.outline;
     edit.element.removeAttribute("data-design-tool-editing");
   }
 
@@ -1328,23 +1181,13 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       originalText: (element.textContent || "").slice(0, MAX_TEXT_LENGTH),
       contentEditable: element.getAttribute("contenteditable"),
       spellcheck: element.getAttribute("spellcheck"),
-      outline: element.style.getPropertyValue("outline") || null,
       pending: null,
     };
     activeTextEdit = edit;
     element.contentEditable = "true";
     element.setAttribute("spellcheck", "false");
     element.setAttribute("data-design-tool-editing", "true");
-    element.style.outline = "none";
     element.focus();
-    // Select the existing contents so typing replaces them, like design tools.
-    const selection = window.getSelection();
-    if (selection) {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      selection.removeAllRanges();
-      selection.addRange(range);
-    }
     sendEvent("text-edit-start", event || { target: element, clientX: 0, clientY: 0 }, describe(element));
     return true;
   }
@@ -1460,13 +1303,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         // Applied as !important so Canvas-owned edits stay authoritative over
         // the injected wireframe theme's blanket resets (transform, shadow…).
         element.style.setProperty(command.property, command.value, "important");
-      }
-      if (command.property === "width" || command.property === "height") {
-        // Outer SVG size changed without touching the viewBox/inner geometry,
-        // so with the default preserveAspectRatio the inner border letterboxes
-        // and looks shorter than the shape when shrinking one axis. Keep the
-        // vector geometry glued to the live CSS size.
-        syncCreatedSvgSize(element);
       }
       const value = element.style.getPropertyValue(command.property) || null;
       return {
@@ -1773,13 +1609,6 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       document.querySelectorAll("[data-design-tool-created='true']").forEach(function(el) {
         const child = el.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
         if (child && child.getAttribute("vector-effect") === "non-scaling-stroke") child.removeAttribute("vector-effect");
-      });
-    } catch {}
-    // Heal shapes resized before the viewBox sync existed: stale viewBoxes
-    // letterbox the inner border so it renders shorter than the outer box.
-    try {
-      document.querySelectorAll("[data-design-tool-created='true']").forEach(function(el) {
-        syncCreatedSvgSize(el);
       });
     } catch {}
     document.addEventListener("pointerover", handleHover, true);

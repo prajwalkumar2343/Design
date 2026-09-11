@@ -33,9 +33,8 @@ afterEach(() => {
 
 describe("goEndpointForModel", () => {
   it("maps the responses-family models", () => {
-    expect(goEndpointForModel("grok-4.6")).toBe("responses");
+    expect(goEndpointForModel("grok-4.5")).toBe("responses");
     expect(goEndpointForModel("gpt-5.6-luna")).toBe("responses");
-    expect(goEndpointForModel("muse-spark-1.2-contributor")).toBe("responses");
   });
 
   it("maps the messages-family models", () => {
@@ -181,69 +180,18 @@ describe("OpenCodeGoClient.chat dispatch", () => {
       }));
     const client = clientWith(fetchFn as unknown as typeof fetch);
 
-    await client.chat({ model: "grok-4.6", messages: [{ role: "user", content: "hi" }] });
+    await client.chat({ model: "grok-4.5", messages: [{ role: "user", content: "hi" }] });
 
     expect(fetchFn.mock.calls[0][0]).toBe("https://go.example.test/v1/responses");
   });
 
-  it("routes messages-family models to /messages with the Anthropic dialect", async () => {
-    const fetchFn = mockFetch(async () =>
-      jsonResponse({
-        content: [{ type: "text", text: "  qwen replies  " }],
-        usage: { input_tokens: 9, output_tokens: 3 },
-      }));
-    const client = clientWith(fetchFn as unknown as typeof fetch);
-
-    const result = await client.chat({
-      model: "qwen3.8-max",
-      messages: [
-        { role: "system", content: "Be terse." },
-        { role: "user", content: "hi" },
-      ],
-      maxOutputTokens: 256,
-    });
-
-    expect(result).toEqual({
-      provider: "opencode-go",
-      model: "qwen3.8-max",
-      text: "qwen replies",
-      usage: { inputTokens: 9, outputTokens: 3 },
-    });
-    const [url, init] = fetchFn.mock.calls[0];
-    expect(url).toBe("https://go.example.test/v1/messages");
-    const requestInit = init as RequestInit;
-    expect(requestInit.headers).toMatchObject({
-      Authorization: "Bearer sk-go-test",
-      "anthropic-version": "2023-06-01",
-    });
-    expect(JSON.parse(requestInit.body as string)).toEqual({
-      model: "qwen3.8-max",
-      max_tokens: 256,
-      system: "Be terse.",
-      messages: [{ role: "user", content: "hi" }],
-      stream: false,
-    });
-  });
-
-  it("defaults max_tokens for messages-family models when the caller omits one", async () => {
-    const fetchFn = mockFetch(async () =>
-      jsonResponse({ content: [{ type: "text", text: "ok" }] }));
-    const client = clientWith(fetchFn as unknown as typeof fetch);
-
-    await client.chat({ model: "minimax-m3", messages: [{ role: "user", content: "hi" }] });
-
-    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.max_tokens).toBe(4096);
-    expect(body.system).toBeUndefined();
-  });
-
-  it("throws a protocol error on an empty messages response", async () => {
+  it("rejects the Anthropic-dialect family as unsupported", async () => {
     const client = clientWith((async () =>
-      jsonResponse({ content: [] })) as typeof fetch);
+      jsonResponse({})) as typeof fetch);
 
     await expect(
-      client.chat({ model: "minimax-m2.7", messages: [] }),
-    ).rejects.toMatchObject({ code: "protocol-error", provider: "opencode-go" });
+      client.chat({ model: "qwen3.8-max", messages: [] }),
+    ).rejects.toMatchObject({ code: "unsupported" });
   });
 });
 

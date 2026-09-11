@@ -3,8 +3,7 @@ import { LLMError, type LLMChatRequest, type LLMChatResult, type LLMProviderId }
 
 const PROVIDER: LLMProviderId = "codex-chatgpt";
 
-/** Current Codex-family model served by the ChatGPT backend's Responses API. */
-export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex";
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol";
 
 export interface CodexClientOptions {
   apiKey: string;

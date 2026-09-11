@@ -4,7 +4,7 @@ export interface ExtractHtmlResult {
   fenced: boolean;
 }
 
-const FENCE_RE = /```(?:html|xml)?\s*\n([\s\S]*?)\n```/i;
+const FENCE_RE = /```(?:html|xml)?[ \t]*\r?\n([\s\S]*?)\s*```/i;
 
 /**
  * Extract a complete HTML document from a model response. The model may wrap

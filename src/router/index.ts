@@ -63,3 +63,22 @@ export {
   type UpdateBriefReferenceInput,
   type UpdateConfirmedDecisionInput,
 } from "./brainstorm-session";
+export {
+  TokensService,
+  TokenRouterError,
+  TOKENS_CAPABILITY_PERMISSION,
+  TOKENS_QUERY_CAPABILITY,
+  TOKENS_ROUTER_MAX_TIMEOUT_MS,
+  TOKENS_ROUTER_TIMEOUT_MS,
+  TOKENS_SET_CAPABILITY,
+  MAX_TOKEN_MUTATION_OPS,
+  MAX_TOKEN_QUERY_LIMIT,
+  type TokenMutationOperation,
+  type TokenMutationResult,
+  type TokenQueryEntry,
+  type TokenQueryRequest,
+  type TokenQueryResult,
+  type TokenRouterErrorCode,
+  type TokenSetRequest,
+  type TokenStoreSnapshot,
+} from "./tokens";

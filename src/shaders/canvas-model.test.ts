@@ -27,6 +27,17 @@ describe("canvas shader elements", () => {
     expect(clampShaderElementSize(20, 10)).toEqual(SHADER_ELEMENT_MIN_SIZE);
     expect(clampShaderElementSize(320.6, 199.4)).toEqual({ width: 321, height: 199 });
   });
+
+  it("rejects non-finite sizes and centers instead of producing NaN", () => {
+    expect(clampShaderElementSize(NaN, NaN)).toEqual(SHADER_ELEMENT_MIN_SIZE);
+    expect(clampShaderElementSize(Infinity, -Infinity)).toEqual(SHADER_ELEMENT_MIN_SIZE);
+    expect(clampShaderElementSize(200, NaN)).toEqual({
+      width: 200,
+      height: SHADER_ELEMENT_MIN_SIZE.height,
+    });
+    expect(createCanvasShaderElement("mesh-gradient", { x: NaN, y: 0 })).toBeNull();
+    expect(createCanvasShaderElement("mesh-gradient", { x: 0, y: Infinity })).toBeNull();
+  });
 });
 
 describe("custom canvas shader elements", () => {

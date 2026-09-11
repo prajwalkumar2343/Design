@@ -252,6 +252,16 @@ function resolveMood(name: string | undefined): FerroTideMood {
   return FERRO_TIDE_MOODS.find((mood) => mood.name === name) ?? FERRO_TIDE_MOODS[0];
 }
 
+/**
+ * Real elapsed time between frames in seconds, clamped to sane bounds.
+ * A zero or negative delta (spec allows non-monotonic timestamps) falls
+ * back to a nominal 60fps step so the simulation never runs backwards.
+ */
+export function frameDeltaSeconds(now: number, lastNow: number): number {
+  const dt = (now - lastNow) / 1000;
+  return dt > 0 ? Math.min(dt, 0.05) : 0.016;
+}
+
 function prefersReducedMotion(): boolean {
   try {
     return typeof window !== "undefined" && typeof window.matchMedia === "function"
@@ -455,7 +465,7 @@ export function FerroTide({ width = "100%", height = "100%", mood = "Abyss", int
     const frame = (now: number) => {
       if (!alive) return;
       raf = requestAnimationFrame(frame);
-      const dt = Math.min((now - lastNow) / 1000 || 0.016, 0.05);
+      const dt = frameDeltaSeconds(now, lastNow);
       lastNow = now;
 
       const wanted = resolveMood(moodRef.current);

@@ -62,6 +62,7 @@ function coreSet(): TokenSet {
       token("core-type-body", "typography.body", "typography", { fontFamily: SANS, fontSize: "16px", fontWeight: "400", lineHeight: "1.5" }),
       token("core-type-heading", "typography.heading", "typography", { fontFamily: SANS, fontSize: "28px", fontWeight: "650", lineHeight: "1.2" }),
       token("core-type-caption", "typography.caption", "typography", { fontFamily: SANS, fontSize: "13px", fontWeight: "400", lineHeight: "1.4" }),
+      token("core-border-default", "color.border.default", "color", "{color.neutral.200}", "Semantic border — aliases the neutral ramp."),
     ],
   });
 }
@@ -78,6 +79,7 @@ function lightSet(): TokenSet {
       token("light-ink-secondary", "color.ink.secondary", "color", "#57534e"),
       token("light-accent-primary", "color.accent.primary", "color", "#3b74c2"),
       token("light-accent-on", "color.accent.on-accent", "color", "#ffffff"),
+      token("light-text-primary", "color.text.primary", "color", "{color.ink.primary}", "Primary text — tracks color.ink.primary per mode."),
     ],
   });
 }
@@ -94,6 +96,7 @@ function darkSet(): TokenSet {
       token("dark-ink-secondary", "color.ink.secondary", "color", "#d6d3d1"),
       token("dark-accent-primary", "color.accent.primary", "color", "#6faee0"),
       token("dark-accent-on", "color.accent.on-accent", "color", "#10233a"),
+      token("dark-text-primary", "color.text.primary", "color", "{color.ink.primary}", "Primary text — tracks color.ink.primary per mode."),
     ],
   });
 }

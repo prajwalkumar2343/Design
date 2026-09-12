@@ -686,11 +686,11 @@ button:focus-visible,
   justify-content: center;
   width: 28px;
   height: 28px;
-  padding: 0 3px 5px 0;
+  padding: 0;
   border: 0;
   border-radius: 50% 50% 50% 5px;
   color: #fff;
-  background: linear-gradient(145deg, #f68a5f 0%, #e05a2b 100%);
+  background: #e36b42;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.28),
     0 0 0 2px rgba(255, 255, 255, 0.92),
@@ -727,7 +727,11 @@ button:focus-visible,
 }
 
 .canvas-comment-marker[data-comment-status="resolved"] {
-  background: linear-gradient(145deg, #70c096 0%, #3f9166 100%);
+  background: #3f9166;
+}
+
+.canvas-comment-marker[aria-expanded="true"] {
+  box-shadow: 0 0 0 2px #fff, 0 0 0 5px rgba(227, 107, 66, 0.25), 0 6px 16px rgba(20, 20, 18, 0.18);
 }
 
 .canvas-comment-marker:focus-visible {
@@ -749,39 +753,182 @@ button:focus-visible,
 .canvas-comment-popover {
   position: absolute;
   z-index: 42;
-  width: 384px;
-  padding: 10px;
-  border: 0;
-  border-radius: 12px;
+  width: 360px;
+  max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+  overflow: auto;
+  padding: 0;
+  border: 1px solid rgba(23, 22, 26, 0.12);
+  border-radius: 14px;
   color: var(--ink);
-  background: rgba(253, 253, 252, 0.78);
-  box-shadow:
-    0 0 0 1px rgba(23, 22, 26, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 1px 2px rgba(20, 20, 18, 0.06),
-    0 4px 12px rgba(20, 20, 18, 0.06),
-    0 16px 32px rgba(20, 20, 18, 0.1);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  background: var(--paper);
+  box-shadow: 0 16px 48px -12px rgba(20, 20, 18, 0.24), 0 4px 12px rgba(20, 20, 18, 0.08);
   pointer-events: auto;
   user-select: text;
+  touch-action: auto;
+  overscroll-behavior: contain;
   transform-origin: 0 0;
-  animation: comment-popover-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: comment-popover-in 180ms var(--ease-out);
 }
 
-.canvas-comment-popover::before {
-  content: "";
-  position: absolute;
-  top: -6px;
-  left: 24px;
-  width: 12px;
-  height: 12px;
-  transform: rotate(45deg);
-  border-radius: 2px;
-  background: rgba(253, 253, 252, 0.92);
-  border-top: 1px solid rgba(23, 22, 26, 0.08);
-  border-left: 1px solid rgba(23, 22, 26, 0.08);
-  pointer-events: none;
+.comment-header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px 12px 12px 16px;
+}
+
+.comment-heading-icon {
+  display: flex;
+  color: var(--ink-soft);
+}
+
+.comment-heading {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.comment-status {
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: var(--ink-soft);
+  background: #f1f1ef;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.comment-status[data-resolved="true"] {
+  color: #28704c;
+  background: #edf7f0;
+}
+
+.comment-icon-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  background: transparent;
+  cursor: pointer;
+}
+
+.comment-icon-button:hover {
+  color: var(--ink);
+  background: #f1f1ef;
+}
+
+.comment-composer {
+  margin: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--paper);
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
+}
+
+.comment-composer:focus-within {
+  border-color: var(--selection);
+  box-shadow: 0 0 0 3px rgba(93, 92, 226, 0.09);
+}
+
+.comment-composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 9px 9px;
+}
+
+.comment-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.comment-shortcut span {
+  margin-left: 3px;
+}
+
+.comment-shortcut kbd {
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 3px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+}
+
+.comment-save-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #fff;
+  background: var(--ink);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.comment-save-button:hover:not(:disabled) {
+  background: #353532;
+}
+
+.comment-save-button:disabled {
+  color: #83837d;
+  background: #eeeeeb;
+  cursor: default;
+}
+
+.comment-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+}
+
+.comment-resolve-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink-soft);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.comment-resolve-button:hover:not(:disabled) {
+  color: #28704c;
+  background: #edf7f0;
+}
+
+.comment-resolve-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 @keyframes comment-popover-in {
@@ -840,89 +987,45 @@ button:focus-visible,
 .comment-text-field {
   display: block;
   width: 100%;
-  min-height: 120px;
-  max-height: 60vh;
-  resize: vertical;
+  min-height: 112px;
+  max-height: 240px;
+  resize: none;
   field-sizing: content;
-  padding: 14px 16px;
-  border: 1px solid rgba(18, 18, 17, 0.08);
-  border-radius: 10px;
+  padding: 12px;
+  border: 0;
+  border-radius: 8px;
   outline: none;
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.9);
+  background: transparent;
   font-family: inherit;
-  font-size: 14px;
-  line-height: 1.5;
-  letter-spacing: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
   caret-color: var(--selection);
-  box-shadow: inset 0 1px 2px rgba(20, 20, 18, 0.03);
   scrollbar-width: thin;
-  scrollbar-color: rgba(18, 18, 17, 0.18) transparent;
-  transition:
-    border-color var(--duration-fast) var(--ease-out),
-    box-shadow var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out);
   user-select: text;
 }
 
-.comment-text-field:hover {
-  border-color: rgba(18, 18, 17, 0.16);
-  background: #ffffff;
-}
-
-.comment-text-field:focus {
-  border-color: rgba(93, 92, 226, 0.45);
-  background: #ffffff;
-  box-shadow:
-    0 0 0 3px rgba(93, 92, 226, 0.12),
-    inset 0 1px 2px rgba(20, 20, 18, 0.02);
-}
-
 .comment-text-field::placeholder {
-  color: var(--ink-faint);
+  color: var(--ink-soft);
 }
 
 .comment-text-field::selection {
-  background: rgba(93, 92, 226, 0.18);
+  background: var(--selection-soft);
 }
 
 .comment-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 0 4px;
-  color: var(--ink-faint);
-  font-size: 11px;
-  line-height: 1.4;
-  user-select: none;
-}
-
-.comment-hint-dot {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.6;
-}
-
-.comment-hint kbd {
-  padding: 1px 6px;
-  border: 1px solid rgba(18, 18, 17, 0.12);
-  border-bottom-width: 2px;
-  border-radius: 5px;
-  background: rgba(255, 255, 255, 0.7);
   color: var(--ink-soft);
-  font-family: inherit;
   font-size: 10px;
-  line-height: 1.4;
-  letter-spacing: 0.02em;
+  line-height: 1.5;
 }
 
 .comment-feedback {
-  margin-top: 6px;
-  padding: 0 4px;
+  margin: 0 12px 12px;
+  padding: 8px 10px;
+  border-radius: 6px;
   color: var(--selection);
+  background: var(--selection-soft);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -4931,3 +5034,311 @@ button:active:not(:disabled) { transition-duration: var(--duration-press); }
 @media (max-width: 900px) {
   .sidebar-rail-tab:hover { transform: none; }
 }
+
+/* __MODERN_TACTILE_CONTROLS__ */
+/* Modern control refresh (Sep 2026 research: Clerk/Personio "soft-key" buttons,
+   Linear/Vercel secondary keys, iOS/Material-3 slider anatomy).
+   Buttons: light comes from above — top-lit gradient overlay, darker edge,
+   inset top highlight, layered ambient shadow; press collapses the shadow and
+   deepens the inner shade. Sliders: recessed track, accent-filled progress,
+   floating white thumb that lifts (not shrinks) while dragging, accent halo. */
+
+/* --- Primary (dark) buttons: top-lit ink gradient + edge + inner highlight --- */
+.empty-canvas-state button,
+.agent-connection-form button,
+.figma-primary,
+.figma-file-open,
+.project-not-found-actions button:not(.is-secondary):not(.is-danger),
+.figma-canvas-tab.is-active,
+.figma-icon-btn.is-active {
+  border-color: rgba(8, 8, 7, 0.9);
+  background-color: #1c1c1a;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.02) 48%, rgba(0, 0, 0, 0.12) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    0 1px 2px rgba(20, 20, 18, 0.18),
+    0 8px 20px rgba(20, 20, 18, 0.10);
+}
+.figma-primary,
+.figma-file-open,
+.project-not-found-actions button:not(.is-secondary):not(.is-danger),
+.figma-icon-btn.is-active {
+  border: 1px solid rgba(8, 8, 7, 0.9);
+}
+
+.empty-canvas-state button:hover:not(:disabled),
+.agent-connection-form button:hover:not(:disabled),
+.figma-primary:hover:not(:disabled),
+.project-not-found-actions button:not(.is-secondary):not(.is-danger):hover:not(:disabled) {
+  opacity: 1;
+  background-color: #262624;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 48%, rgba(0, 0, 0, 0.10) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    0 2px 4px rgba(20, 20, 18, 0.16),
+    0 12px 26px rgba(20, 20, 18, 0.13);
+}
+
+/* Pressed: the cap goes in — drop shadow collapses into deep inner shade. */
+.empty-canvas-state button:active:not(:disabled),
+.agent-connection-form button:active:not(:disabled),
+.figma-primary:active:not(:disabled),
+.figma-file-open:active:not(:disabled),
+.project-not-found-actions button:not(.is-secondary):not(.is-danger):active:not(:disabled),
+.figma-icon-btn.is-active:active:not(:disabled) {
+  filter: brightness(1.24);
+  box-shadow:
+    inset 0 2px 7px rgba(0, 0, 0, 0.46),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* --- Secondary (light) buttons: paper gradient key + resting shadow --- */
+.workspace-file-button,
+.sidebar-icon-button,
+.figma-close,
+.blank-chooser-cancel,
+.figma-canvas-tab:not(.is-active),
+.tokens-add-button,
+.corner-radius-step,
+.canvas-dock .shader-chip,
+.project-not-found-actions button.is-secondary {
+  background-color: #fdfdfb;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 45%, rgba(18, 18, 17, 0.035) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85),
+    0 1px 2px rgba(20, 20, 18, 0.055);
+}
+
+.workspace-file-button:hover:not(:disabled),
+.sidebar-icon-button:hover,
+.figma-close:hover,
+.blank-chooser-cancel:hover,
+.figma-canvas-tab:not(.is-active):hover,
+.tokens-add-button:hover:not(:disabled),
+.corner-radius-step:hover:not(:disabled),
+.canvas-dock .shader-chip:hover:not(.is-active),
+.project-not-found-actions button.is-secondary:hover {
+  opacity: 1;
+  background-color: #ffffff;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0.12) 50%, rgba(18, 18, 17, 0.02) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 2px 5px rgba(20, 20, 18, 0.08),
+    0 8px 18px rgba(20, 20, 18, 0.07);
+}
+
+/* Not-found actions had no transition — give them the shared motion tokens. */
+.project-not-found-actions button {
+  transition:
+    transform var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) ease,
+    background-color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease,
+    color var(--duration-fast) ease,
+    opacity var(--duration-fast) ease,
+    filter var(--duration-fast) ease;
+}
+.project-not-found-actions button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(20, 20, 18, 0.10);
+}
+.project-not-found-actions button:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+/* Secondary variant keep its own resting fill. */
+.project-not-found-actions button.is-secondary {
+  background-color: #f6f6f3;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.65) 0%, rgba(255, 255, 255, 0) 50%, rgba(18, 18, 17, 0.03) 100%);
+}
+
+/* Keyboard focus: soft accent halo on top of the existing outline. */
+button:focus-visible {
+  box-shadow: 0 0 0 4px var(--selection-soft);
+}
+.empty-canvas-state button:focus-visible,
+.agent-connection-form button:focus-visible,
+.figma-primary:focus-visible,
+.project-not-found-actions button:not(.is-secondary):not(.is-danger):focus-visible {
+  box-shadow:
+    0 0 0 4px var(--selection-soft),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24),
+    0 1px 2px rgba(20, 20, 18, 0.18);
+}
+
+/* --- Dock tool active state: accent icon like the rail tabs --- */
+.canvas-dock .tool-button.is-active,
+.canvas-dock .dock-icon.is-active {
+  color: var(--selection);
+  box-shadow:
+    inset 0 0 0 1px rgba(93, 92, 226, 0.22),
+    0 1px 3px rgba(93, 92, 226, 0.12);
+}
+
+/* --- Sliders: recessed track + accent progress + floating thumb --- */
+.corner-radius-track {
+  background: rgba(23, 23, 21, 0.09);
+  box-shadow:
+    inset 0 1px 2px rgba(20, 20, 18, 0.09),
+    inset 0 0 0 0.5px rgba(18, 18, 17, 0.05);
+}
+.corner-radius-track-fill {
+  background: linear-gradient(90deg, #4e4ddb 0%, #6d6cf2 100%);
+  box-shadow: 0 1px 5px rgba(93, 92, 226, 0.35);
+}
+
+.corner-radius-slider-wrap input[type="range"] {
+  cursor: grab;
+}
+.corner-radius-slider-wrap input[type="range"]:active {
+  cursor: grabbing;
+}
+
+.corner-radius-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  width: 22px;
+  height: 22px;
+  margin-top: -9px;
+  border: 1.5px solid rgba(18, 18, 17, 0.22);
+  background: #ffffff;
+  box-shadow:
+    0 1px 2px rgba(20, 20, 18, 0.16),
+    0 4px 12px rgba(20, 20, 18, 0.13),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6);
+}
+.corner-radius-slider-wrap input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid rgba(18, 18, 17, 0.22);
+  background: #ffffff;
+  box-shadow:
+    0 1px 2px rgba(20, 20, 18, 0.16),
+    0 4px 12px rgba(20, 20, 18, 0.13);
+}
+
+.corner-radius-slider-wrap input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.1);
+  box-shadow:
+    0 2px 4px rgba(20, 20, 18, 0.16),
+    0 8px 18px rgba(20, 20, 18, 0.16);
+}
+.corner-radius-slider-wrap input[type="range"]:hover::-moz-range-thumb {
+  transform: scale(1.1);
+}
+
+/* While dragging the thumb lifts into an accent halo (iOS-style). */
+.corner-radius-slider-wrap input[type="range"]:active::-webkit-slider-thumb {
+  transform: scale(1.05);
+  border-color: var(--selection);
+  box-shadow:
+    0 0 0 7px rgba(93, 92, 226, 0.16),
+    0 1px 3px rgba(20, 20, 18, 0.2),
+    0 4px 10px rgba(20, 20, 18, 0.12);
+}
+.corner-radius-slider-wrap input[type="range"]:active::-moz-range-thumb {
+  transform: scale(1.05);
+  border-color: var(--selection);
+  box-shadow:
+    0 0 0 7px rgba(93, 92, 226, 0.16),
+    0 1px 3px rgba(20, 20, 18, 0.2);
+}
+
+/* Keyboard focus lands on the thumb, not the wrap. */
+.corner-radius-slider-wrap input[type="range"]:focus-visible {
+  outline: none;
+}
+.corner-radius-slider-wrap input[type="range"]:focus-visible::-webkit-slider-thumb {
+  border-color: var(--selection);
+  box-shadow:
+    0 0 0 5px rgba(93, 92, 226, 0.22),
+    0 1px 3px rgba(20, 20, 18, 0.18),
+    0 4px 10px rgba(20, 20, 18, 0.12);
+}
+.corner-radius-slider-wrap input[type="range"]:focus-visible::-moz-range-thumb {
+  border-color: var(--selection);
+  box-shadow:
+    0 0 0 5px rgba(93, 92, 226, 0.22),
+    0 1px 3px rgba(20, 20, 18, 0.18);
+}
+
+/* Value readout pill matches the new primary-key gradient. */
+.corner-radius-value-pill {
+  background-color: #1c1c1a;
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.02) 50%, rgba(0, 0, 0, 0.14) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 2px 10px rgba(20, 20, 18, 0.16);
+}
+
+/* Legacy/standalone range controls share the modern thumb language. */
+.shape-radius-control input[type="range"],
+.property-radius-control input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  background: transparent;
+  cursor: grab;
+}
+.shape-radius-control input[type="range"]:active,
+.property-radius-control input[type="range"]:active {
+  cursor: grabbing;
+}
+.shape-radius-control input[type="range"]::-webkit-slider-runnable-track,
+.property-radius-control input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(23, 23, 21, 0.12);
+  box-shadow: inset 0 1px 2px rgba(20, 20, 18, 0.07);
+}
+.shape-radius-control input[type="range"]::-moz-range-track,
+.property-radius-control input[type="range"]::-moz-range-track {
+  height: 4px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(23, 23, 21, 0.12);
+}
+.shape-radius-control input[type="range"]::-moz-range-progress,
+.property-radius-control input[type="range"]::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--selection);
+}
+.shape-radius-control input[type="range"]::-webkit-slider-thumb,
+.property-radius-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 1.5px solid rgba(18, 18, 17, 0.22);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(20, 20, 18, 0.16), 0 3px 8px rgba(20, 20, 18, 0.12);
+  transition: transform var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) ease;
+}
+.shape-radius-control input[type="range"]::-moz-range-thumb,
+.property-radius-control input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid rgba(18, 18, 17, 0.22);
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(20, 20, 18, 0.16), 0 3px 8px rgba(20, 20, 18, 0.12);
+}
+.shape-radius-control input[type="range"]:hover::-webkit-slider-thumb,
+.property-radius-control input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.1);
+}
+.shape-radius-control input[type="range"]:active::-webkit-slider-thumb,
+.property-radius-control input[type="range"]:active::-webkit-slider-thumb {
+  border-color: var(--selection);
+  box-shadow: 0 0 0 5px rgba(93, 92, 226, 0.16), 0 1px 3px rgba(20, 20, 18, 0.2);
+}
+.shape-radius-control input[type="range"]:active::-moz-range-thumb,
+.property-radius-control input[type="range"]:active::-moz-range-thumb {
+  border-color: var(--selection);
+  box-shadow: 0 0 0 5px rgba(93, 92, 226, 0.16), 0 1px 3px rgba(20, 20, 18, 0.2);
+}
+

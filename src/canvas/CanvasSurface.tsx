@@ -36,10 +36,12 @@ import {
   createPageCommand,
   moveBriefFrameCommand,
   moveFrameCommand,
+  removeFrameCommand,
   removeTokenCommand,
   removeTokenSetCommand,
   removeTokenThemeCommand,
   renamePageCommand,
+  renameTokenCommand,
   selectBriefFrameCommand,
   setSelectionCommand,
   switchPageCommand,
@@ -55,9 +57,12 @@ import {
   selectAllFrameRenderModels,
   selectFrameRenderModels,
   type NodeEntity,
+  type PageEntity,
 } from "../editor/model";
 import {
+  clampGlassLevel,
   glassFallbackBackdropFilter,
+  glassLevelFromAttribute,
   glassLiquidShadow,
   glassTintBackground,
 } from "../editor/effects";
@@ -65,6 +70,7 @@ import {
   isSpaceShortcut,
   normalizeActiveTool,
   resolveEditorShortcut,
+  type EditorShortcutAction,
 } from "../editor";
 import { setActiveToolCommand } from "../editor/commands";
 import type { ShapeVariantId, ToolId } from "../editor/tools";
@@ -75,6 +81,7 @@ import {
 import { prependTranslationTransform } from "../editor/position";
 import { buildCodeExportPayload } from "../export/code-export";
 import { buildDTCGExportFile, buildTokenCssExportFile } from "../export/tokens-export";
+import { fontFacesCssForFamilyValue } from "../fonts";
 import { BriefFrameView } from "../frame/BriefFrameView";
 import { FrameView } from "../frame/FrameView";
 import { createFrameFromPreset, type FramePreset } from "../frame/presets";
@@ -98,6 +105,7 @@ import {
   FIGMA_FILE_MIME_TYPE,
   FIGMA_FILE_NAME,
   importWireCanvasProject,
+  readFileBytes,
   serializeFigmaProject,
   serializeWireCanvasProject,
   WIRECANVAS_FILE_MIME_TYPE,
@@ -106,6 +114,9 @@ import {
   type BrowserDownloadAdapter,
   type PersistenceAdapter,
 } from "../persistence";
+import {
+  importFigmaFileIntoStore,
+} from "../import-figma/figma-file-import";
 import {
   CANVAS_AGENT_FILES,
   CANVAS_CATEGORIES,
@@ -128,7 +139,14 @@ import {
   type ProjectKind,
 } from "../persistence/local-projects";
 import { parseWireCanvasProject } from "../persistence/wirecanvas";
-import { buildThemeCssVariables, type DesignToken, type TokenSet, type TokenTheme } from "../tokens";
+import {
+  buildImportedTokenSet,
+  buildThemeCssVariables,
+  parseDTCGTokens,
+  type DesignToken,
+  type TokenSet,
+  type TokenTheme,
+} from "../tokens";
 import {
   createCanvasShaderElement,
   detectPaperShaderSupport,
@@ -251,6 +269,13 @@ function isCreationTool(tool: ToolId): boolean {
   return tool === "rectangle" || tool === "text" || tool === "image" || tool === "comment";
 }
 
+/**
+ * Minimum pointer travel (design-space px) for a shape drag to count as a
+ * draw. Anything shorter is a click and creates nothing — it would otherwise
+ * mint an invisible, min-clamped shape into the document.
+ */
+const MIN_SHAPE_DRAG = 6;
+
 function creationToolLabel(tool: ToolId, shape: ShapeVariantId): string {
   if (tool === "rectangle") return shapeLabel(shape);
   return tool[0].toUpperCase() + tool.slice(1);
@@ -339,6 +364,25 @@ function isTypingTarget(target: EventTarget | null): boolean {
 }
 
 const GLASS_VECTOR_KINDS = new Set(["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"]);
+
+const GLASS_STYLE_PROPERTIES = ["backdrop-filter", "background", "box-shadow"] as const;
+
+type GlassSurfaceStyles = Record<(typeof GLASS_STYLE_PROPERTIES)[number], string | null>;
+
+/** The three inline styles a foreign (non-created) surface carries as glass. */
+function surfaceGlassStyles(fillBase: string | null, level: number): GlassSurfaceStyles {
+  return level > 0
+    ? {
+        "backdrop-filter": glassFallbackBackdropFilter(level),
+        background: glassTintBackground(fillBase, level),
+        "box-shadow": glassLiquidShadow(level),
+      }
+    : { "backdrop-filter": null, background: null, "box-shadow": null };
+}
+
+function glassStylesEqual(a: GlassSurfaceStyles, b: GlassSurfaceStyles): boolean {
+  return GLASS_STYLE_PROPERTIES.every((property) => a[property] === b[property]);
+}
 
 /** Created SVG shapes paint through their geometry child, not CSS backgrounds. */
 function isCreatedVector(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
@@ -460,6 +504,7 @@ export function CanvasSurface({
   const createLiveElementRef = useRef<(frameId: string, command: Extract<BridgeCommand, { command: "create-element" }>, label: string) => Promise<boolean>>(async () => false);
   const addCommentRef = useRef<(frameId: string, point: Point) => void>(() => undefined);
   const deleteSelectedNodesRef = useRef<() => Promise<void>>(async () => undefined);
+  const runEditorShortcutRef = useRef<(action: EditorShortcutAction) => void>(() => undefined);
 
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
@@ -546,6 +591,7 @@ export function CanvasSurface({
     addComment,
     selectComment,
     updateComment,
+    toggleCommentResolved,
     deleteComment,
     clearComments,
   } = useComments();
@@ -867,10 +913,18 @@ export function CanvasSurface({
     }
     try {
       const state = editorStore.getState();
+      const orderedPages = Object.values(state.documents)
+        .flatMap((document) => document.pageIds)
+        .map((id) => state.pages[id])
+        .filter((page): page is PageEntity => Boolean(page));
+      for (const page of Object.values(state.pages)) {
+        if (!orderedPages.includes(page)) orderedPages.push(page);
+      }
       const bytes = await serializeFigmaProject({
         frames: Object.values(state.frames),
         nodes: state.nodes,
         bridgeTargets,
+        pages: orderedPages,
       });
       downloadAdapterRef.current?.downloadProjectFile({
         text: bytes,
@@ -1224,11 +1278,17 @@ export function CanvasSurface({
     creationRef.current = null;
     setInteractionMode("idle");
     const bounds = normalizedBounds(operation.start, point);
+    // A sub-threshold "drag" is a click — it must not mint a degenerate shape.
+    const dragDistance = Math.max(Math.abs(point.x - operation.start.x), Math.abs(point.y - operation.start.y));
     if (operation.tool === "image") {
-      pendingImageRef.current = { frameId, bounds };
+      pendingImageRef.current = {
+        frameId,
+        bounds: dragDistance < MIN_SHAPE_DRAG ? { x: operation.start.x, y: operation.start.y, width: 160, height: 120 } : bounds,
+      };
       openImagePicker();
       return;
     }
+    if (operation.tool !== "text" && dragDistance < MIN_SHAPE_DRAG) return;
     const shape = activeShapeRef.current;
     const kind: BridgeCreationKind = operation.tool === "text" ? "text" : shape;
     void createLiveElementRef.current(frameId, {
@@ -1291,9 +1351,11 @@ export function CanvasSurface({
         const operation = creationRef.current;
         creationRef.current = null;
         const bounds = normalizedBounds(operation.start, message.point);
+        // A sub-threshold "drag" is a click — it must not mint a degenerate shape.
+        const dragDistance = Math.max(Math.abs(message.point.x - operation.start.x), Math.abs(message.point.y - operation.start.y));
         if (operation.tool === "image") {
-          pendingImageRef.current = { frameId, bounds };
-        } else {
+          if (dragDistance >= MIN_SHAPE_DRAG) pendingImageRef.current = { frameId, bounds };
+        } else if (operation.tool === "text" || dragDistance >= MIN_SHAPE_DRAG) {
           const kind: BridgeCreationKind = operation.tool === "text" ? "text" : currentShape;
           const command = {
             command: "create-element" as const,
@@ -1311,28 +1373,21 @@ export function CanvasSurface({
         return;
       }
       if (message.event === "keydown") {
-        // While the frame's text editor is open, Backspace/Delete edit
-        // characters; only a committed selection may be deleted as a layer.
-        if (!frameTextEditRef.current.has(frameId) && currentTool === "select" && (message.key === "Delete" || message.key === "Backspace")) {
-          void deleteSelectedNodesRef.current();
-          return;
-        }
-        if (!frameTextEditRef.current.has(frameId) && (message.metaKey || message.ctrlKey)) {
-          const action = resolveEditorShortcut({
-            key: message.key ?? "",
-            metaKey: message.metaKey,
-            ctrlKey: message.ctrlKey,
-            shiftKey: message.shiftKey,
-            altKey: message.altKey,
-          });
-          if (action?.type === "undo" || action?.type === "redo") {
-            if (!editorStore.hasActiveTransaction()) {
-              if (action.type === "undo") editorStore.undo();
-              else editorStore.redo();
-            }
-            return;
-          }
-        }
+        // While the frame's text editor is open, keys edit text — the bridge
+        // runtime already handles Escape/Enter locally; nothing else runs.
+        if (frameTextEditRef.current.has(frameId)) return;
+        // Clicking inside a frame moves keyboard focus into the iframe, so the
+        // top-level keydown listener never sees these keys. Forward the full
+        // shortcut surface so tool keys, fit-all and Escape still work.
+        const action = resolveEditorShortcut({
+          key: message.key ?? "",
+          metaKey: message.metaKey,
+          ctrlKey: message.ctrlKey,
+          shiftKey: message.shiftKey,
+          altKey: message.altKey,
+        });
+        if (action) runEditorShortcutRef.current(action);
+        return;
       }
       if (message.event === "input" && message.target && message.text !== undefined) {
         if (editorStore.getState().nodes[message.target.elementId]) {
@@ -1539,6 +1594,15 @@ export function CanvasSurface({
     [editorState.tokens],
   );
 
+  // Theme changes update the live token style block in every rendered frame —
+  // rebuilding the srcDoc would reload the iframe and wipe live DOM edits
+  // (including the var() links tokens are supposed to drive).
+  useEffect(() => {
+    for (const controller of bridgeControllersRef.current.values()) {
+      void controller.setTokenTheme({ command: "set-token-theme", css: tokenThemeCss }).catch(() => undefined);
+    }
+  }, [tokenThemeCss]);
+
   const runTokenMutation = useCallback((label: string, command: Parameters<EditorStore["execute"]>[0]) => {
     try {
       editorStore.execute(command, { label });
@@ -1565,6 +1629,38 @@ export function CanvasSurface({
   const removeToken = useCallback((setId: string, tokenId: string) => {
     runTokenMutation("Remove token", removeTokenCommand(setId, tokenId));
   }, [runTokenMutation]);
+
+  const renameToken = useCallback((setId: string, tokenId: string, name: string) => {
+    runTokenMutation(`Rename token to ${name}`, renameTokenCommand(setId, tokenId, name));
+  }, [runTokenMutation]);
+
+  // Imports a DTCG tokens file as a new collection, then attaches it to the
+  // active mode so its values resolve immediately.
+  const importTokensFile = useCallback(async (file: File) => {
+    try {
+      const text = await persistenceAdapterRef.current!.readProjectFile(file);
+      const imported = parseDTCGTokens(text, file.name);
+      const store = editorStore.getState();
+      const set = buildImportedTokenSet(imported, new Set(Object.keys(store.tokens.sets)));
+      editorStore.transact(`Import tokens (${set.name})`, () => {
+        editorStore.execute(upsertTokenSetCommand(set));
+        const active = store.tokens.activeThemeId ? store.tokens.themes[store.tokens.activeThemeId] : undefined;
+        if (active && !active.setIds.includes(set.id)) {
+          editorStore.execute(upsertTokenThemeCommand({ ...active, setIds: [...active.setIds, set.id] }));
+        }
+      });
+      const warningNote = imported.warnings.length > 0 ? ` ${imported.warnings.length} skipped.` : "";
+      showPersistenceFeedback({
+        kind: "success",
+        message: `Imported ${imported.tokens.length} tokens into "${set.name}" and attached it to the active mode.${warningNote}`,
+      });
+    } catch (error) {
+      showPersistenceFeedback({
+        kind: "error",
+        message: `Could not import tokens: ${error instanceof Error ? error.message : "the file could not be read"}`,
+      });
+    }
+  }, [editorStore, showPersistenceFeedback]);
 
   const upsertTokenTheme = useCallback((theme: TokenTheme) => {
     runTokenMutation(`Upsert theme ${theme.name}`, upsertTokenThemeCommand(theme));
@@ -1806,6 +1902,32 @@ export function CanvasSurface({
     previousRadius: number;
     lastRadius: number;
   } | null>(null);
+  // Live radius edits are rAF-coalesced so a fast drag sends at most one
+  // bridge command per frame, and the ack no longer round-trips into React
+  // state — the committed value syncs once at commit instead.
+  const radiusSendRef = useRef<{ pending: number | null; raf: number | null; sent: number | null }>({
+    pending: null,
+    raf: null,
+    sent: null,
+  });
+  const [radiusDragging, setRadiusDragging] = useState(false);
+
+  const flushRadiusSend = useCallback(() => {
+    const send = radiusSendRef.current;
+    if (send.raf !== null) {
+      cancelAnimationFrame(send.raf);
+      send.raf = null;
+    }
+    const next = send.pending;
+    send.pending = null;
+    const drag = radiusDragRef.current;
+    if (next === null || next === send.sent || !drag) return;
+    const controller = bridgeControllersRef.current.get(drag.frameId);
+    if (!controller) return;
+    send.sent = next;
+    void controller.setShapeRadius({ command: "set-shape-radius", targetId: drag.targetId, radius: next })
+      .catch(() => undefined);
+  }, [bridgeControllersRef]);
 
   const changeShapeRadius = useCallback((next: number) => {
     const radius = Math.max(0, Math.min(48, Math.round(next)));
@@ -1814,38 +1936,63 @@ export function CanvasSurface({
     if (!selection) return;
     if (!radiusDragRef.current) {
       radiusDragRef.current = { ...selection, previousRadius: selection.radius, lastRadius: selection.radius };
+      setRadiusDragging(true);
+      // A new drag always re-sends: `sent` may refer to a different element
+      // or a pre-undo value, so it cannot dedupe across drags.
+      radiusSendRef.current.sent = null;
     }
     radiusDragRef.current.lastRadius = radius;
-    const controller = bridgeControllersRef.current.get(selection.frameId);
-    if (!controller) return;
-    void controller.setShapeRadius({ command: "set-shape-radius", targetId: selection.targetId, radius })
-      .then((ack) => {
-        if (ack.command !== "set-shape-radius") return;
-        setBridgeTargets((current) => {
-          const key = targetStateKey(selection.frameId, selection.targetId);
-          const entry = current[key];
-          if (!entry?.inspection) return current;
-          return {
-            ...current,
-            [key]: {
-              ...entry,
-              inspection: {
-                ...entry.inspection,
-                attributes: { ...entry.inspection.attributes, "data-design-tool-radius": String(ack.radius) },
-              },
-            },
-          };
-        });
-      })
-      .catch(() => undefined);
-  }, [bridgeControllersRef, setBridgeTargets]);
+    const send = radiusSendRef.current;
+    send.pending = radius;
+    if (send.raf !== null) return;
+    send.raf = requestAnimationFrame(() => {
+      send.raf = null;
+      flushRadiusSend();
+    });
+  }, [flushRadiusSend]);
 
   const commitShapeRadius = useCallback(() => {
     const drag = radiusDragRef.current;
+    const send = radiusSendRef.current;
+    if (drag) {
+      // Flush the latest slider position before bookkeeping so the released
+      // value is what the shape lands on.
+      send.pending = drag.lastRadius;
+      flushRadiusSend();
+    } else {
+      send.pending = null;
+      if (send.raf !== null) {
+        cancelAnimationFrame(send.raf);
+        send.raf = null;
+      }
+    }
+    setRadiusDragging(false);
     radiusDragRef.current = null;
     if (!drag || drag.lastRadius === drag.previousRadius) return;
     const controller = bridgeControllersRef.current.get(drag.frameId);
     if (!controller) return;
+    const key = targetStateKey(drag.frameId, drag.targetId);
+    setBridgeTargets((current) => {
+      const entry = current[key];
+      if (!entry?.inspection) return current;
+      return {
+        ...current,
+        [key]: {
+          ...entry,
+          inspection: {
+            ...entry.inspection,
+            attributes: { ...entry.inspection.attributes, "data-design-tool-radius": String(drag.lastRadius) },
+          },
+        },
+      };
+    });
+    // Rounding a frosted shape leaves the lens displacement map stamped with
+    // the old corner; one quiet re-apply rebuilds it against the new radius.
+    const glassLevel = Number(bridgeTargets[key]?.inspection?.attributes["data-design-tool-glass"] ?? 0);
+    if (Number.isFinite(glassLevel) && glassLevel > 0) {
+      void controller.setShapeGlass({ command: "set-shape-glass", targetId: drag.targetId, level: glassLevel })
+        .catch(() => undefined);
+    }
     const apply = (radius: number) => {
       void controller.setShapeRadius({ command: "set-shape-radius", targetId: drag.targetId, radius })
         .then(() => refreshSnapshotRef.current(drag.frameId))
@@ -1857,7 +2004,7 @@ export function CanvasSurface({
       redo: () => apply(drag.lastRadius),
     });
     if (!committed) editorStore.rollbackTransaction();
-  }, [bridgeControllersRef, editorStore]);
+  }, [bridgeControllersRef, bridgeTargets, editorStore, flushRadiusSend]);
 
   addCommentRef.current = addComment;
 
@@ -2003,6 +2150,25 @@ export function CanvasSurface({
     for (const { frameId } of applied) await refreshBridgeSnapshot(frameId);
   }, [bridgeControllersRef, editorStore, refreshBridgeSnapshot]);
   deleteSelectedNodesRef.current = deleteSelectedNodes;
+
+  const deleteSelectedFrames = useCallback(() => {
+    const state = editorStore.getState();
+    const frameIds = state.selection.frameIds.filter((frameId) => state.frames[frameId]);
+    if (frameIds.length === 0 || editorStore.hasActiveTransaction()) return;
+    // Stray text-edit flags for a removed frame would keep the top-level
+    // keydown guard tripped forever.
+    for (const frameId of frameIds) frameTextEditRef.current.delete(frameId);
+    editorStore.transact(
+      frameIds.length === 1
+        ? `Delete ${state.frames[frameIds[0]].name ?? "frame"}`
+        : `Delete ${frameIds.length} frames`,
+      () => {
+        for (const frameId of frameIds) {
+          editorStore.execute(removeFrameCommand(frameId));
+        }
+      },
+    );
+  }, [editorStore]);
 
   const applyLocalBridgeStyle = useCallback(
     (frameId: string, targetId: string, property: SafeInlineStyleProperty, value: string | null) => {
@@ -2207,6 +2373,7 @@ export function CanvasSurface({
     const state = editorStore.getState();
     const entries = Object.values(bridgeTargets)
       .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+
     // SVG shapes paint through their geometry child, so fills route to the
     // dedicated shape command instead of an invisible background style.
     if (property === "background-color" || property === "background") {
@@ -2226,39 +2393,231 @@ export function CanvasSurface({
     }
     const changes = entries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
     void runBridgeStyleEdit(changes, `Change ${property}`);
+    // A newly-picked family needs its @font-face pushed into the already-
+    // rendered frame document — srcDoc injection only covers fonts the
+    // document declared when it was built.
+    if (property === "font-family" && value) {
+      const css = fontFacesCssForFamilyValue(value);
+      if (css) {
+        for (const frameId of new Set(entries.map((entry) => entry.frameId))) {
+          void bridgeControllersRef.current
+            .get(frameId)
+            ?.injectFontFaces({ command: "inject-font-faces", css })
+            .catch(() => undefined);
+        }
+      }
+    }
   }, [bridgeTargets, editorStore, runBridgeShapeEdits, runBridgeStyleEdit]);
 
   // Glass effect asset: the element's own surface becomes the glass slab.
-  // Created layers run the dedicated shape command (vectors restyle their
-  // geometry fill, surfaces get a sheen gradient) so the applied level is
-  // tracked on the element; foreign content falls back to plain CSS edits.
+  // Slider drags post preview commands straight to the frame — rAF-coalesced,
+  // no transaction, no React state churn — so the pane frosts under the
+  // pointer in one fluid motion. Releasing (applyGlassEffect) wraps the whole
+  // drag into a single undoable step anchored on the pre-drag state, matching
+  // the corner-radius drag model.
+  const glassDragRef = useRef<{
+    entries: {
+      frameId: string;
+      targetId: string;
+      created: boolean;
+      previousLevel: number | null;
+      previousStyles: GlassSurfaceStyles;
+      fillBase: string | null;
+    }[];
+    lastLevel: number;
+  } | null>(null);
+  const glassSendRef = useRef<{ pending: number | null; raf: number | null; sent: number | null }>({
+    pending: null,
+    raf: null,
+    sent: null,
+  });
+
+  const flushGlassSend = useCallback(() => {
+    const send = glassSendRef.current;
+    if (send.raf !== null) {
+      cancelAnimationFrame(send.raf);
+      send.raf = null;
+    }
+    const next = send.pending;
+    send.pending = null;
+    const drag = glassDragRef.current;
+    if (next === null || next === send.sent || !drag) return;
+    send.sent = next;
+    for (const entry of drag.entries) {
+      const controller = bridgeControllersRef.current.get(entry.frameId);
+      if (!controller) continue;
+      if (entry.created) {
+        void controller.setShapeGlass({ command: "set-shape-glass", targetId: entry.targetId, level: next > 0 ? next : null })
+          .catch(() => undefined);
+        continue;
+      }
+      const styles = surfaceGlassStyles(entry.fillBase, next);
+      for (const property of GLASS_STYLE_PROPERTIES) {
+        void controller.setInlineStyle({ command: "set-inline-style", targetId: entry.targetId, property, value: styles[property] })
+          .catch(() => undefined);
+      }
+    }
+  }, [bridgeControllersRef]);
+
+  const previewGlassEffect = useCallback((level: number) => {
+    const clamped = clampGlassLevel(level);
+    let drag = glassDragRef.current;
+    if (!drag) {
+      const state = editorStore.getState();
+      const selected = Object.values(bridgeTargets)
+        .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+      if (selected.length === 0) return;
+      drag = {
+        entries: selected.map((entry) => {
+          const created = isCreatedTarget(entry);
+          const inline = entry.inspection?.inlineStyle ?? {};
+          return {
+            frameId: entry.frameId,
+            targetId: entry.target.elementId,
+            created,
+            previousLevel: created ? glassLevelFromAttribute(entry.inspection?.attributes["data-design-tool-glass"]) : null,
+            previousStyles: {
+              "backdrop-filter": inline["backdrop-filter"] ?? null,
+              background: inline["background"] ?? null,
+              "box-shadow": inline["box-shadow"] ?? null,
+            },
+            fillBase: inline["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null,
+          };
+        }),
+        lastLevel: clamped,
+      };
+      glassDragRef.current = drag;
+      // A new drag always re-sends: `sent` may refer to a different element or
+      // a pre-undo value, so it cannot dedupe across drags.
+      glassSendRef.current.sent = null;
+    }
+    drag.lastLevel = clamped;
+    const send = glassSendRef.current;
+    send.pending = clamped;
+    if (send.raf !== null) return;
+    send.raf = requestAnimationFrame(() => {
+      send.raf = null;
+      flushGlassSend();
+    });
+  }, [bridgeTargets, editorStore, flushGlassSend]);
+
   const applyGlassEffect = useCallback((level: number) => {
-    const state = editorStore.getState();
-    const selected = Object.values(bridgeTargets)
-      .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
-    if (selected.length === 0) return;
-    const label = level > 0 ? `Apply glass ${level}%` : "Remove glass";
-    const glassLevel = level > 0 ? level : null;
-    const createdEntries = selected.filter((entry) => isCreatedTarget(entry));
-    if (createdEntries.length > 0) {
-      void runBridgeShapeEdits(
-        createdEntries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "glass" as const, level: glassLevel })),
-        label,
-      );
+    const clamped = clampGlassLevel(level);
+    const drag = glassDragRef.current;
+    glassDragRef.current = null;
+    if (drag) {
+      // Make sure the released level is what the frame actually shows.
+      glassSendRef.current.pending = clamped;
+      flushGlassSend();
+    } else {
+      const send = glassSendRef.current;
+      send.pending = null;
+      if (send.raf !== null) {
+        cancelAnimationFrame(send.raf);
+        send.raf = null;
+      }
     }
-    const surfaceEntries = selected.filter((entry) => !isCreatedTarget(entry));
-    if (surfaceEntries.length > 0) {
-      const changes = surfaceEntries.flatMap((entry) => {
-        const currentFill = entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null;
-        return [
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "backdrop-filter" as const, value: level > 0 ? glassFallbackBackdropFilter(level) : null },
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "background" as const, value: level > 0 ? glassTintBackground(currentFill, level) : null },
-          { frameId: entry.frameId, targetId: entry.target.elementId, property: "box-shadow" as const, value: level > 0 ? glassLiquidShadow(level) : null },
-        ];
+
+    if (!drag) {
+      // One-shot apply (step buttons / field commits): one transaction, and
+      // the runtime's motion styles animate the swap in place.
+      const state = editorStore.getState();
+      const selected = Object.values(bridgeTargets)
+        .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
+      if (selected.length === 0) return;
+      const label = clamped > 0 ? `Apply glass ${clamped}%` : "Remove glass";
+      const glassLevel = clamped > 0 ? clamped : null;
+      const createdEntries = selected.filter((entry) => isCreatedTarget(entry));
+      if (createdEntries.length > 0) {
+        void runBridgeShapeEdits(
+          createdEntries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "glass" as const, level: glassLevel })),
+          label,
+        );
+      }
+      const surfaceEntries = selected.filter((entry) => !isCreatedTarget(entry));
+      if (surfaceEntries.length > 0) {
+        const changes = surfaceEntries.flatMap((entry) => {
+          const styles = surfaceGlassStyles(
+            entry.inspection?.inlineStyle["background-color"] ?? entry.inspection?.computedStyle["background-color"] ?? null,
+            clamped,
+          );
+          return GLASS_STYLE_PROPERTIES.map((property) => ({
+            frameId: entry.frameId,
+            targetId: entry.target.elementId,
+            property,
+            value: styles[property],
+          }));
+        });
+        void runBridgeStyleEdit(changes, label);
+      }
+      return;
+    }
+
+    // Drag commit: previews already landed in the frame, so the transaction
+    // records the pre-drag → final jump and undo replays it as one step.
+    const label = clamped > 0 ? `Apply glass ${clamped}%` : "Remove glass";
+    const finalLevel = clamped > 0 ? clamped : null;
+    const anyChanged = drag.entries.some((entry) =>
+      entry.created
+        ? (entry.previousLevel ?? 0) !== clamped
+        : !glassStylesEqual(entry.previousStyles, surfaceGlassStyles(entry.fillBase, clamped)));
+    if (!anyChanged) return;
+    const affectedFrameIds = Array.from(new Set(drag.entries.map((entry) => entry.frameId)));
+    const replay = (direction: "undo" | "redo") => {
+      const requests = drag.entries.map((entry) => {
+        const controller = bridgeControllersRef.current.get(entry.frameId);
+        if (!controller) return undefined;
+        if (entry.created) {
+          return controller.setShapeGlass({
+            command: "set-shape-glass",
+            targetId: entry.targetId,
+            level: direction === "undo" ? entry.previousLevel : finalLevel,
+          });
+        }
+        const styles = direction === "undo" ? entry.previousStyles : surfaceGlassStyles(entry.fillBase, clamped);
+        return Promise.all(GLASS_STYLE_PROPERTIES.map((property) =>
+          controller.setInlineStyle({ command: "set-inline-style", targetId: entry.targetId, property, value: styles[property] })));
       });
-      void runBridgeStyleEdit(changes, label);
+      void Promise.all(requests)
+        .then(() => Promise.all(affectedFrameIds.map((frameId) => refreshSnapshotRef.current(frameId).catch(() => undefined))))
+        .catch(() => undefined);
+    };
+    editorStore.beginTransaction(label);
+    const committed = editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") });
+    if (!committed) {
+      editorStore.rollbackTransaction();
+      return;
     }
-  }, [bridgeTargets, editorStore, runBridgeShapeEdits, runBridgeStyleEdit]);
+    // Sync the inspected state once so the panel shows the landed level
+    // instead of snapping back to the pre-drag value until the next snapshot.
+    setBridgeTargets((current) => {
+      let touched = false;
+      const next = { ...current };
+      for (const entry of drag.entries) {
+        const key = targetStateKey(entry.frameId, entry.targetId);
+        const existing = next[key];
+        if (!existing?.inspection) continue;
+        touched = true;
+        if (entry.created) {
+          const attributes = { ...existing.inspection.attributes };
+          if (finalLevel === null) delete attributes["data-design-tool-glass"];
+          else attributes["data-design-tool-glass"] = String(clamped);
+          next[key] = { ...existing, inspection: { ...existing.inspection, attributes } };
+        } else {
+          const styles = surfaceGlassStyles(entry.fillBase, clamped);
+          const inlineStyle = { ...existing.inspection.inlineStyle };
+          for (const property of GLASS_STYLE_PROPERTIES) {
+            const value = styles[property];
+            if (value === null) delete inlineStyle[property];
+            else inlineStyle[property] = value;
+          }
+          next[key] = { ...existing, inspection: { ...existing.inspection, inlineStyle } };
+        }
+      }
+      return touched ? next : current;
+    });
+    void Promise.all(affectedFrameIds.map((frameId) => refreshSnapshotRef.current(frameId).catch(() => undefined)));
+  }, [bridgeControllersRef, bridgeTargets, editorStore, flushGlassSend, runBridgeShapeEdits, runBridgeStyleEdit]);
 
   const editNodePosition = useCallback((frameId: string, nodeId: string, position: { x: number; y: number }) => {
     const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
@@ -2752,10 +3111,60 @@ export function CanvasSurface({
     }
   }, [cancelZoomAnimation, editorStore, renderRects, showPersistenceFeedback, updateCamera, viewport]);
 
+  const importFigmaFile = useCallback(async (file: File) => {
+    try {
+      // .fig is a binary zip; it crosses the same file-like adapter boundary
+      // as text project files.
+      const adapter = persistenceAdapterRef.current!;
+      const bytes = adapter.readProjectFileBytes
+        ? await adapter.readProjectFileBytes(file)
+        : new Uint8Array(await readFileBytes(file));
+      const summary = importFigmaFileIntoStore(editorStore, bytes);
+      const state = editorStore.getState();
+      const rects = summary.frameIds
+        .map((id) => state.frames[id])
+        .filter((frame) => frame !== undefined)
+        .map((frame) => ({ x: frame.x, y: frame.y, width: frame.width, height: frame.height }));
+      const measuredViewport = surfaceRef.current ? getViewportSize(surfaceRef.current) : viewport;
+      const usableViewport = measuredViewport.width > 0 && measuredViewport.height > 0
+        ? measuredViewport
+        : { width: Math.max(viewport.width, 1), height: Math.max(viewport.height, 1) };
+      if (rects.length > 0) {
+        cancelZoomAnimation();
+        updateCamera(fitRect(getFramesBounds(rects), usableViewport, cameraFitPadding(usableViewport)));
+      }
+      showPersistenceFeedback({
+        kind: "success",
+        message: `Imported ${summary.frameIds.length === 1 ? "1 frame" : `${summary.frameIds.length} frames`} from the Figma file.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The Figma file could not be imported.";
+      showPersistenceFeedback({ kind: "error", message: `Could not import Figma file: ${message}` });
+    }
+  }, [cancelZoomAnimation, editorStore, showPersistenceFeedback, updateCamera, viewport]);
+
+  const importProjectFile = useCallback(async (file: File) => {
+    // Dispatch by extension, falling back to the ZIP magic so a renamed .fig
+    // (or a download artifact) still routes to the Figma importer.
+    const head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+    const isZip = head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04;
+    if (/\.fig$/i.test(file.name ?? "") || isZip) {
+      await importFigmaFile(file);
+    } else {
+      await importProject(file);
+    }
+  }, [importFigmaFile, importProject]);
+
   const beginFramePointer = useCallback(
     (frameId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
       const surface = surfaceRef.current;
       if (!surface || event.button !== 0) {
+        return;
+      }
+      const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
+      const panning = spacePressedRef.current || currentTool === "hand";
+      // Other tools keep the plain click so it can still select the frame.
+      if (!panning && currentTool !== "select") {
         return;
       }
       event.preventDefault();
@@ -2763,17 +3172,13 @@ export function CanvasSurface({
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
       cancelZoomAnimation();
-      const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
-      if (spacePressedRef.current || currentTool === "hand") {
+      if (panning) {
         pointerRef.current = {
           type: "pan",
           pointerId: event.pointerId,
           last: getCachedPointerPosition(event),
         };
         setInteractionMode("panning");
-        return;
-      }
-      if (currentTool !== "select") {
         return;
       }
       const start = getCachedPointerPosition(event);
@@ -3115,6 +3520,64 @@ export function CanvasSurface({
     }
   }, [activeTool, cancelInteraction, cancelSelectedTextEdit, editorStore]);
 
+  // Shared executor so keys forwarded from a focused iframe behave exactly
+  // like the top-level keydown handler. `event` is absent for bridge input.
+  const runEditorShortcut = useCallback((action: EditorShortcutAction, event?: KeyboardEvent) => {
+    switch (action.type) {
+      case "activate-tool":
+        setActiveTool(action.tool);
+        break;
+      case "undo":
+        if (!editorStore.hasActiveTransaction()) {
+          editorStore.undo();
+        }
+        break;
+      case "redo":
+        if (!editorStore.hasActiveTransaction()) {
+          editorStore.redo();
+        }
+        break;
+      case "copy-selection": {
+        const selection = editorStore.getState().selection;
+        const nodeId = selection.primaryNodeId ?? selection.nodeIds[0];
+        const node = nodeId ? editorStore.getState().nodes[nodeId] : undefined;
+        if (node?.frameId && node.attributes["data-design-tool-created"] === "true") {
+          clipboardTargetRef.current = { frameId: node.frameId, nodeId: node.id };
+        }
+        break;
+      }
+      case "paste-selection":
+        if (clipboardTargetRef.current) {
+          event?.preventDefault();
+          const clipboard = clipboardTargetRef.current;
+          editorStore.execute(setSelectionCommand({ frameIds: [clipboard.frameId], nodeIds: [clipboard.nodeId], primaryFrameId: clipboard.frameId, primaryNodeId: clipboard.nodeId }), { history: "skip" });
+          void duplicateSelectedNode();
+        }
+        break;
+      case "duplicate-selection":
+        void duplicateSelectedNode();
+        break;
+      case "delete-selection":
+        // Shader elements live outside the editor store's node selection,
+        // so a selected shader must be deleted through its own path.
+        if (selectedShaderElementIdRef.current) {
+          deleteShaderElement(selectedShaderElementIdRef.current);
+        } else if (editorStore.getState().selection.nodeIds.length > 0) {
+          void deleteSelectedNodes();
+        } else {
+          deleteSelectedFrames();
+        }
+        break;
+      case "escape":
+        handleEscape();
+        break;
+      case "fit-all":
+        fitAllFrames();
+        break;
+    }
+  }, [deleteSelectedFrames, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool]);
+  runEditorShortcutRef.current = runEditorShortcut;
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (isTypingTarget(event.target)) {
@@ -3155,56 +3618,7 @@ export function CanvasSurface({
       if (action.type !== "paste-selection") {
         event.preventDefault();
       }
-      switch (action.type) {
-        case "activate-tool":
-          setActiveTool(action.tool);
-          break;
-        case "undo":
-          if (!editorStore.hasActiveTransaction()) {
-            editorStore.undo();
-          }
-          break;
-        case "redo":
-          if (!editorStore.hasActiveTransaction()) {
-            editorStore.redo();
-          }
-          break;
-        case "copy-selection": {
-          const selection = editorStore.getState().selection;
-          const nodeId = selection.primaryNodeId ?? selection.nodeIds[0];
-          const node = nodeId ? editorStore.getState().nodes[nodeId] : undefined;
-          if (node?.frameId && node.attributes["data-design-tool-created"] === "true") {
-            clipboardTargetRef.current = { frameId: node.frameId, nodeId: node.id };
-          }
-          break;
-        }
-        case "paste-selection":
-          if (clipboardTargetRef.current) {
-            event.preventDefault();
-            const clipboard = clipboardTargetRef.current;
-            editorStore.execute(setSelectionCommand({ frameIds: [clipboard.frameId], nodeIds: [clipboard.nodeId], primaryFrameId: clipboard.frameId, primaryNodeId: clipboard.nodeId }), { history: "skip" });
-            void duplicateSelectedNode();
-          }
-          break;
-        case "duplicate-selection":
-          void duplicateSelectedNode();
-          break;
-        case "delete-selection":
-          // Shader elements live outside the editor store's node selection,
-          // so a selected shader must be deleted through its own path.
-          if (selectedShaderElementIdRef.current) {
-            deleteShaderElement(selectedShaderElementIdRef.current);
-          } else {
-            void deleteSelectedNodes();
-          }
-          break;
-        case "escape":
-          handleEscape();
-          break;
-        case "fit-all":
-          fitAllFrames();
-          break;
-      }
+      runEditorShortcut(action, event);
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -3224,7 +3638,7 @@ export function CanvasSurface({
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
     };
-  }, [activeTool, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, startSelectedTextEdit]);
+  }, [activeTool, editorStore, runEditorShortcut, startSelectedTextEdit]);
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
@@ -3381,6 +3795,8 @@ export function CanvasSurface({
               className="canvas-comment-marker"
               data-canvas-control
               data-comment-status={comment.status}
+              aria-expanded={selectedCommentId === comment.id}
+              aria-haspopup="dialog"
               data-testid="comment-marker"
               onClick={(event) => {
                 event.stopPropagation();
@@ -3391,7 +3807,7 @@ export function CanvasSurface({
               onPointerLeave={() =>
                 setHoveredCommentId((current) => (current === comment.id ? null : current))
               }
-              style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y }}
+              style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y, scale: 1 / camera.zoom, transformOrigin: "0 0" }}
               type="button"
             >
               {comment.status === "resolved" ? (
@@ -3426,6 +3842,7 @@ export function CanvasSurface({
           onClose={() => selectComment(null)}
           onDelete={deleteComment}
           onSave={updateComment}
+          onToggleResolved={toggleCommentResolved}
           style={{ left: selectedCommentAnchor.x + 18, top: selectedCommentAnchor.y + 18 }}
         />
       ) : null}
@@ -3567,7 +3984,7 @@ export function CanvasSurface({
         canvasCategory={shouldUseLocalMemory && routeProjectId ? activeCanvasCategory : undefined}
         canvasLabel={shouldUseLocalMemory && routeProjectId ? CANVAS_CATEGORIES.find((c) => c.id === activeCanvasCategory)?.label : undefined}
         canExport={editorState.session.lifecycle !== "not-started"}
-        onImportFile={importProject}
+        onImportFile={importProjectFile}
         onImportHtmlFile={importHtmlFile}
         onExport={exportProject}
         onExportFigma={exportFigmaProject}
@@ -3696,11 +4113,13 @@ export function CanvasSurface({
                 onRemoveSet={removeTokenSet}
                 onUpsertToken={upsertToken}
                 onRemoveToken={removeToken}
+                onRenameToken={renameToken}
                 onUpsertTheme={upsertTokenTheme}
                 onRemoveTheme={removeTokenTheme}
                 onSwitchTheme={switchTokenTheme}
                 onExportDTCG={exportDTCGTokens}
                 onExportCss={exportTokenCss}
+                onImportTokensFile={importTokensFile}
               />
             }
           />
@@ -3715,7 +4134,8 @@ export function CanvasSurface({
             onEditNodeStyle={editNodeStyle}
             onEditNodePosition={editNodePosition}
             onApplyGlassEffect={applyGlassEffect}
-            shapeRadius={radiusSelection?.radius ?? shapeRadius}
+            onPreviewGlassEffect={previewGlassEffect}
+            shapeRadius={radiusDragging ? shapeRadius : (radiusSelection?.radius ?? shapeRadius)}
             shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
             onShapeRadiusChange={changeShapeRadius}
             onShapeRadiusCommit={commitShapeRadius}

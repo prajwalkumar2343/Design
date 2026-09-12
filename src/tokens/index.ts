@@ -1,7 +1,18 @@
 export {
   createEmptyTokenStore,
   cssVariableName,
+  cssVariableReference,
+  cssVariableReferenceForProperty,
+  cssVariableReferenceName,
+  cssVariableSuffixForProperty,
   dtcgTypeForTokenType,
+  isCssVariableReference,
+  isTokenAlias,
+  rewriteTokenCssReference,
+  tokenAliasReference,
+  tokenAliasTarget,
+  tokenNameCandidatesForCssVariable,
+  TOKEN_ALIAS_PATTERN,
   TOKEN_TYPE_LABELS,
   TOKEN_TYPES,
   type DesignToken,
@@ -29,12 +40,17 @@ export {
 export { createSeedTokenStore } from "./seeds";
 export {
   colorsEqual,
+  cssReferenceForTokenProperty,
   findTokenForCssValue,
   isOffSystemValue,
+  isUnresolvedCssReference,
+  resolveActiveThemeToken,
   resolveActiveThemeTokens,
+  tokenScalarForCssProperty,
   tokenTypeForCssProperty,
   normalizeCssValue,
   type ResolvedToken,
+  type TokenAliasStatus,
   type TokenMatch,
 } from "./resolve";
 export {
@@ -45,3 +61,8 @@ export {
   type DTCGDocument,
   type DTCGTokenNode,
 } from "./css";
+export {
+  buildImportedTokenSet,
+  parseDTCGTokens,
+  type ImportedTokens,
+} from "./import";

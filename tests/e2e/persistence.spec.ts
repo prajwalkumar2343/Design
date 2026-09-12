@@ -165,6 +165,73 @@ test.describe("WireCanvas project persistence", () => {
     expect(children.some((child) => child.type === "ROUNDED_RECTANGLE")).toBe(true);
   });
 
+  test("imports a Figma .fig file back onto the canvas", async ({ browser, page }) => {
+    await page.goto("/");
+    await page.getByTestId("start-brainstorming").click();
+    if (await page.getByTestId("blank-chooser").isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
+    await page.getByTestId("brief-field-projectDescription").fill("Figma round trip canvas");
+    await page.getByTestId("brief-field-audience").click();
+
+    await page.getByTestId("add-frame-button").click();
+    await page.getByRole("menu", { name: "Frame presets" }).waitFor();
+    await page.getByTestId("frame-category-mobile").click();
+    await page.getByTestId("add-mobile-frame").click();
+    const frame = page.locator('[data-frame-id]').filter({ has: page.locator("iframe") }).last();
+
+    await page.getByTestId("tool-button-rectangle").click();
+    const creationLayer = frame.getByTestId("frame-creation-layer");
+    const box = await creationLayer.boundingBox();
+    if (!box) throw new Error("The active frame creation layer is unavailable");
+    const start = { x: box.x + box.width * 0.4, y: box.y + box.height * 0.4 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 120, start.y + 80, { steps: 4 });
+    await page.mouse.up();
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("export-figma-button").click();
+    const download = await downloadPromise;
+    const path = await download.path();
+    if (!path) throw new Error("Figma export download has no temporary path");
+
+    const blankPage = await browser.newPage();
+    await blankPage.goto("/");
+    await blankPage.getByTestId("import-project-input").setInputFiles({
+      name: "brainstorm-session.fig",
+      mimeType: "application/octet-stream",
+      buffer: readFileSync(path),
+    });
+
+    await expect(blankPage.getByTestId("persistence-feedback")).toContainText("Figma");
+    await expect(blankPage.locator("iframe")).toHaveCount(1);
+    // The imported frame's iframe renders the generated document.
+    const importedFrame = blankPage.locator('[data-frame-id]').filter({ has: blankPage.locator("iframe") }).first();
+    await expect(importedFrame).toBeVisible();
+    await blankPage.close();
+  });
+
+  test("rejects a malformed .fig file without touching the canvas", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("start-brainstorming").click();
+    if (await page.getByTestId("blank-chooser").isVisible().catch(() => false)) {
+      await page.getByTestId("blank-choose-website").click();
+    }
+    const description = page.getByTestId("brief-field-projectDescription");
+    await description.fill("Keep this work");
+    await page.getByTestId("brief-field-audience").click();
+
+    await page.getByTestId("import-project-input").setInputFiles({
+      name: "broken.fig",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from("definitely not a fig file"),
+    });
+
+    await expect(page.getByTestId("persistence-feedback")).toHaveAttribute("role", "alert");
+    await expect(description).toHaveValue("Keep this work");
+  });
+
   test("shows malformed-file feedback without losing current work", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("start-brainstorming").click();

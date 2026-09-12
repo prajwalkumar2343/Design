@@ -3535,7 +3535,7 @@ kbd {
   flex-direction: row;
   justify-content: space-between;
 }
-.figma-file-card.is-list-row .figma-card-hover { display: none; }
+
 
 .figma-file-thumb {
   position: relative;
@@ -3664,6 +3664,7 @@ kbd {
 }
 
 .figma-file-footer {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3717,17 +3718,28 @@ kbd {
   text-overflow: ellipsis;
 }
 
+/* Card actions float over the footer instead of taking layout space, so
+   file names and metadata keep their full width. They stay pointer-active
+   while transparent — hover/focus only controls the visual reveal, so
+   keyboard and scripted hit-tests can always reach the button. */
 .figma-file-actions {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: 0 0 auto;
+  padding-left: 24px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, #FFFFFF 45%);
   opacity: 0;
   transition: opacity 120ms ease;
 }
-.figma-file-card:hover .figma-file-actions { opacity: 1; }
-.figma-file-card.is-menu-open .figma-file-actions { opacity: 1; }
-.figma-file-card:focus-within .figma-file-actions { opacity: 1; }
+.figma-file-card:hover .figma-file-actions,
+.figma-file-card.is-menu-open .figma-file-actions,
+.figma-file-card:focus-within .figma-file-actions {
+  opacity: 1;
+}
 /* An open overflow menu must escape the card bounds. Cards keep
    overflow:hidden for rounded thumbnails by default, but the open card
    lifts clipping and stacking so Rename / Duplicate / Delete stay visible
@@ -3758,7 +3770,7 @@ kbd {
   top: calc(100% + 8px);
   right: 0;
   z-index: 30;
-  min-width: 160px;
+  min-width: 180px;
   padding: 6px;
   background: #FFFFFF;
   border: 1px solid #e7e7e2;
@@ -3767,6 +3779,20 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  animation: lake-menu-in 140ms var(--ease-out) both;
+}
+.figma-more-menu.is-up {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+@keyframes lake-menu-in {
+  from { opacity: 0; transform: translateY(-3px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.figma-more-menu.is-up { animation-name: lake-menu-in-up; }
+@keyframes lake-menu-in-up {
+  from { opacity: 0; transform: translateY(3px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .figma-more-menu button {
   display: flex;
@@ -3783,44 +3809,176 @@ kbd {
   text-align: left;
   cursor: pointer;
   width: 100%;
+  white-space: nowrap;
 }
+.figma-more-menu button svg { flex: 0 0 auto; }
 .figma-more-menu button:hover { background: #f4f4f1; }
+.figma-more-menu button:focus-visible { outline: 2px solid var(--selection); outline-offset: -2px; }
 .figma-more-menu button.is-danger { color: #E5484D; }
 .figma-more-menu button.is-danger:hover { background: #FFF0F0; }
 .figma-more-divider { height: 1px; background: #efefea; margin: 4px 0; }
 
-.figma-card-hover {
-  position: absolute;
-  top: 8px;
-  left: 8px;
+/* Inline delete confirmation — destructive actions never fire on one click. */
+.figma-more-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px 10px;
+  min-width: 200px;
+}
+.figma-more-confirm strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+.figma-more-confirm span { font-size: 12px; color: #91918a; }
+.figma-more-confirm-actions {
   display: flex;
   gap: 6px;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: all 160ms var(--ease-out);
-  pointer-events: none;
+  margin-top: 8px;
+  justify-content: flex-end;
 }
-.figma-file-card:hover .figma-card-hover { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.figma-file-card:focus-within .figma-card-hover { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.figma-card-hover button {
+.figma-more-confirm-actions button {
+  width: auto;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #e7e7e2;
+  border-radius: 7px;
+  background: #FFFFFF;
+  color: var(--ink);
+}
+.figma-more-confirm-actions button:hover { background: #f4f4f1; }
+.figma-more-confirm-actions button.is-danger {
+  background: #E5484D;
+  border-color: #E5484D;
+  color: #FFFFFF;
+}
+.figma-more-confirm-actions button.is-danger:hover { background: #d13f44; }
+
+/* Sort + New popovers in the lake topbar */
+.figma-sort-wrap,
+.figma-new-wrap { position: relative; }
+.figma-sort-menu,
+.figma-new-menu { top: calc(100% + 6px); }
+.figma-sort-menu { min-width: 160px; }
+.figma-new-menu { min-width: 190px; }
+.figma-menu-check {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--selection);
+}
+.figma-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f4f4f1;
+  color: #666661;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.figma-sort-button:hover { color: var(--ink); }
+.figma-sort-button.is-active { background: #FFFFFF; border-color: #e7e7e2; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+.figma-new-file {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 28px;
-  padding: 0 10px;
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #FFFFFF;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(20,20,18,0.12);
+  white-space: nowrap;
+}
+.figma-new-file:hover { background: #30302d; }
+.figma-new-file:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+
+/* Live file thumbnails — sandboxed, scaled render of the saved document */
+.figma-thumb-live {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+.figma-thumb-frame {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border: 0;
+  transform-origin: center center;
+  pointer-events: none;
+  background: #FFFFFF;
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+.figma-thumb-frame.is-painted { opacity: 1; }
+
+/* Filtered-empty reset affordance */
+.figma-empty-clear {
+  margin-top: 6px;
+  height: 30px;
+  padding: 0 14px;
   border: 1px solid #e7e7e2;
   border-radius: 999px;
-  background: rgba(255,255,255,0.92);
-  backdrop-filter: blur(8px);
+  background: #FFFFFF;
   color: var(--ink);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
 }
-.figma-card-hover button:first-child { background: var(--ink); color: #FFF; border-color: var(--ink); }
-.figma-card-hover button:hover { transform: translateY(-1px); }
-.figma-card-hover button:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
+.figma-empty-clear:hover { border-color: #d0d0ca; background: #fbfbfa; }
+.figma-empty-clear:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+
+/* Keyboard focus states for lake interactive elements */
+.figma-file-thumb:focus-visible,
+.figma-file-name:focus-visible,
+.figma-tab:focus-visible,
+.figma-view-toggle button:focus-visible,
+.figma-search-clear:focus-visible,
+.figma-sort-button:focus-visible,
+.figma-template-card:focus-visible,
+.figma-close:focus-visible,
+.figma-icon-btn:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+}
+.figma-file-name:focus-visible { border-radius: 4px; }
+.figma-tab:focus-visible { outline-offset: -2px; }
+
+/* Keep the lake topbar usable on narrow widths: search stays primary, the
+   sort button collapses to its icon, and the strip can scroll sideways. */
+@media (max-width: 1100px) {
+  .figma-sort-button span { display: none; }
+  .figma-sort-button { width: 32px; padding: 0; justify-content: center; }
+}
+@media (max-width: 760px) {
+  .figma-lake-topbar { padding: 0 12px; gap: 10px; }
+  .figma-lake-topbar-right { gap: 6px; }
+  .figma-search { width: auto; flex: 1 1 120px; min-width: 0; }
+  .figma-search-shortcut { display: none; }
+  .figma-new-file { padding: 0 10px; }
+  .figma-lake-body { padding: 16px 12px; }
+  .figma-tabs { padding: 0 12px; }
+}
 
 .figma-rename input {
   width: 100%;

@@ -57,6 +57,7 @@ interface NodeGestureOperation {
   targetIds: string[];
   startWorld: Point;
   startAngle: Point;
+  surfaceRect: DOMRect;
   snapshots: OverlayStyleSnapshot[];
   groupBounds: Rect;
   queue: Promise<void>;
@@ -155,14 +156,15 @@ export function useNodeOverlayGestures({
   const gestureStylesRef = useRef(new Map<string, Partial<Record<SafeInlineStyleProperty, string | null>>>());
   const [gestureOverlayTargets, setGestureOverlayTargets] = useState<OverlayNodeTarget[] | null>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<{ axis: "x" | "y"; value: number }[]>([]);
-  const liveFrameRef = useRef<number | null>(null);
-  const pendingLiveChangesRef = useRef<OverlayStyleChange[]>([]);
   const liveSettledRef = useRef<Promise<void>>(Promise.resolve());
 
-  const flushLiveApply = useCallback(() => {
-    liveFrameRef.current = null;
-    const changes = pendingLiveChangesRef.current;
-    pendingLiveChangesRef.current = [];
+  /**
+   * Live edits post to the frame iframe from inside the pointermove dispatch.
+   * Deferring to rAF would queue the postMessage at the end of the frame, so
+   * the sandboxed document would always paint the dragged element one frame
+   * behind the parent-document overlay.
+   */
+  const flushLiveApply = useCallback((changes: OverlayStyleChange[]) => {
     const operation = nodeGestureRef.current;
     if (changes.length === 0 || !operation) return;
     const entries = changes.flatMap((change) =>
@@ -193,23 +195,6 @@ export function useNodeOverlayGestures({
     liveSettledRef.current = liveSettledRef.current.then(() => settle);
   }, [bridgeControllersRef]);
 
-  const scheduleLiveApply = useCallback((changes: OverlayStyleChange[]) => {
-    pendingLiveChangesRef.current = changes;
-    if (liveFrameRef.current === null) {
-      liveFrameRef.current = requestAnimationFrame(() => {
-        flushLiveApply();
-      });
-    }
-  }, [flushLiveApply]);
-
-  const cancelPendingLiveApply = useCallback(() => {
-    if (liveFrameRef.current !== null) {
-      cancelAnimationFrame(liveFrameRef.current);
-      liveFrameRef.current = null;
-    }
-    pendingLiveChangesRef.current = [];
-  }, []);
-
   const selectedOverlayTargets = useMemo(() => {
     if (gestureOverlayTargets) return gestureOverlayTargets;
     const selectedNodeIds = new Set(selection.nodeIds);
@@ -223,12 +208,6 @@ export function useNodeOverlayGestures({
       .map(toOverlayTarget)
       .filter((target): target is OverlayNodeTarget => target !== null);
   }, [bridgeTargets, gestureOverlayTargets, selection, toOverlayTarget]);
-
-  useEffect(() => {
-    return () => {
-      if (liveFrameRef.current !== null) cancelAnimationFrame(liveFrameRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     if (!nodeGestureRef.current) setGestureOverlayTargets(null);
@@ -310,6 +289,7 @@ export function useNodeOverlayGestures({
         targetIds: gesture.targetIds,
         startWorld,
         startAngle: startWorld,
+        surfaceRect: surface.getBoundingClientRect(),
         snapshots,
         groupBounds,
         queue: Promise.resolve(),
@@ -332,7 +312,13 @@ export function useNodeOverlayGestures({
       const surface = surfaceRef.current;
       if (!operation || operation.pointerId !== event.pointerId || !surface) return false;
 
-      const point = getSurfacePoint(event, surface);
+      // The rect is cached at gesture start: the surface cannot move mid-drag,
+      // and re-querying it here would force a synchronous layout on every move
+      // because the overlay re-rendered since the last event.
+      const point = {
+        x: event.clientX - operation.surfaceRect.left,
+        y: event.clientY - operation.surfaceRect.top,
+      };
       const currentWorld = screenToWorld(point, cameraRef.current);
       const rawDelta = {
         x: currentWorld.x - operation.startWorld.x,
@@ -420,10 +406,10 @@ export function useNodeOverlayGestures({
           rotation: change.rotation,
         })),
       );
-      scheduleLiveApply(changes);
+      flushLiveApply(changes);
       return true;
     },
-    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, scheduleLiveApply, setInteractionMode, surfaceRef, toOverlayTarget],
+    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, flushLiveApply, setInteractionMode, surfaceRef, toOverlayTarget],
   );
 
   const endNodeGesture = useCallback(
@@ -431,7 +417,6 @@ export function useNodeOverlayGestures({
       const operation = nodeGestureRef.current;
       if (!operation || operation.pointerId !== event.pointerId) return;
       nodeGestureRef.current = null;
-      cancelPendingLiveApply();
       setAlignmentGuides([]);
       setInteractionMode("idle");
 
@@ -491,7 +476,7 @@ export function useNodeOverlayGestures({
       if (editorStore.hasActiveTransaction()) editorStore.commitTransaction(effect);
       refreshAfterQueue();
     },
-    [applyStyleChanges, bridgeControllersRef, cancelPendingLiveApply, editorStore, refreshSnapshot, refreshTarget, setInteractionMode, surfaceRef],
+    [applyStyleChanges, bridgeControllersRef, editorStore, refreshSnapshot, refreshTarget, setInteractionMode, surfaceRef],
   );
 
   const cancelNodeGesture = useCallback(() => {
@@ -499,7 +484,6 @@ export function useNodeOverlayGestures({
     if (!operation) return false;
     operation.cancelled = true;
     nodeGestureRef.current = null;
-    cancelPendingLiveApply();
     setAlignmentGuides([]);
     setGestureOverlayTargets(operation.snapshots.map((snapshot) => snapshot.target));
     const settled = liveSettledRef.current;

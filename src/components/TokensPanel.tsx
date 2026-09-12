@@ -24,26 +24,34 @@
  * is preserved, so existing tests keep passing.
  */
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   ChevronRight,
   Copy,
   Download,
+  Link2,
   Pencil,
   Plus,
   Search,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  isTokenAlias,
+  resolveActiveThemeTokens,
+  tokenAliasTarget,
   TOKEN_TYPE_LABELS,
   TOKEN_TYPES,
   TokenValidationError,
   cssVariableName,
+  validateTokenName,
   validateTokenValue,
   type DesignToken,
   type MotionValue,
+  type ResolvedToken,
   type TokenSet,
   type TokenStoreState,
   type TokenTheme,
@@ -51,6 +59,8 @@ import {
   type TokenValue,
   type TypographyValue,
 } from "../tokens";
+import { FONT_CATALOG } from "../fonts";
+import { summarizeTokenValue, TokenPreview } from "./token-preview";
 
 export interface TokensPanelProps {
   tokens: TokenStoreState;
@@ -58,11 +68,15 @@ export interface TokensPanelProps {
   onRemoveSet: (setId: string) => void;
   onUpsertToken: (setId: string, token: DesignToken) => void;
   onRemoveToken: (setId: string, tokenId: string) => void;
+  /** Renames a variable — rewrites aliases and `var(--…)` element links. */
+  onRenameToken?: (setId: string, tokenId: string, name: string) => void;
   onUpsertTheme: (theme: TokenTheme) => void;
   onRemoveTheme: (themeId: string) => void;
   onSwitchTheme: (themeId: string | null) => void;
   onExportDTCG: () => void;
   onExportCss: () => void;
+  /** Imports a DTCG JSON file as a new collection. */
+  onImportTokensFile?: (file: File) => void;
 }
 
 function createStableId(prefix: string): string {
@@ -77,16 +91,7 @@ function slugify(name: string): string {
   return slug.length > 0 ? slug : "untitled";
 }
 
-export function summarizeTokenValue(token: DesignToken): string {
-  const value = token.value;
-  if (typeof value === "string" || typeof value === "number") return String(value);
-  if (token.type === "typography") {
-    const typeValue = value as TypographyValue;
-    return `${typeValue.fontSize} ${typeValue.fontFamily}`;
-  }
-  const motionValue = value as MotionValue;
-  return `${motionValue.duration} ${motionValue.easing}`;
-}
+export { summarizeTokenValue } from "./token-preview";
 
 type ValueDraft = Record<string, string>;
 
@@ -141,83 +146,42 @@ function buildTokenValue(type: TokenType, draft: ValueDraft): TokenValue {
   }
 }
 
-function parsePx(value: unknown): number | null {
-  if (typeof value !== "string") return null;
-  const m = /([\d.]+)px/.exec(value);
-  if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : null;
+/** Resolved token lookup for previews: aliases render their concrete value. */
+function useResolvedTokens(tokens: TokenStoreState): Map<string, ResolvedToken> {
+  return useMemo(() => {
+    const map = new Map<string, ResolvedToken>();
+    for (const resolved of resolveActiveThemeTokens(tokens)) map.set(resolved.token.name, resolved);
+    return map;
+  }, [tokens]);
 }
 
-/** Rich per-type preview — Figma cell preview + Paper quiet surface. */
-function TokenPreview({ token }: { token: DesignToken }) {
-  if (token.type === "color" && typeof token.value === "string") {
+/** Live resolution feedback for an alias draft (`{token.path}`). */
+function AliasHint({ draft, resolved }: { draft: ValueDraft; resolved: Map<string, ResolvedToken> }) {
+  const raw = draft.value ?? "";
+  if (!isTokenAlias(raw)) return null;
+  const target = tokenAliasTarget(raw) as string;
+  const hit = resolved.get(target);
+  if (!hit) {
     return (
-      <span className="tkn-preview tkn-preview-color" aria-hidden="true">
-        <span className="tkn-checker" />
-        <span className="tkn-color-fill" style={{ backgroundColor: token.value }} />
-        <span className="tkn-color-dots" aria-hidden="true">
-          <i /><i /><i /><i />
-        </span>
-      </span>
+      <p className="tkn-alias-hint is-broken" role="note">
+        <AlertTriangle size={11} aria-hidden="true" />
+        <span>No token named <code>{target}</code> in the active mode.</span>
+      </p>
     );
   }
-  if (token.type === "spacing" && typeof token.value === "string") {
-    const px = parsePx(token.value);
-    const w = px === null ? 28 : Math.max(4, Math.min(44, px));
+  if (hit.aliasStatus) {
     return (
-      <span className="tkn-preview tkn-preview-spacing" aria-hidden="true">
-        <span className="tkn-spacing-bar" style={{ width: w }} />
-      </span>
-    );
-  }
-  if (token.type === "radius" && typeof token.value === "string") {
-    return (
-      <span className="tkn-preview tkn-preview-radius" aria-hidden="true">
-        <span className="tkn-radius-box" style={{ borderRadius: token.value }} />
-      </span>
-    );
-  }
-  if (token.type === "shadow" && typeof token.value === "string") {
-    return (
-      <span className="tkn-preview tkn-preview-shadow" aria-hidden="true">
-        <span className="tkn-shadow-box" style={{ boxShadow: token.value }} />
-      </span>
-    );
-  }
-  if (token.type === "typography") {
-    const v = token.value as TypographyValue;
-    return (
-      <span
-        className="tkn-preview tkn-preview-type"
-        aria-hidden="true"
-        style={{ fontFamily: v.fontFamily, fontWeight: Number(v.fontWeight) || 500 }}
-      >
-        Ag
-      </span>
-    );
-  }
-  if (token.type === "motion") {
-    const v = token.value as MotionValue;
-    return (
-      <span className="tkn-preview tkn-preview-motion" aria-hidden="true" title={`${v.duration} ${v.easing}`}>
-        <span className="tkn-motion-dot" />
-        <span className="tkn-motion-track" />
-      </span>
-    );
-  }
-  if (token.type === "opacity" && typeof token.value === "number") {
-    return (
-      <span className="tkn-preview tkn-preview-opacity" aria-hidden="true">
-        <span className="tkn-checker" />
-        <span className="tkn-opacity-fill" style={{ opacity: token.value }} />
-      </span>
+      <p className="tkn-alias-hint is-broken" role="note">
+        <AlertTriangle size={11} aria-hidden="true" />
+        <span>Alias <code>{target}</code> is {hit.aliasStatus}.</span>
+      </p>
     );
   }
   return (
-    <span className="tkn-preview tkn-preview-fallback" aria-hidden="true">
-      <span className="tkn-fallback-glyph">T</span>
-    </span>
+    <p className="tkn-alias-hint" role="note">
+      <Link2 size={11} aria-hidden="true" />
+      <span>Resolves to <strong>{summarizeTokenValue(hit.token, hit.resolvedValue)}</strong></span>
+    </p>
   );
 }
 
@@ -225,13 +189,15 @@ function TokenValueInputs({
   type,
   draft,
   onChange,
+  resolved,
 }: {
   type: TokenType;
   draft: ValueDraft;
   onChange: (draft: ValueDraft) => void;
+  resolved: Map<string, ResolvedToken>;
 }) {
   const set = (key: string, input: string) => onChange({ ...draft, [key]: input });
-  const field = (key: string, label: string, placeholder?: string) => (
+  const field = (key: string, label: string, placeholder?: string, list?: string) => (
     <label className="tkn-field" key={key}>
       <span className="tkn-field-label">{label}</span>
       <span className="property-input-wrap tkn-input">
@@ -240,6 +206,7 @@ function TokenValueInputs({
           data-testid={`token-value-${key}`}
           value={draft[key] ?? ""}
           placeholder={placeholder}
+          list={list}
           onChange={(event) => set(key, event.target.value)}
         />
       </span>
@@ -248,7 +215,12 @@ function TokenValueInputs({
   if (type === "typography") {
     return (
       <>
-        {field("fontFamily", "Family", "Inter, sans-serif")}
+        {field("fontFamily", "Family", "Inter, sans-serif", "canvas-font-catalog")}
+        <datalist id="canvas-font-catalog">
+          {FONT_CATALOG.map((font) => (
+            <option key={font.id} value={font.stack} />
+          ))}
+        </datalist>
         {field("fontSize", "Size", "16px")}
         {field("fontWeight", "Weight", "400")}
         {field("lineHeight", "Line height", "1.5")}
@@ -265,8 +237,13 @@ function TokenValueInputs({
     );
   }
   if (type === "opacity") return <>{field("value", "Value", "0 - 1")}</>;
-  const placeholder = type === "color" ? "#3b74c2" : type === "shadow" ? "0 4px 12px rgba(0,0,0,0.12)" : "8px";
-  return <>{field("value", "Value", placeholder)}</>;
+  const placeholder = type === "color" ? "#3b74c2 or {color.neutral.0}" : type === "shadow" ? "0 4px 12px rgba(0,0,0,0.12) or {shadow.sm}" : "8px or {spacing.md}";
+  return (
+    <>
+      {field("value", "Value", placeholder)}
+      <AliasHint draft={draft} resolved={resolved} />
+    </>
+  );
 }
 
 function useSetUsage(tokens: TokenStoreState): Map<string, string[]> {
@@ -328,6 +305,8 @@ function ThemeSection({
   const [name, setName] = useState("");
   const [selectedSets, setSelectedSets] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const themes = useMemo(() => Object.values(tokens.themes).sort((a, b) => a.name.localeCompare(b.name)), [tokens]);
   const sets = useMemo(() => Object.values(tokens.sets).sort((a, b) => a.name.localeCompare(b.name)), [tokens]);
   const toggleSet = (setId: string) => {
@@ -355,17 +334,51 @@ function ThemeSection({
           const active = tokens.activeThemeId === theme.id;
           return (
             <div className={`tkn-mode${active ? " is-active" : ""}`} key={theme.id} role="tab" aria-selected={active}>
+              {renamingId === theme.id ? (
+                <span className="property-input-wrap tkn-input tkn-mode-rename">
+                  <input
+                    autoFocus
+                    aria-label={`Rename ${theme.name}`}
+                    data-testid={`theme-rename-${theme.id}`}
+                    value={renameDraft}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onBlur={() => {
+                      const next = renameDraft.trim();
+                      setRenamingId(null);
+                      if (next.length > 0 && next !== theme.name) onUpsertTheme({ ...theme, name: next });
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.currentTarget.blur();
+                      if (event.key === "Escape") setRenamingId(null);
+                    }}
+                  />
+                </span>
+              ) : (
+                <button
+                  className="tkn-mode-pill"
+                  data-testid={`theme-switch-${theme.id}`}
+                  aria-pressed={active}
+                  title={active ? `${theme.name} (active) — click to clear` : `Switch to ${theme.name}`}
+                  onClick={() => onSwitchTheme(active ? null : theme.id)}
+                  type="button"
+                >
+                  <span className="tkn-mode-dot" aria-hidden="true" />
+                  <span className="tkn-mode-name">{theme.name}</span>
+                  <span className="tkn-mode-count">{theme.setIds.length}</span>
+                </button>
+              )}
               <button
-                className="tkn-mode-pill"
-                data-testid={`theme-switch-${theme.id}`}
-                aria-pressed={active}
-                title={active ? `${theme.name} (active) — click to clear` : `Switch to ${theme.name}`}
-                onClick={() => onSwitchTheme(active ? null : theme.id)}
+                className="token-icon-button tkn-mini"
+                data-testid={`theme-rename-button-${theme.id}`}
+                aria-label={`Rename mode ${theme.name}`}
+                title={`Rename mode ${theme.name}`}
+                onClick={() => {
+                  setRenamingId(theme.id);
+                  setRenameDraft(theme.name);
+                }}
                 type="button"
               >
-                <span className="tkn-mode-dot" aria-hidden="true" />
-                <span className="tkn-mode-name">{theme.name}</span>
-                <span className="tkn-mode-count">{theme.setIds.length}</span>
+                <Pencil size={12} />
               </button>
               <button
                 className="token-icon-button tkn-mini"
@@ -448,12 +461,19 @@ function SetsSection({
   onSelectSet: (setId: string) => void;
 }) {
   const [name, setName] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const sets = useMemo(() => Object.values(tokens.sets).sort((a, b) => a.name.localeCompare(b.name)), [tokens]);
   const create = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     onUpsertSet({ id: `${slugify(trimmed)}-${createStableId("set").slice(-4)}`, name: trimmed, tokens: {} });
     setName("");
+  };
+  const commitRename = (set: TokenSet) => {
+    const next = renameDraft.trim();
+    setRenamingId(null);
+    if (next.length > 0 && next !== set.name) onUpsertSet({ ...set, name: next });
   };
   return (
     <section className="tkn-section" aria-label="Token sets">
@@ -473,19 +493,55 @@ function SetsSection({
               role="option"
               aria-selected={active}
             >
+              {renamingId === set.id ? (
+                <span className="tkn-collection-main tkn-collection-rename">
+                  <span className="property-input-wrap tkn-input">
+                    <input
+                      autoFocus
+                      aria-label={`Rename ${set.name}`}
+                      data-testid={`set-rename-${set.id}`}
+                      value={renameDraft}
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                      onBlur={() => commitRename(set)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") event.currentTarget.blur();
+                        if (event.key === "Escape") setRenamingId(null);
+                      }}
+                    />
+                  </span>
+                </span>
+              ) : (
+                <button
+                  className="tkn-collection-main"
+                  title={`${set.name} — ${count} tokens${usedBy.length > 0 ? ` · used in ${usedBy.join(", ")}` : " · unused"} — double-click to rename`}
+                  onClick={() => onSelectSet(set.id)}
+                  onDoubleClick={() => {
+                    setRenamingId(set.id);
+                    setRenameDraft(set.name);
+                  }}
+                  type="button"
+                >
+                  <span className="tkn-collection-swatch" aria-hidden="true">
+                    {set.name.slice(0, 1).toUpperCase()}
+                  </span>
+                  <span className="tkn-collection-meta">
+                    <strong>{set.name}</strong>
+                    <small>{count} {count === 1 ? "token" : "tokens"}{usedBy.length > 0 ? ` · ${usedBy.slice(0, 2).join(", ")}${usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}` : " · unused"}</small>
+                  </span>
+                </button>
+              )}
               <button
-                className="tkn-collection-main"
-                title={`${set.name} — ${count} tokens${usedBy.length > 0 ? ` · used in ${usedBy.join(", ")}` : " · unused"}`}
-                onClick={() => onSelectSet(set.id)}
+                className="token-icon-button tkn-mini"
+                data-testid={`set-rename-button-${set.id}`}
+                aria-label={`Rename set ${set.name}`}
+                title={`Rename set ${set.name}`}
+                onClick={() => {
+                  setRenamingId(set.id);
+                  setRenameDraft(set.name);
+                }}
                 type="button"
               >
-                <span className="tkn-collection-swatch" aria-hidden="true">
-                  {set.name.slice(0, 1).toUpperCase()}
-                </span>
-                <span className="tkn-collection-meta">
-                  <strong>{set.name}</strong>
-                  <small>{count} {count === 1 ? "token" : "tokens"}{usedBy.length > 0 ? ` · ${usedBy.slice(0, 2).join(", ")}${usedBy.length > 2 ? ` +${usedBy.length - 2}` : ""}` : " · unused"}</small>
-                </span>
+                <Pencil size={12} />
               </button>
               <button
                 className="token-icon-button tkn-mini"
@@ -560,11 +616,14 @@ function TokensSection({
   onSelectSet,
   onUpsertToken,
   onRemoveToken,
+  onRenameToken,
   themeValues,
-}: Pick<TokensPanelProps, "tokens" | "onUpsertToken" | "onRemoveToken"> & {
+  resolved,
+}: Pick<TokensPanelProps, "tokens" | "onUpsertToken" | "onRemoveToken" | "onRenameToken"> & {
   activeSetId: string;
   onSelectSet: (setId: string) => void;
   themeValues: ReturnType<typeof useThemeValues>;
+  resolved: Map<string, ResolvedToken>;
 }) {
   const sets = useMemo(() => Object.values(tokens.sets).sort((a, b) => a.name.localeCompare(b.name)), [tokens]);
   const activeSet = activeSetId ? tokens.sets[activeSetId] : undefined;
@@ -576,6 +635,7 @@ function TokensSection({
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
   const [editDraft, setEditDraft] = useState<ValueDraft>(EMPTY_DRAFT);
   const [editError, setEditError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -586,6 +646,25 @@ function TokensSection({
     return Object.values(activeSet.tokens).sort((a, b) => a.name.localeCompare(b.name));
   }, [activeSet]);
 
+  /**
+   * Resolves a set-row token for preview: non-alias tokens show their own
+   * value; alias tokens chase the chain through the active theme's merged map.
+   */
+  const previewFor = (entry: DesignToken): { value: TokenValue; status?: "dangling" | "cyclic" } => {
+    if (!isTokenAlias(entry.value)) return { value: entry.value };
+    const visited = new Set<string>([entry.name]);
+    let target = tokenAliasTarget(entry.value);
+    while (target) {
+      if (visited.has(target)) return { value: entry.value, status: "cyclic" };
+      visited.add(target);
+      const hit = resolved.get(target);
+      if (!hit) return { value: entry.value, status: "dangling" };
+      if (hit.aliasStatus) return { value: entry.value, status: hit.aliasStatus };
+      return { value: hit.resolvedValue };
+    }
+    return { value: entry.value };
+  };
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return allInSet.filter((t) => {
@@ -594,10 +673,13 @@ function TokensSection({
       return (
         t.name.toLowerCase().includes(q) ||
         summarizeTokenValue(t).toLowerCase().includes(q) ||
+        (isTokenAlias(t.value)
+          ? summarizeTokenValue(t, previewFor(t).value).toLowerCase().includes(q)
+          : false) ||
         (t.description ?? "").toLowerCase().includes(q)
       );
     });
-  }, [allInSet, query, typeFilter]);
+  }, [allInSet, query, typeFilter, resolved]);
 
   const groups = useMemo(() => {
     const map = new Map<string, DesignToken[]>();
@@ -651,7 +733,21 @@ function TokensSection({
   const saveEdit = (entry: DesignToken) => {
     if (!activeSet) return;
     commitError(() => {
-      onUpsertToken(activeSet.id, { ...entry, value: buildTokenValue(entry.type, editDraft) });
+      const nextName = editName.trim();
+      const value = buildTokenValue(entry.type, editDraft);
+      if (nextName && nextName !== entry.name) {
+        validateTokenName(nextName, "token.name");
+        // Renames carry reference integrity: `{old}` aliases and `var(--old)`
+        // element links rewrite inside the same command.
+        if (onRenameToken) {
+          onRenameToken(activeSet.id, entry.id, nextName);
+          onUpsertToken(activeSet.id, { ...entry, name: nextName, value });
+        } else {
+          onUpsertToken(activeSet.id, { ...entry, name: nextName, value });
+        }
+      } else {
+        onUpsertToken(activeSet.id, { ...entry, value });
+      }
       setEditingId(null);
     }, setEditError);
   };
@@ -760,75 +856,97 @@ function TokensSection({
                   const editing = editingId === entry.id;
                   const cssVar = cssVariableName(entry.name);
                   const modes = themeValues.themesForName(entry.name);
+                  const preview = previewFor(entry);
+                  const alias = isTokenAlias(entry.value) ? tokenAliasTarget(entry.value) : null;
+                  const valueText = summarizeTokenValue(entry, preview.value);
                   return (
                     <div className="tkn-row" key={entry.id} data-testid={`token-row-${entry.id}`}>
                       <div className="tkn-row-main">
-                        <TokenPreview token={entry} />
+                        <TokenPreview token={entry} resolvedValue={preview.value} />
                         <span className="tkn-row-meta">
                           <span className="tkn-name-row">
-                            <strong className="tkn-name" title={entry.name}>{entry.name}</strong>
-                            <CopyVarButton token={entry} />
-                          </span>
-                          <span className="tkn-var" title={cssVar}>{cssVar}</span>
-                          <span className="tkn-value" title={summarizeTokenValue(entry)}>{summarizeTokenValue(entry)}</span>
-                          {modes.length > 1 ? (
-                            <span className="tkn-modes-present" title={`In modes: ${modes.map((m) => m.name).join(", ")}`}>
-                              {themeValues.themes.map((th) => {
-                                const v = themeValues.valueFor(entry.name, th.id);
-                                if (!v) return <i key={th.id} className="tkn-mode-tick is-missing" title={`${th.name}: —`} />;
-                                const same = summarizeTokenValue(v) === summarizeTokenValue(entry);
-                                return (
-                                  <i
-                                    key={th.id}
-                                    className={`tkn-mode-tick${same ? " is-same" : " is-diff"}`}
-                                    title={`${th.name}: ${summarizeTokenValue(v)}`}
-                                  />
-                                );
-                              })}
-                              <em>{modes.length} modes</em>
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="tkn-type-pill">{TOKEN_TYPE_LABELS[entry.type]}</span>
-                        <button
-                          className="token-icon-button tkn-mini"
-                          data-testid={`token-edit-${entry.id}`}
-                          aria-label={editing ? `Cancel editing ${entry.name}` : `Edit ${entry.name}`}
-                          onClick={() => {
-                            setEditingId(editing ? null : entry.id);
-                            setEditDraft(draftForToken(entry));
-                            setEditError(null);
-                          }}
-                          type="button"
-                        >
-                          {editing ? <X size={12} /> : <Pencil size={12} />}
-                        </button>
-                        <button
-                          className="token-icon-button tkn-mini"
-                          data-testid={`token-remove-${entry.id}`}
-                          aria-label={`Delete ${entry.name}`}
-                          onClick={() => activeSet && onRemoveToken(activeSet.id, entry.id)}
-                          type="button"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      </div>
-                      {themeValues.themes.length > 1 ? (
-                        <div className="tkn-per-mode">
-                          {themeValues.themes.map((th) => {
-                            const v = themeValues.valueFor(entry.name, th.id);
-                            return (
-                              <span key={th.id} className="tkn-per-mode-cell" title={v ? `${th.name}: ${summarizeTokenValue(v)}` : `${th.name}: —`}>
-                                <em>{th.name}</em>
-                                <strong>{v ? summarizeTokenValue(v) : "—"}</strong>
+                            <strong className="tkn-name" title={`${entry.name} → ${cssVar}`}>{entry.name}</strong>
+                            {alias ? (
+                              <span
+                                className={`tkn-alias${preview.status ? " is-broken" : ""}`}
+                                title={preview.status
+                                  ? `Alias to ${alias} is ${preview.status} — it will not resolve`
+                                  : `Alias → ${alias} = ${valueText}`}
+                              >
+                                {preview.status ? <AlertTriangle size={10} aria-hidden="true" /> : <Link2 size={10} aria-hidden="true" />}
+                                {alias}
                               </span>
-                            );
-                          })}
-                        </div>
-                      ) : null}
+                            ) : null}
+                          </span>
+                          <span className="tkn-value" title={valueText}>
+                            {valueText}
+                            {modes.length > 1 ? <em className="tkn-modes-count">{modes.length} modes</em> : null}
+                          </span>
+                        </span>
+                        <span className="tkn-row-actions">
+                          <CopyVarButton token={entry} />
+                          <button
+                            className="token-icon-button tkn-mini"
+                            data-testid={`token-edit-${entry.id}`}
+                            aria-label={editing ? `Cancel editing ${entry.name}` : `Edit ${entry.name}`}
+                            onClick={() => {
+                              setEditingId(editing ? null : entry.id);
+                              setEditName(entry.name);
+                              setEditDraft(draftForToken(entry));
+                              setEditError(null);
+                            }}
+                            type="button"
+                          >
+                            {editing ? <X size={12} /> : <Pencil size={12} />}
+                          </button>
+                          <button
+                            className="token-icon-button tkn-mini"
+                            data-testid={`token-remove-${entry.id}`}
+                            aria-label={`Delete ${entry.name}`}
+                            onClick={() => activeSet && onRemoveToken(activeSet.id, entry.id)}
+                            type="button"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </span>
+                      </div>
                       {editing ? (
                         <div className="tkn-sheet tkn-edit-sheet">
-                          <TokenValueInputs type={entry.type} draft={editDraft} onChange={setEditDraft} />
+                          <label className="tkn-field">
+                            <span className="tkn-field-label">Name</span>
+                            <span className="property-input-wrap tkn-input">
+                              <input
+                                aria-label="Token name"
+                                data-testid={`token-rename-${entry.id}`}
+                                value={editName}
+                                placeholder={entry.name}
+                                onChange={(event) => setEditName(event.target.value)}
+                              />
+                            </span>
+                          </label>
+                          {onRenameToken ? (
+                            <p className="tkn-rename-note" role="note">
+                              Renaming rewrites aliases and linked elements.
+                            </p>
+                          ) : null}
+                          <TokenValueInputs type={entry.type} draft={editDraft} onChange={setEditDraft} resolved={resolved} />
+                          {themeValues.themes.length > 1 ? (
+                            <div className="tkn-per-mode" aria-label="Values per mode">
+                              {themeValues.themes.map((th) => {
+                                const v = themeValues.valueFor(entry.name, th.id);
+                                return (
+                                  <span
+                                    key={th.id}
+                                    className="tkn-per-mode-cell"
+                                    title={v ? `${th.name}: ${summarizeTokenValue(v)}` : `${th.name}: —`}
+                                  >
+                                    <em>{th.name}</em>
+                                    <strong>{v ? summarizeTokenValue(v) : "—"}</strong>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                           {editError ? <p className="tokens-error" role="alert">{editError}</p> : null}
                           <div className="tkn-sheet-actions">
                             <button
@@ -897,7 +1015,7 @@ function TokensSection({
               </select>
             </span>
           </label>
-          <TokenValueInputs type={type} draft={draft} onChange={setDraft} />
+          <TokenValueInputs type={type} draft={draft} onChange={setDraft} resolved={resolved} />
           <label className="tkn-field">
             <span className="tkn-field-label">Note</span>
             <span className="property-input-wrap tkn-input">
@@ -931,9 +1049,10 @@ function TokensSection({
 }
 
 export function TokensPanel(props: TokensPanelProps) {
-  const { tokens, onExportDTCG, onExportCss } = props;
+  const { tokens, onExportDTCG, onExportCss, onImportTokensFile } = props;
   const usage = useSetUsage(tokens);
   const themeValues = useThemeValues(tokens);
+  const resolved = useResolvedTokens(tokens);
   const sortedSetIds = useMemo(
     () => Object.values(tokens.sets).sort((a, b) => a.name.localeCompare(b.name)).map((s) => s.id),
     [tokens],
@@ -954,7 +1073,6 @@ export function TokensPanel(props: TokensPanelProps) {
             {totalTokens}
           </span>
         </div>
-        <p className="tkn-subtitle">Collections hold variables. Modes hold one value per variable.</p>
       </div>
       <ThemeSection
         tokens={tokens}
@@ -976,15 +1094,43 @@ export function TokensPanel(props: TokensPanelProps) {
         onSelectSet={setCollectionId}
         onUpsertToken={props.onUpsertToken}
         onRemoveToken={props.onRemoveToken}
+        onRenameToken={props.onRenameToken}
         themeValues={themeValues}
+        resolved={resolved}
       />
       <section className="tkn-section tkn-export" aria-label="Token export">
         <div className="tkn-section-head">
-          <span className="tkn-section-title">Export</span>
+          <span className="tkn-section-title">Import / export</span>
           <Download size={12} aria-hidden="true" />
         </div>
-        <p className="tkn-export-hint">Exports resolve the active mode, ready for code.</p>
+        <p className="tkn-export-hint">Exports resolve the active mode, ready for code. Import reads a DTCG JSON file into a new collection.</p>
         <div className="tokens-export-row tkn-export-row">
+          {onImportTokensFile ? (
+            <>
+              <input
+                accept=".json,application/json"
+                aria-label="Choose DTCG tokens file to import"
+                className="workspace-import-input"
+                data-testid="tokens-import-input"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = "";
+                  if (file) onImportTokensFile(file);
+                }}
+                type="file"
+              />
+              <button
+                className="tkn-ghost-button"
+                data-testid="tokens-import-button"
+                onClick={(event) => {
+                  event.currentTarget.parentElement?.querySelector<HTMLInputElement>('[data-testid="tokens-import-input"]')?.click();
+                }}
+                type="button"
+              >
+                <Upload size={12} aria-hidden="true" /> Import
+              </button>
+            </>
+          ) : null}
           <button className="tkn-ghost-button" data-testid="tokens-export-dtcg" onClick={onExportDTCG} type="button">
             DTCG JSON
           </button>

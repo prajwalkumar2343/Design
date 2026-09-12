@@ -15,6 +15,7 @@ import {
   removeTokenCommand,
   removeTokenSetCommand,
   removeTokenThemeCommand,
+  renameTokenCommand,
   switchTokenThemeCommand,
   upsertTokenCommand,
   upsertTokenSetCommand,
@@ -22,9 +23,12 @@ import {
 } from "../editor/commands";
 import type { EditorStore } from "../editor/store";
 import {
+  isTokenAlias,
+  resolveActiveThemeTokens,
   TokenValidationError,
   validateToken,
   validateTokenId,
+  validateTokenName,
   validateTokenSet,
   validateTokenTheme,
   type DesignToken,
@@ -71,6 +75,7 @@ export type TokenMutationOperation =
   | { op: "remove-set"; setId: string }
   | { op: "upsert-token"; setId: string; token: DesignToken }
   | { op: "remove-token"; setId: string; tokenId: string }
+  | { op: "rename-token"; setId: string; tokenId: string; name: string }
   | { op: "upsert-theme"; theme: TokenTheme }
   | { op: "remove-theme"; themeId: string }
   | { op: "switch-theme"; themeId: string | null };
@@ -108,6 +113,12 @@ export interface TokenQueryEntry {
   name: string;
   type: TokenType;
   value: DesignToken["value"];
+  /** Concrete value after chasing `{path}` aliases in the active theme. */
+  resolvedValue?: DesignToken["value"];
+  /** Set when `value` is an alias: the `{path}` target it points at. */
+  aliasOf?: string;
+  /** "dangling" | "cyclic" when the alias cannot be resolved. */
+  aliasStatus?: "dangling" | "cyclic";
   description?: string;
   setId: string;
 }
@@ -163,6 +174,11 @@ export class TokensService {
       : Math.max(1, Math.min(MAX_TOKEN_QUERY_LIMIT, Math.floor(input.limit)));
     const prefix = input.prefix?.trim().toLowerCase() ?? "";
     const entries: TokenQueryEntry[] = [];
+    // Alias resolution runs once against the active theme's merged map so
+    // agents see the concrete value a `{path}` reference produces.
+    const resolvedByName = new Map(
+      resolveActiveThemeTokens(tokens).map((resolved) => [resolved.token.name, resolved]),
+    );
     const setIds = input.setId !== undefined
       ? [input.setId]
       : Object.keys(tokens.sets).sort();
@@ -180,6 +196,12 @@ export class TokensService {
           value: token.value,
           setId,
         };
+        if (isTokenAlias(token.value)) {
+          const resolved = resolvedByName.get(token.name);
+          entry.aliasOf = resolved?.aliasOf;
+          if (resolved && !resolved.aliasStatus) entry.resolvedValue = resolved.resolvedValue;
+          if (resolved?.aliasStatus) entry.aliasStatus = resolved.aliasStatus;
+        }
         if (token.description !== undefined) entry.description = token.description;
         entries.push(entry);
       }
@@ -243,6 +265,9 @@ export class TokensService {
             case "remove-token":
               this.store.execute(removeTokenCommand(operation.setId, operation.tokenId), { history: "skip" });
               break;
+            case "rename-token":
+              this.store.execute(renameTokenCommand(operation.setId, operation.tokenId, operation.name), { history: "skip" });
+              break;
             case "upsert-theme":
               this.store.execute(upsertTokenThemeCommand(operation.theme), { history: "skip" });
               break;
@@ -304,6 +329,14 @@ export class TokensService {
             const tokenId = validateTokenId(operation.tokenId, "operations.tokenId");
             if (!tokens.sets[setId]) fail("unknown-set", `Unknown token set: ${setId}`);
             if (!tokens.sets[setId]?.tokens[tokenId]) fail("unknown-token", `Unknown token: ${tokenId}`);
+            break;
+          }
+          case "rename-token": {
+            const setId = validateTokenId(operation.setId, "operations.setId");
+            const tokenId = validateTokenId(operation.tokenId, "operations.tokenId");
+            if (!tokens.sets[setId]) fail("unknown-set", `Unknown token set: ${setId}`);
+            if (!tokens.sets[setId]?.tokens[tokenId]) fail("unknown-token", `Unknown token: ${tokenId}`);
+            validateTokenName(operation.name, "operations.name");
             break;
           }
           case "upsert-theme":

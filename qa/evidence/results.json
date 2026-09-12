@@ -1,0 +1,497 @@
+{
+  "generatedAt": "2026-09-12T15:41:45.692Z",
+  "total": 79,
+  "pass": 56,
+  "fail": 18,
+  "warn": 5,
+  "hygiene": {
+    "consoleErrors": [
+      "[startup] Failed to load resource: the server responded with a status of 404 (Not Found)",
+      "[startup] Failed to load resource: the server responded with a status of 404 ()"
+    ],
+    "consoleWarnings": [
+      "[media-tools] WARNING: Too many active WebGL contexts. Oldest context will be lost.",
+      "[perf] Deprecated API for given entry type."
+    ],
+    "pageErrors": [],
+    "requestFailures": [
+      "[startup] http://localhost:5199/design/% :: net::ERR_HTTP_RESPONSE_CODE_FAILURE"
+    ]
+  },
+  "results": [
+    {
+      "area": "A-startup",
+      "name": "root renders lake on fresh profile",
+      "status": "PASS",
+      "details": "lake=1 empty=0"
+    },
+    {
+      "area": "A-startup",
+      "name": "no frames/iframes at startup",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "A-startup",
+      "name": "header renders brand + actions",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "A-startup",
+      "name": "unknown project route shows not-found",
+      "status": "PASS",
+      "details": "recovered home"
+    },
+    {
+      "area": "A-startup",
+      "name": "legacy /project/:id route resolves",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "A-startup",
+      "name": "malformed route /design/% does not wedge",
+      "status": "FAIL",
+      "details": "page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE at http://localhost:5199/design/%\nCall log:\n  - navigating to \"http://localhost:5199/design/%\", waiting until \"load\"\n"
+    },
+    {
+      "area": "A-startup",
+      "name": "trailing slash /design/ treated as home",
+      "status": "FAIL",
+      "details": "page.goto: Navigation to \"http://localhost:5199/design/\" is interrupted by another navigation to \"chrome-error://chromewebdata/\"\nCall log:\n  - navigating to \"http://localhost:5199/design/\", waiting until \"load\"\n"
+    },
+    {
+      "area": "A-startup",
+      "name": "demo=1 renders four live frames",
+      "status": "FAIL",
+      "details": "page.goto: Navigation to \"http://localhost:5199/?demo=1\" is interrupted by another navigation to \"http://localhost:5199/design/\"\nCall log:\n  - navigating to \"http://localhost:5199/?demo=1\", waiting until \"load\"\n"
+    },
+    {
+      "area": "A-startup",
+      "name": "document scroll locked on infinite canvas",
+      "status": "FAIL",
+      "details": "page.evaluate: Execution context was destroyed, most likely because of a navigation"
+    },
+    {
+      "area": "B-canvas",
+      "name": "ctrl+wheel zooms around cursor",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "B-canvas",
+      "name": "horizontal wheel pans (no zoom)",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "B-canvas",
+      "name": "background drag pans world",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "B-canvas",
+      "name": "zoom buttons update % and transform",
+      "status": "PASS",
+      "details": "153% → in:187% → out2:134%"
+    },
+    {
+      "area": "B-canvas",
+      "name": "zoom-out is clamped (no degenerate scale)",
+      "status": "PASS",
+      "details": "min zoom 8% label=8%"
+    },
+    {
+      "area": "B-canvas",
+      "name": "zoom-in is clamped at sane max",
+      "status": "PASS",
+      "details": "max zoom 400%"
+    },
+    {
+      "area": "B-canvas",
+      "name": "fit-all recovers view + key 0 works",
+      "status": "PASS",
+      "details": "fit zoom 33%"
+    },
+    {
+      "area": "B-canvas",
+      "name": "undo disabled before first edit",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "tool buttons present + select active by default",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "keyboard shortcuts activate tools (h,r,t,i,c,v)",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "space hold = temporary hand",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "shape menu lists all six variants",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "draw ellipse creates element + auto-returns to select",
+      "status": "FAIL",
+      "details": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByTestId('shape-menu-ellipse')\n"
+    },
+    {
+      "area": "C-tools",
+      "name": "rectangle draw creates rect element",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "text tool: create, type, backspace, commit, delete",
+      "status": "PASS",
+      "details": "committed \"QA note\""
+    },
+    {
+      "area": "C-tools",
+      "name": "frame menu → categories → add mobile frame",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "new frame does not overlap existing frames",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "undo/redo buttons reverse frame add",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "move a frame via title handle",
+      "status": "FAIL",
+      "details": "frame transform unchanged after drag"
+    },
+    {
+      "area": "C-tools",
+      "name": "Cmd/Ctrl+Z undoes move, Ctrl+Shift+Z redoes",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "node overlay: select element inside frame",
+      "status": "FAIL",
+      "details": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('[data-frame-id=\"desktop\"]').locator('iframe').contentFrame().getByRole('heading', { name: 'Make room for better ideas.' })\n    - locator resolved to <h1>Make room for better ideas.</h1>\n  - attempting click action\n    - waiting for element to be visible, enabled and stable\n"
+    },
+    {
+      "area": "C-tools",
+      "name": "node overlay: drag moves element",
+      "status": "FAIL",
+      "details": "locator.boundingBox: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByTestId('node-selection-box')\n"
+    },
+    {
+      "area": "C-tools",
+      "name": "Escape clears node selection",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "Escape clears node selection",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "C-tools",
+      "name": "Ctrl+D duplicates selected element",
+      "status": "FAIL",
+      "details": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('[data-frame-id=\"desktop\"]').locator('iframe').contentFrame().getByRole('heading', { name: 'Make room for better ideas.' })\n    - locator resolved to <h1>Make room for better ideas.</h1>\n  - attempting click action\n    - waiting for element to be visible, enabled and stable\n"
+    },
+    {
+      "area": "C-tools",
+      "name": "Delete removes selected element",
+      "status": "FAIL",
+      "details": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('[data-frame-id=\"desktop\"]').locator('iframe').contentFrame().locator('[data-design-tool-kind=\"rectangle\"]').first()\n    - locator resolved to <svg aria-label=\"rectangle\" data-design-tool-radius=\"0\" data-design-tool-created=\"true\" data-design-tool-fill=\"#d9d9d9\" data-design-tool-editable=\"true\" data-design-tool-kind=\"rectan"
+    },
+    {
+      "area": "D-comments",
+      "name": "comment tool → marker + focused popover",
+      "status": "FAIL",
+      "details": "locator.waitFor: Timeout 5000ms exceeded.\nCall log:\n  - waiting for getByTestId('comment-marker') to be visible\n"
+    },
+    {
+      "area": "D-comments",
+      "name": "comment autosaves on tool switch",
+      "status": "FAIL",
+      "details": "locator.fill: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByTestId('comment-input')\n"
+    },
+    {
+      "area": "D-comments",
+      "name": "marker reopens saved text; empty deletes",
+      "status": "FAIL",
+      "details": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByTestId('comment-marker')\n"
+    },
+    {
+      "area": "D-comments",
+      "name": "empty comment dismissed without registering",
+      "status": "FAIL",
+      "details": "locator.waitFor: Timeout 5000ms exceeded.\nCall log:\n  - waiting for getByTestId('comment-marker') to be visible\n"
+    },
+    {
+      "area": "E-panels",
+      "name": "left sidebar toggles",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "E-panels",
+      "name": "right sidebar (properties) toggles",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "E-panels",
+      "name": "selecting element populates properties panel",
+      "status": "FAIL",
+      "details": "properties panel sparse (1 controls)"
+    },
+    {
+      "area": "E-panels",
+      "name": "tokens panel renders",
+      "status": "WARN",
+      "details": "no Tokens tab found"
+    },
+    {
+      "area": "E-panels",
+      "name": "tokens panel renders",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "F-io",
+      "name": "Export downloads .wirecanvas.json",
+      "status": "FAIL",
+      "details": "page.waitForEvent: Timeout 8000ms exceeded while waiting for event \"download\"\n=========================== logs ===========================\nwaiting for event \"download\"\n============================================================"
+    },
+    {
+      "area": "F-io",
+      "name": "Export Code downloads html or zip",
+      "status": "WARN",
+      "details": "button absent"
+    },
+    {
+      "area": "F-io",
+      "name": "Export Code downloads html or zip",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "F-io",
+      "name": "Export .fig downloads a zip-format fig",
+      "status": "WARN",
+      "details": "button absent"
+    },
+    {
+      "area": "F-io",
+      "name": "Export .fig downloads a zip-format fig",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "F-io",
+      "name": "Import HTML: clean page becomes a frame",
+      "status": "PASS",
+      "details": "frames 4→1 feedback=\"Imported \"QA Pricing\" as a new frame.\""
+    },
+    {
+      "area": "F-io",
+      "name": "Import HTML: scripts stripped + honest notice",
+      "status": "PASS",
+      "details": "feedback=\"Imported \"Scripted\" as a new frame. Scripts and event handlers were removed for safety.\""
+    },
+    {
+      "area": "F-io",
+      "name": "Import rejects hostile bridge-marker doc",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "F-io",
+      "name": "Import .wirecanvas.json round-trip",
+      "status": "WARN",
+      "details": "no earlier export file to reimport"
+    },
+    {
+      "area": "F-io",
+      "name": "Import .wirecanvas.json round-trip",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "G-lake",
+      "name": "create landing project routes to /design/",
+      "status": "PASS",
+      "details": "http://localhost:5199/design/project-a907ef80-a94f-45e8-993a-250d60c88954"
+    },
+    {
+      "area": "G-lake",
+      "name": "brief edit autosaves and survives lake round-trip",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "G-lake",
+      "name": "hard reload restores project",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "G-lake",
+      "name": "rename, duplicate, delete with confirm",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "G-lake",
+      "name": "browser back returns to lake",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "start brainstorming creates brief frame + opening prompt",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "brief fields commit on blur",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "reference URL validation rejects javascript:",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "valid reference gets noopener noreferrer",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "confirmed decision added",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "brief frame is movable",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "agent connection panel reports status",
+      "status": "WARN",
+      "details": "panel/result absent"
+    },
+    {
+      "area": "H-brainstorm",
+      "name": "agent connection panel reports status",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "I-media",
+      "name": "shader menu opens with items + search",
+      "status": "PASS",
+      "details": "search ok, empty-state=true"
+    },
+    {
+      "area": "I-media",
+      "name": "adding a shader places a shader element",
+      "status": "FAIL",
+      "details": "shader count 0→0"
+    },
+    {
+      "area": "I-media",
+      "name": "image tool → choose file → image in frame",
+      "status": "PASS",
+      "details": "1 image node(s)"
+    },
+    {
+      "area": "J-edge",
+      "name": "rapid tool switching stays consistent",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "J-edge",
+      "name": "frame menu opens/closes via F + Escape",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "J-edge",
+      "name": "clicking canvas background deselects frames",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "J-edge",
+      "name": "clicking canvas background deselects frames",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "J-edge",
+      "name": "tiny 1px drags do not create shapes",
+      "status": "FAIL",
+      "details": "locator.boundingBox: Timeout 30000ms exceeded.\nCall log:\n  - waiting for locator('[data-frame-id=\"desktop\"]').getByTestId('frame-creation-layer')\n"
+    },
+    {
+      "area": "J-edge",
+      "name": "mobile viewport keeps chrome usable",
+      "status": "PASS",
+      "details": ""
+    },
+    {
+      "area": "J-edge",
+      "name": "paste HTML onto canvas creates frame",
+      "status": "PASS",
+      "details": "frames 4→1 feedback=\"\"Pasted section\" pasted onto the canvas.\""
+    },
+    {
+      "area": "J-edge",
+      "name": "undo button disabled-state consistent after undo-all",
+      "status": "PASS",
+      "details": "1 undo steps drained"
+    },
+    {
+      "area": "K-perf",
+      "name": "demo load time + long tasks",
+      "status": "PASS",
+      "details": "frames visible in 982ms, DCL 533ms, longtasks=0, resources=132"
+    }
+  ]
+}

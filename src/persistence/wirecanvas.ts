@@ -493,12 +493,15 @@ function validateRelations(state: WireCanvasDurableState): void {
     for (const frameId of page.frameIds) {
       if (frameMembership.has(frameId)) fail("invalid-reference", `pages.${page.id}.frameIds`, `frame ${frameId} belongs to more than one page`);
       const frame = frames.get(frameId);
-      if (!frame || frame.pageId !== page.id || frame.documentId !== page.documentId) fail("invalid-reference", `pages.${page.id}.frameIds`, `frame ${frameId} is inconsistent`);
+      // A page may group frames backed by different documents (Figma imports
+      // place every artboard — each its own document — on one page).
+      if (!frame || frame.pageId !== page.id) fail("invalid-reference", `pages.${page.id}.frameIds`, `frame ${frameId} is inconsistent`);
       frameMembership.set(frameId, page.id);
     }
   }
   for (const frame of state.frames) {
     if (frameMembership.get(frame.id) !== frame.pageId) fail("invalid-reference", `frames.${frame.id}.pageId`, "frame is not consistently listed by its page");
+    if (!documents.has(frame.documentId)) fail("invalid-reference", `frames.${frame.id}.documentId`, "does not reference a document");
   }
 
   const rootMembership = new Map<string, string>();

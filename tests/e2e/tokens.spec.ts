@@ -45,11 +45,18 @@ test.describe("Token theme store", () => {
     await page.getByTestId("theme-switch-dark").click();
     await expect(page.getByTestId("theme-switch-dark")).toHaveAttribute("aria-pressed", "true");
 
-    // The rendered iframe source carries the Canvas-owned theme block with
-    // the dark theme's values; wireframe styling never leaks into design.
+    // Mode switches update the live theme block in place — rebuilding srcdoc
+    // would reload the iframe and wipe live edits like var() links.
+    const frameDoc = liveFrame.contentFrame();
+    await expect
+      .poll(() =>
+        frameDoc.locator("html").evaluate((el) =>
+          getComputedStyle(el).getPropertyValue("--color-accent-primary").trim(),
+        ),
+      )
+      .toBe("#6faee0");
     const srcdoc = await liveFrame.getAttribute("srcdoc");
     expect(srcdoc).toContain("data-design-tool-token-theme");
-    expect(srcdoc).toContain("--color-accent-primary: #6faee0;");
     expect(srcdoc).not.toContain("data-design-tool-wireframe-theme");
   });
 });

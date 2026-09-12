@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  createEditorStateFromFrameSeeds,
   createEditorStore,
   createEmptyEditorState,
   removeTokenCommand,
   removeTokenSetCommand,
   removeTokenThemeCommand,
+  renameTokenCommand,
   switchTokenThemeCommand,
   upsertTokenCommand,
   upsertTokenSetCommand,
@@ -116,5 +118,56 @@ describe("token reducer", () => {
 
   it("keeps seeded tokens when the editor state is fresh", () => {
     expect(createEmptyEditorState().tokens).toEqual(createSeedTokenStore());
+  });
+
+  it("renames a variable across mode sets and rewrites aliases + element links", () => {
+    const state = createEditorStateFromFrameSeeds([{
+      id: "frame-1",
+      name: "Frame",
+      documentId: "doc-1",
+      pageId: "page-1",
+      x: 0,
+      y: 0,
+      width: 400,
+      height: 300,
+      background: "#fff",
+      srcDoc: '<html><body><div data-design-tool-element-id="a" style="background: var(--color-accent-primary); border: var(--color-accent-primary-2)"></div></body></html>',
+    }]);
+    const store = createEditorStore(state);
+    // An alias in the core set points at the name being renamed.
+    store.execute(upsertTokenCommand("core", {
+      id: "core-alias",
+      name: "color.accent.link",
+      type: "color",
+      value: "{color.accent.primary}",
+    }), { label: "Alias" });
+    const historyBefore = store.getHistory().past.length;
+
+    store.execute(renameTokenCommand("light", "light-accent-primary", "color.accent.main"), { label: "Rename" });
+
+    const tokens = store.getState().tokens;
+    // Every same-named copy across sets is renamed (one variable, many modes).
+    expect(tokens.sets.light?.tokens["light-accent-primary"]?.name).toBe("color.accent.main");
+    expect(tokens.sets.dark?.tokens["dark-accent-primary"]?.name).toBe("color.accent.main");
+    expect(tokens.sets.brand?.tokens["brand-accent-primary"]?.name).toBe("color.accent.main");
+    // The alias follows the rename.
+    expect(tokens.sets.core?.tokens["core-alias"]?.value).toBe("{color.accent.main}");
+    // The var() link inside the document is rewritten; lookalikes stay.
+    const doc = store.getState().documents["doc-1"];
+    expect(doc?.srcDoc).toContain("var(--color-accent-main)");
+    expect(doc?.srcDoc).toContain("var(--color-accent-primary-2)");
+    expect(doc?.revision).toBe(2);
+    // Single undo entry restores token names, alias, and document together.
+    expect(store.getHistory().past.length).toBe(historyBefore + 1);
+    expect(store.undo()).toBe(true);
+    expect(store.getState().tokens.sets.light?.tokens["light-accent-primary"]?.name).toBe("color.accent.primary");
+    expect(store.getState().documents["doc-1"]?.srcDoc).toContain("var(--color-accent-primary)");
+  });
+
+  it("rejects a rename that would collide with an existing token name", () => {
+    const store = createStore();
+    expect(() => store.execute(renameTokenCommand("light", "light-accent-primary", "color.accent.on-accent")))
+      .toThrowError(EditorReducerError);
+    expect(store.getState().tokens.sets.light?.tokens["light-accent-primary"]?.name).toBe("color.accent.primary");
   });
 });

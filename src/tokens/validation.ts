@@ -4,6 +4,7 @@
  * modules (`src/router/wireframe-admission.ts`) convention.
  */
 import {
+  isTokenAlias,
   TOKEN_TYPES,
   type DesignToken,
   type MotionValue,
@@ -94,6 +95,7 @@ function validateColorValue(value: unknown, path: string): string {
     fail("invalid-token-value", path, "color must be a non-empty string up to 256 chars");
   }
   const trimmed = value.trim();
+  if (isTokenAlias(trimmed)) return trimmed;
   if (
     HEX_COLOR.test(trimmed) ||
     RGB_COLOR.test(trimmed) ||
@@ -113,6 +115,7 @@ function validateDimensionValue(value: unknown, path: string, field: "spacing" |
     fail("invalid-token-value", path, `${field} must be a non-empty string up to 64 chars`);
   }
   const trimmed = value.trim();
+  if (isTokenAlias(trimmed)) return trimmed;
   if (trimmed === "0" || DIMENSION_VALUE.test(trimmed)) return value;
   if (field === "spacing" && trimmed === "auto") return value;
   fail("invalid-token-value", path, `${field} must be a CSS dimension (e.g. 8px, 0.5rem, 50%)`);
@@ -122,6 +125,7 @@ function validateShadowValue(value: unknown, path: string): string {
   if (typeof value !== "string" || value.trim().length === 0 || value.length > 500) {
     fail("invalid-token-value", path, "shadow must be a non-empty string up to 500 chars");
   }
+  if (isTokenAlias(value.trim())) return value.trim();
   const lowered = value.toLowerCase();
   if (lowered.includes("url(") || lowered.includes("expression(") || lowered.includes("javascript:")) {
     fail("invalid-token-value", path, "shadow must not contain urls or executable content");

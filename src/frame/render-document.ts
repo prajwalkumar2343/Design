@@ -1,13 +1,16 @@
 import { injectBridgeRuntime } from "../bridge/inject";
 import type { BridgeRuntimeConfig } from "../bridge/runtime";
 import type { DocumentMode } from "../editor/model";
+import { injectCanvasFonts } from "../fonts";
 import { injectTokenTheme } from "./token-theme";
 import { injectWireframeTheme } from "./wireframe-theme";
 
 /**
  * Builds the iframe source while leaving canonical editor HTML untouched.
  * Token CSS applies to design mode only; wireframe frames keep the neutral
- * grayscale theme and never receive token variables.
+ * grayscale theme and never receive token variables. Bundled @font-face
+ * rules are added in both modes whenever the document names a catalog
+ * family — wireframes simply never reference them.
  */
 export function renderFrameDocument(
   srcDoc: string,
@@ -20,5 +23,5 @@ export function renderFrameDocument(
     : tokenCss
       ? injectTokenTheme(srcDoc, tokenCss)
       : srcDoc;
-  return injectBridgeRuntime(themedSource, bridgeSession);
+  return injectBridgeRuntime(injectCanvasFonts(themedSource), bridgeSession);
 }

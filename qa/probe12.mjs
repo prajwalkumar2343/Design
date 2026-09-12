@@ -1,0 +1,13 @@
+import { chromium } from "@playwright/test";
+const browser = await chromium.launch({ headless: true });
+const page = await (await browser.newContext()).newPage();
+const reqs = [];
+page.on("response", (r) => { if (r.status() >= 400) reqs.push(`${r.status()} ${r.url()}`); });
+page.on("requestfailed", (r) => reqs.push(`FAIL ${r.url()} ${r.failure()?.errorText}`));
+await page.goto("http://localhost:5199/");
+await page.waitForTimeout(3000);
+await page.goto("http://localhost:5199/?demo=1");
+await page.waitForSelector('[data-frame-id] iframe', { timeout: 15000 });
+await page.waitForTimeout(1500);
+console.log("bad responses:", JSON.stringify(reqs, null, 1));
+await browser.close();

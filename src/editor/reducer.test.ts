@@ -75,6 +75,42 @@ describe("editor reducer", () => {
     });
   });
 
+  it("removes the frame's node index entries and prunes dangling references", () => {
+    let current = state();
+    const node = (id: string, parentId: string | null, childIds: string[], frameId = "frame-1") => ({
+      type: "node/upsert" as const,
+      node: {
+        id,
+        documentId: "document-1",
+        parentId,
+        kind: "element" as const,
+        name: id,
+        attributes: {},
+        childIds,
+        frameId,
+      },
+    });
+    current = editorReducer(current, node("root", null, ["child"]));
+    current = editorReducer(current, node("child", "root", []));
+    current = editorReducer(current, {
+      type: "selection/set",
+      selection: {
+        frameIds: ["frame-1"],
+        nodeIds: ["child"],
+        primaryFrameId: "frame-1",
+        primaryNodeId: "child",
+      },
+    });
+
+    const next = editorReducer(current, { type: "frame/remove", frameId: "frame-1" });
+
+    expect(next.nodes["root"]).toBeUndefined();
+    expect(next.nodes["child"]).toBeUndefined();
+    expect(next.documents["document-1"].rootNodeIds).toEqual([]);
+    expect(next.selection.nodeIds).toEqual([]);
+    expect(next.selection.primaryNodeId).toBeNull();
+  });
+
   it("switches and renames normalized pages while scoping visible frames", () => {
     const current = state();
     const withPage = editorReducer(current, {

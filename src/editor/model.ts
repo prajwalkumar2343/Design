@@ -187,8 +187,6 @@ export function createEditorStateFromFrameSeeds(
         frameIds: [],
       };
       state.documents[seed.documentId].pageIds.push(pageId);
-    } else if (page.documentId !== seed.documentId) {
-      throw new Error(`Page ${pageId} belongs to another document`);
     }
 
     state.frames[seed.id] = {

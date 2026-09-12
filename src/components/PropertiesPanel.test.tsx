@@ -143,6 +143,7 @@ describe("PropertiesPanel color field", () => {
       ...entry,
       inspection: {
         ...inspection,
+        attributes: { ...inspection.attributes, "data-design-tool-fill": "#e5484d" },
         inlineStyle: {},
         computedStyle: { "background-color": "rgb(229, 72, 77)" },
       },
@@ -155,5 +156,170 @@ describe("PropertiesPanel color field", () => {
     );
     fireEvent.click(screen.getByTestId("color-swatch-Fill"));
     expect((screen.getByTestId("color-option-#e5484d") as HTMLButtonElement).className).toContain("is-active");
+  });
+});
+
+const textInspection: BridgeInspection = {
+  target: {
+    elementId: "text-1",
+    tagName: "p",
+    path: "html/body/p[1]",
+    name: "Text",
+    role: null,
+    bounds: { x: 20, y: 20, width: 200, height: 24 },
+    locked: false,
+  },
+  text: "Heading",
+  attributes: {},
+  inlineStyle: { "font-family": "Inter, ui-sans-serif, system-ui, sans-serif" },
+  computedStyle: { "font-family": "Inter, ui-sans-serif, system-ui, sans-serif", "font-size": "16px" },
+};
+
+const textEntry: OverlayBridgeTargetState = {
+  frameId: "frame-1",
+  target: textInspection.target,
+  inspection: textInspection,
+};
+
+const textProps = {
+  ...baseProps,
+  selection: { ...baseProps.selection, nodeIds: ["text-1"], primaryNodeId: "text-1" },
+  bridgeTargets: { "frame-1:text-1": textEntry },
+};
+
+describe("PropertiesPanel font family picker", () => {
+  it("lists the bundled catalog and commits a font stack", () => {
+    const onEditNodeStyle = vi.fn();
+    render(<PropertiesPanel {...textProps} onEditNodeStyle={onEditNodeStyle} />);
+    fireEvent.click(screen.getByTestId("font-family-toggle"));
+    expect(screen.getByTestId("font-popover")).toBeTruthy();
+    expect(screen.getByTestId("font-option-sora")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("font-option-sora"));
+    expect(onEditNodeStyle).toHaveBeenCalledWith("font-family", '"Sora", ui-sans-serif, system-ui, sans-serif');
+    expect(screen.queryByTestId("font-popover")).toBeNull();
+  });
+
+  it("filters the catalog while typing in the field", () => {
+    render(<PropertiesPanel {...textProps} />);
+    const input = screen.getByTestId("font-family-input");
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "fraun" } });
+    expect(screen.getByTestId("font-option-fraunces")).toBeTruthy();
+    expect(screen.queryByTestId("font-option-sora")).toBeNull();
+    expect(screen.queryByTestId("font-option-geist-mono")).toBeNull();
+  });
+
+  it("still commits a typed off-catalog family on blur", () => {
+    const onEditNodeStyle = vi.fn();
+    render(<PropertiesPanel {...textProps} onEditNodeStyle={onEditNodeStyle} />);
+    const input = screen.getByTestId("font-family-input");
+    fireEvent.focus(input);
+    fireEvent.change(input, { target: { value: "Comic Sans MS, cursive" } });
+    fireEvent.blur(input, { relatedTarget: document.body });
+    expect(onEditNodeStyle).toHaveBeenCalledWith("font-family", "Comic Sans MS, cursive");
+  });
+
+  it("marks the active option for a catalog stack", () => {
+    const soraEntry: OverlayBridgeTargetState = {
+      ...textEntry,
+      inspection: {
+        ...textInspection,
+        inlineStyle: { "font-family": '"Sora", ui-sans-serif, system-ui, sans-serif' },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...textProps}
+        bridgeTargets={{ "frame-1:text-1": soraEntry }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("font-family-toggle"));
+    expect((screen.getByTestId("font-option-sora") as HTMLButtonElement).className).toContain("is-active");
+  });
+
+  function entryFor(target: Partial<BridgeInspection["target"]>, attributes: Record<string, string> = {}): OverlayBridgeTargetState {
+    const inspection: BridgeInspection = {
+      target: { ...textInspection.target, ...target },
+      text: "",
+      attributes,
+      inlineStyle: {},
+      computedStyle: {},
+    };
+    return { frameId: "frame-1", target: inspection.target, inspection };
+  }
+
+  it("shows the family field for a created text layer (div with kind=text)", () => {
+    const created = entryFor({ elementId: "div-text", tagName: "div" }, { "data-design-tool-kind": "text" });
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ ...baseProps.selection, nodeIds: ["div-text"], primaryNodeId: "div-text" }}
+        bridgeTargets={{ "frame-1:div-text": created }}
+      />,
+    );
+    expect(screen.getByTestId("font-family-input")).toBeTruthy();
+  });
+
+  it("shows the family field for buttons", () => {
+    const button = entryFor({ elementId: "btn-1", tagName: "button", name: "Button" });
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ ...baseProps.selection, nodeIds: ["btn-1"], primaryNodeId: "btn-1" }}
+        bridgeTargets={{ "frame-1:btn-1": button }}
+      />,
+    );
+    expect(screen.getByTestId("font-family-input")).toBeTruthy();
+  });
+
+  it("shows the family field for generic containers whose text inherits", () => {
+    const container = entryFor({ elementId: "div-1", tagName: "div", name: "Group" });
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ ...baseProps.selection, nodeIds: ["div-1"], primaryNodeId: "div-1" }}
+        bridgeTargets={{ "frame-1:div-1": container }}
+      />,
+    );
+    expect(screen.getByTestId("font-family-input")).toBeTruthy();
+  });
+});
+
+describe("PropertiesPanel profile coverage", () => {
+  function entryFor(target: Partial<BridgeInspection["target"]>, attributes: Record<string, string> = {}): OverlayBridgeTargetState {
+    const inspection: BridgeInspection = {
+      target: { ...textInspection.target, ...target },
+      text: "",
+      attributes,
+      inlineStyle: {},
+      computedStyle: {},
+    };
+    return { frameId: "frame-1", target: inspection.target, inspection };
+  }
+
+  function renderTarget(elementId: string, target: Partial<BridgeInspection["target"]>, attributes: Record<string, string> = {}) {
+    return render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ ...baseProps.selection, nodeIds: [elementId], primaryNodeId: elementId }}
+        bridgeTargets={{ [`frame-1:${elementId}`]: entryFor(target, attributes) }}
+      />,
+    );
+  }
+
+  // Regression: the "text" profile branch once rendered no glass section, so a
+  // created text layer could not receive or report a glass level (QA D2).
+  it("offers the glass control on a created text layer", () => {
+    renderTarget("div-text", { elementId: "div-text", tagName: "div" }, { "data-design-tool-kind": "text" });
+    expect(screen.getByTestId("glass-level-slider")).toBeTruthy();
+    expect(screen.getByTestId("glass-level-value").textContent).toBe("Off");
+  });
+
+  it("offers the glass control on buttons and generic containers too", () => {
+    const { unmount } = renderTarget("btn-1", { elementId: "btn-1", tagName: "button", name: "Button" });
+    expect(screen.getByTestId("glass-level-slider")).toBeTruthy();
+    unmount();
+    renderTarget("div-1", { elementId: "div-1", tagName: "div", name: "Group" });
+    expect(screen.getByTestId("glass-level-slider")).toBeTruthy();
   });
 });

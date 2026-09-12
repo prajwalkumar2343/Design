@@ -53,9 +53,10 @@ test.describe("Project lake", () => {
     await page.locator('.figma-more-menu [role="menuitem"]', { hasText: "Duplicate" }).click();
     await expect(page.getByTestId("project-card")).toHaveCount(2);
 
-    // Delete one; the other survives with its renamed title.
+    // Delete one (with confirmation); the other survives with its renamed title.
     await page.locator('[data-testid="project-card"]').nth(0).locator('[aria-label="More actions"]').click();
     await page.locator('.figma-more-menu [role="menuitem"]', { hasText: "Delete" }).click();
+    await page.getByTestId("confirm-delete-project").click();
     await expect(page.getByTestId("project-card")).toHaveCount(1);
     await expect(page.locator('[data-testid="project-card"] .figma-file-name').first()).toHaveText("Renamed regression");
 

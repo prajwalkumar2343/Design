@@ -15,9 +15,14 @@ import {
   type BrainstormSessionAction,
 } from "../session/reducer";
 import {
+  isTokenAlias,
+  rewriteTokenCssReference,
+  tokenAliasReference,
+  tokenAliasTarget,
   TokenValidationError,
   validateToken,
   validateTokenId,
+  validateTokenName,
   validateTokenSet,
   validateTokenTheme,
   type TokenStoreState,
@@ -64,6 +69,13 @@ export type EditorAction =
   | { type: "tokens/remove-set"; setId: string; expectedRevision?: number }
   | { type: "tokens/upsert-token"; setId: string; token: DesignToken; expectedRevision?: number }
   | { type: "tokens/remove-token"; setId: string; tokenId: string; expectedRevision?: number }
+  | {
+      type: "tokens/rename";
+      setId: string;
+      tokenId: string;
+      name: string;
+      expectedRevision?: number;
+    }
   | { type: "tokens/upsert-theme"; theme: TokenTheme; expectedRevision?: number }
   | { type: "tokens/remove-theme"; themeId: string; expectedRevision?: number }
   | { type: "tokens/switch-theme"; themeId: string | null; expectedRevision?: number }
@@ -254,6 +266,64 @@ function reduceTokenAction(state: EditorState, action: TokenAction): EditorState
         },
       };
     }
+    case "tokens/rename": {
+      requireTokenRevision(store, action.expectedRevision);
+      const setId = validateTokenInput(() => validateTokenId(action.setId, "tokens.setId"));
+      const tokenId = validateTokenInput(() => validateTokenId(action.tokenId, "tokens.tokenId"));
+      const set = store.sets[setId];
+      if (!set) throw new EditorReducerError(`Unknown token set: ${setId}`);
+      const renamed = set.tokens[tokenId];
+      if (!renamed) throw new EditorReducerError(`Unknown token: ${tokenId}`);
+      const name = validateTokenInput(() => validateTokenName(action.name, "tokens.name"));
+      const oldName = renamed.name;
+      if (name === oldName) return state;
+      // A variable's name is its identity: same-named tokens across sets are
+      // the per-mode values of one variable (Figma modes semantics), so the
+      // rename applies everywhere the old name exists. Sets that contain both
+      // names would end up with a duplicate — reject before mutating.
+      for (const candidate of Object.values(store.sets)) {
+        const hasOld = Object.values(candidate.tokens).some((entry) => entry.name === oldName);
+        const hasNew = Object.values(candidate.tokens).some((entry) => entry.name === name);
+        if (hasOld && hasNew) {
+          throw new EditorReducerError(`A token named ${name} already exists in set ${candidate.id}`);
+        }
+      }
+      const sets: Record<string, TokenSet> = {};
+      for (const [candidateId, candidate] of Object.entries(store.sets)) {
+        let changed = false;
+        const tokens: Record<string, DesignToken> = { ...candidate.tokens };
+        for (const [entryId, entry] of Object.entries(candidate.tokens)) {
+          let next = entry;
+          if (entry.name === oldName) next = { ...next, name };
+          const alias = isTokenAlias(next.value) ? tokenAliasTarget(next.value) : null;
+          if (alias === oldName) next = { ...next, value: tokenAliasReference(name) };
+          if (next !== entry) {
+            tokens[entryId] = next;
+            changed = true;
+          }
+        }
+        sets[candidateId] = changed ? { ...candidate, tokens } : candidate;
+      }
+      // `var(--old-name)` references inside document markup stay linked — the
+      // rename rewrites them so applied tokens keep resolving.
+      let documents = state.documents;
+      for (const document of Object.values(state.documents)) {
+        const nextSrcDoc = rewriteTokenCssReference(document.srcDoc, oldName, name);
+        if (nextSrcDoc !== document.srcDoc) {
+          if (documents === state.documents) documents = { ...state.documents };
+          documents[document.id] = {
+            ...document,
+            srcDoc: nextSrcDoc,
+            revision: document.revision + 1,
+          };
+        }
+      }
+      return {
+        ...state,
+        documents,
+        tokens: { ...store, sets, revision: store.revision + 1 },
+      };
+    }
     case "tokens/upsert-theme": {
       requireTokenRevision(store, action.expectedRevision);
       const theme = validateTokenInput(() =>
@@ -396,12 +466,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         throw new EditorReducerError(`Frame already exists: ${action.frame.id}`);
       }
       requireDocument(state, action.frame.documentId);
+      // Pages group frames for navigation; imported Figma pages host frames
+      // backed by separate documents, so a frame's document does not have to
+      // match the page's owning document.
       const page = requirePage(state, action.frame.pageId);
-      if (page.documentId !== action.frame.documentId) {
-        throw new EditorReducerError(
-          `Frame ${action.frame.id} references a page from another document`,
-        );
-      }
       return {
         ...state,
         frames: { ...state.frames, [action.frame.id]: action.frame },
@@ -456,6 +524,35 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       const frame = requireFrame(state, action.frameId);
       const { [frame.id]: _removedFrame, ...frames } = state.frames;
       const page = requirePage(state, frame.pageId);
+      // The node index mirrors live frame content; keeping the removed frame's
+      // entries would leave them pointing at a dead frameId, which the project
+      // serializer rejects.
+      const removedNodeIds = new Set(
+        Object.values(state.nodes)
+          .filter((node) => node.frameId === frame.id)
+          .map((node) => node.id),
+      );
+      let nodes = state.nodes;
+      let documents = state.documents;
+      if (removedNodeIds.size > 0) {
+        nodes = {};
+        for (const [nodeId, node] of Object.entries(state.nodes)) {
+          if (removedNodeIds.has(nodeId)) continue;
+          const childIds = node.childIds.filter((id) => !removedNodeIds.has(id));
+          nodes[nodeId] = childIds.length === node.childIds.length ? node : { ...node, childIds };
+        }
+        const document = state.documents[frame.documentId];
+        if (document) {
+          const rootNodeIds = document.rootNodeIds.filter((id) => !removedNodeIds.has(id));
+          if (rootNodeIds.length !== document.rootNodeIds.length) {
+            documents = {
+              ...state.documents,
+              [document.id]: { ...document, rootNodeIds },
+            };
+          }
+        }
+      }
+      const nextState = { ...state, frames, nodes, documents };
       const selection = {
         ...state.selection,
         frameIds: state.selection.frameIds.filter((id) => id !== frame.id),
@@ -465,8 +562,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
             : state.selection.primaryFrameId,
       };
       return {
-        ...state,
-        frames,
+        ...nextState,
         pages: {
           ...state.pages,
           [page.id]: {
@@ -474,7 +570,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
             frameIds: page.frameIds.filter((id) => id !== frame.id),
           },
         },
-        selection: normalizeSelection({ ...state, frames }, selection),
+        selection: normalizeSelection(nextState, selection),
       };
     }
 
@@ -582,6 +678,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case "tokens/remove-set":
     case "tokens/upsert-token":
     case "tokens/remove-token":
+    case "tokens/rename":
     case "tokens/upsert-theme":
     case "tokens/remove-theme":
     case "tokens/switch-theme":

@@ -169,6 +169,33 @@ describe("TokensService tokens.set", () => {
     })).toThrowError(expect.objectContaining({ code: "too-many-operations" }));
   });
 
+  it("renames tokens through the router with reference integrity", () => {
+    const store = createEditorStore(createEmptyEditorState());
+    const service = new TokensService(store);
+    const result = service.setTokens({
+      requestId: "rename-1",
+      expectedRevision: 0,
+      operations: [{ op: "rename-token", setId: "light", tokenId: "light-accent-primary", name: "color.accent.main" }],
+    });
+    expect(result.changed).toBe(true);
+    expect(store.getState().tokens.sets.light?.tokens["light-accent-primary"]?.name).toBe("color.accent.main");
+    expect(() => service.setTokens({
+      requestId: "rename-bad",
+      expectedRevision: 1,
+      operations: [{ op: "rename-token", setId: "light", tokenId: "light-accent-primary", name: "Bad Name!" }],
+    })).toThrowError(expect.objectContaining({ code: "token-invalid" }));
+  });
+
+  it("reports resolved values and alias targets in queries", () => {
+    const service = createService();
+    const entries = service.queryTokens({ prefix: "color.text" });
+    const alias = entries.entries.find((entry) => entry.name === "color.text.primary");
+    expect(alias?.value).toBe("{color.ink.primary}");
+    expect(alias?.aliasOf).toBe("color.ink.primary");
+    expect(alias?.resolvedValue).toBe("#1c1917");
+    expect(alias?.aliasStatus).toBeUndefined();
+  });
+
   it("rolls back the whole batch when a late op is unusable", () => {
     const store = createEditorStore(createEmptyEditorState());
     const service = new TokensService(store);

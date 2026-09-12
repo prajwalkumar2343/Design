@@ -16,6 +16,8 @@
 import {
   cssVariableName,
   dtcgTypeForTokenType,
+  isTokenAlias,
+  tokenAliasTarget,
   type DesignToken,
   type MotionValue,
   type TokenStoreState,
@@ -23,8 +25,15 @@ import {
 } from "./model";
 import { resolveActiveThemeTokens, type ResolvedToken } from "./resolve";
 
-function cssDeclarationsForToken(token: DesignToken): Array<[string, string]> {
-  const value = token.value;
+function cssDeclarationsForToken(resolved: ResolvedToken): Array<[string, string]> {
+  const token = resolved.token;
+  const value = resolved.resolvedValue;
+  // Aliases stay indirections in generated CSS: `--a: var(--b)` preserves the
+  // reference so downstream code keeps tracking the target token.
+  if (isTokenAlias(token.value)) {
+    const target = tokenAliasTarget(token.value) as string;
+    return [[cssVariableName(token.name), `var(${cssVariableName(target)})`]];
+  }
   if (typeof value === "string") return [[cssVariableName(token.name), value]];
   if (typeof value === "number") return [[cssVariableName(token.name), String(value)]];
   if (token.type === "typography") {
@@ -55,8 +64,8 @@ export function buildThemeCssVariables(store: TokenStoreState): string {
   const resolved = resolveActiveThemeTokens(store);
   if (resolved.length === 0) return "";
   const lines = [":root {"];
-  for (const { token } of resolved) {
-    for (const [name, cssValue] of cssDeclarationsForToken(token)) {
+  for (const resolvedToken of resolved) {
+    for (const [name, cssValue] of cssDeclarationsForToken(resolvedToken)) {
       lines.push(`  ${name}: ${cssValue};`);
     }
   }

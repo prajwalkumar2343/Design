@@ -139,8 +139,11 @@ function truncateName(name: string): string {
 export function elementProfile(
   target: Pick<BridgeElementTarget, "tagName" | "role">,
   node: NodeEntity | undefined,
+  attributes?: Record<string, string>,
 ): ElementProfileId {
-  if (node?.kind === "text") return "text";
+  // Tool-created text layers are <div>s carrying data-design-tool-kind="text";
+  // the attribute catches them even when the node entity lookup misses.
+  if (node?.kind === "text" || attributes?.["data-design-tool-kind"] === "text") return "text";
   const tagName = target.tagName.toLowerCase();
   if (tagName === "button" || target.role === "button") return "button";
   if (tagName === "img") return "image";

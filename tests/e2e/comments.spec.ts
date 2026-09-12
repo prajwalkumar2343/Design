@@ -39,6 +39,45 @@ test.describe("canvas comments", () => {
     await expect(page.getByTestId("comment-feedback")).toHaveText("Comment deleted");
   });
 
+  test("supports keyboard navigation, explicit save, resolve and reopen", async ({ page }) => {
+    await openEditor(page);
+    const heading = page.locator('[data-frame-id="desktop"] iframe').contentFrame().getByRole("heading", { name: "Make room for better ideas." });
+    await page.getByTestId("tool-button-comment").click();
+    await heading.click();
+    await expect(page.getByRole("button", { name: "Save comment", exact: true })).toBeDisabled();
+    await page.getByTestId("comment-input").fill("Give the headline more breathing room.");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Save comment", exact: true })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
+    await page.getByTestId("comment-marker").click();
+    await expect(page.getByTestId("comment-marker")).toHaveAttribute("aria-expanded", "true");
+    await page.mouse.move(0, 0);
+    await expect.poll(async () => Math.round((await page.getByTestId("comment-marker").boundingBox())!.width)).toBe(28);
+    await page.getByRole("button", { name: "Resolve comment", exact: true }).click();
+    await expect(page.getByTestId("comment-marker")).toHaveAttribute("data-comment-status", "resolved");
+    await page.getByTestId("comment-marker").click();
+    await expect(page.locator(".comment-status")).toHaveText("Resolved");
+    await page.getByRole("button", { name: "Reopen comment", exact: true }).click();
+    await expect(page.getByTestId("comment-marker")).toHaveAttribute("data-comment-status", "open");
+  });
+
+  test("keeps a long comment within the viewport after resizing", async ({ page }) => {
+    await openEditor(page);
+    const heading = page.locator('[data-frame-id="desktop"] iframe').contentFrame().getByRole("heading", { name: "Make room for better ideas." });
+    await page.getByTestId("tool-button-comment").click();
+    await heading.click();
+    await page.getByTestId("comment-input").fill("A detailed review note.\n".repeat(35));
+    await page.setViewportSize({ width: 640, height: 480 });
+    await expect(page.getByRole("button", { name: "Save comment", exact: true })).toBeVisible();
+    await expect.poll(async () => {
+      const box = await page.getByTestId("comment-popover").boundingBox();
+      return !!box && box.x >= 11 && box.y >= 11 && box.x + box.width <= 629 && box.y + box.height <= 469;
+    }).toBe(true);
+    await page.getByRole("button", { name: "Save comment", exact: true }).click();
+    await expect(page.getByTestId("comment-popover")).toHaveCount(0);
+  });
+
   test("dismisses a brand-new empty comment without registering it", async ({ page }) => {
     await openEditor(page);
     const preview = page.locator('[data-frame-id="desktop"] iframe').contentFrame();

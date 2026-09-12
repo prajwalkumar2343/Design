@@ -54,6 +54,12 @@ export interface IframeBridgeController {
   pickElement: (
     command: Extract<BridgeCommand, { command: "pick-element" }>,
   ) => Promise<BridgeCommandAck>;
+  injectFontFaces: (
+    command: Extract<BridgeCommand, { command: "inject-font-faces" }>,
+  ) => Promise<BridgeCommandAck>;
+  setTokenTheme: (
+    command: Extract<BridgeCommand, { command: "set-token-theme" }>,
+  ) => Promise<BridgeCommandAck>;
 }
 
 export interface BridgeTransportHandlers {
@@ -200,6 +206,14 @@ export class IframeBridgeTransport {
   }
 
   pickElement(command: Extract<BridgeCommand, { command: "pick-element" }>): Promise<BridgeCommandAck> {
+    return this.sendCommand(command);
+  }
+
+  injectFontFaces(command: Extract<BridgeCommand, { command: "inject-font-faces" }>): Promise<BridgeCommandAck> {
+    return this.sendCommand(command);
+  }
+
+  setTokenTheme(command: Extract<BridgeCommand, { command: "set-token-theme" }>): Promise<BridgeCommandAck> {
     return this.sendCommand(command);
   }
 

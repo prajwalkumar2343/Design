@@ -9,11 +9,13 @@ function createHarness() {
     onRemoveSet: vi.fn(),
     onUpsertToken: vi.fn(),
     onRemoveToken: vi.fn(),
+    onRenameToken: vi.fn(),
     onUpsertTheme: vi.fn(),
     onRemoveTheme: vi.fn(),
     onSwitchTheme: vi.fn(),
     onExportDTCG: vi.fn(),
     onExportCss: vi.fn(),
+    onImportTokensFile: vi.fn(),
   };
   const props: TokensPanelProps = { tokens: createSeedTokenStore(), ...handlers };
   return { props, handlers };
@@ -134,5 +136,65 @@ describe("TokensPanel", () => {
     expect(screen.getByTestId("theme-name-input").closest("div[hidden]")).toBeTruthy();
     fireEvent.click(screen.getByTestId("theme-creator-toggle"));
     expect(screen.getByTestId("theme-name-input").closest("div[hidden]")).toBeNull();
+  });
+
+  it("shows alias targets with their resolved values", () => {
+    render(<TokensPanel {...createProps()} />);
+    fireEvent.change(screen.getByTestId("token-set-select"), { target: { value: "light" } });
+    const row = screen.getByTestId("token-row-light-text-primary");
+    // The alias chip names the reference; the value line shows the resolved color.
+    expect(row.textContent).toContain("color.ink.primary");
+    expect(row.textContent).toContain("#1c1917");
+  });
+
+  it("resolves aliases live in the value editor", () => {
+    const { props } = createHarness();
+    render(<TokensPanel {...props} />);
+    fireEvent.click(screen.getByTestId("token-creator-toggle"));
+    fireEvent.change(screen.getByTestId("token-name-input"), { target: { value: "color.brand.link" } });
+    fireEvent.change(screen.getByTestId("token-value-value"), { target: { value: "{color.accent.primary}" } });
+    expect(screen.getByRole("note").textContent).toContain("Resolves to #3b74c2");
+  });
+
+  it("warns when an alias draft points at a missing token", () => {
+    const { props } = createHarness();
+    render(<TokensPanel {...props} />);
+    fireEvent.click(screen.getByTestId("token-creator-toggle"));
+    fireEvent.change(screen.getByTestId("token-value-value"), { target: { value: "{color.missing.token}" } });
+    expect(screen.getByRole("note").textContent).toContain("No token named color.missing.token");
+  });
+
+  it("renames a variable through the edit sheet", () => {
+    const { props, handlers } = createHarness();
+    render(<TokensPanel {...props} />);
+    fireEvent.change(screen.getByTestId("token-set-select"), { target: { value: "light" } });
+    fireEvent.click(screen.getByTestId("token-edit-light-accent-primary"));
+    fireEvent.change(screen.getByTestId("token-rename-light-accent-primary"), {
+      target: { value: "color.accent.main" },
+    });
+    fireEvent.click(screen.getByTestId("token-save-light-accent-primary"));
+    expect(handlers.onRenameToken).toHaveBeenCalledWith("light", "light-accent-primary", "color.accent.main");
+    expect(handlers.onUpsertToken).toHaveBeenCalledWith(
+      "light",
+      expect.objectContaining({ name: "color.accent.main", value: "#3b74c2" }),
+    );
+  });
+
+  it("renames a collection inline", () => {
+    const { props, handlers } = createHarness();
+    render(<TokensPanel {...props} />);
+    fireEvent.click(screen.getByTestId("set-rename-button-light"));
+    fireEvent.change(screen.getByTestId("set-rename-light"), { target: { value: "Daylight" } });
+    fireEvent.blur(screen.getByTestId("set-rename-light"));
+    expect(handlers.onUpsertSet).toHaveBeenCalledWith(expect.objectContaining({ id: "light", name: "Daylight" }));
+  });
+
+  it("offers a file import when the callback is provided", () => {
+    const { props, handlers } = createHarness();
+    render(<TokensPanel {...props} />);
+    const input = screen.getByTestId("tokens-import-input");
+    const file = new File(["{}"], "tokens.json", { type: "application/json" });
+    fireEvent.change(input, { target: { files: [file] } });
+    expect(handlers.onImportTokensFile).toHaveBeenCalledWith(file);
   });
 });

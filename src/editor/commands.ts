@@ -55,6 +55,13 @@ export type EditorCommand =
   | { type: "tokens/remove-set"; setId: string; expectedRevision?: number }
   | { type: "tokens/upsert-token"; setId: string; token: DesignToken; expectedRevision?: number }
   | { type: "tokens/remove-token"; setId: string; tokenId: string; expectedRevision?: number }
+  | {
+      type: "tokens/rename";
+      setId: string;
+      tokenId: string;
+      name: string;
+      expectedRevision?: number;
+    }
   | { type: "tokens/upsert-theme"; theme: TokenTheme; expectedRevision?: number }
   | { type: "tokens/remove-theme"; themeId: string; expectedRevision?: number }
   | { type: "tokens/switch-theme"; themeId: string | null; expectedRevision?: number }
@@ -107,8 +114,8 @@ function applyCreateFrameCommand(state: EditorState, frame: FrameSeed): EditorSt
         frameIds: [],
       },
     });
-  } else if (existingPage.documentId !== frame.documentId) {
-    throw new EditorCommandError(`Page ${pageId} belongs to another document`);
+    // Existing pages accept frames from other documents: imported Figma files
+    // place every artboard (each backed by its own document) on one page.
   }
 
   return editorReducer(nextState, {
@@ -162,6 +169,7 @@ export function applyEditorCommand(
     case "tokens/remove-set":
     case "tokens/upsert-token":
     case "tokens/remove-token":
+    case "tokens/rename":
     case "tokens/upsert-theme":
     case "tokens/remove-theme":
     case "tokens/switch-theme":
@@ -212,6 +220,10 @@ export function moveFrameCommand(options: {
   position: { x: number; y: number };
 }): EditorCommand {
   return { type: "frame/move", ...options };
+}
+
+export function removeFrameCommand(frameId: string): EditorCommand {
+  return { type: "frame/remove", frameId };
 }
 
 export function setSelectionCommand(selection: SelectionState): EditorCommand {
@@ -324,6 +336,15 @@ export function removeTokenCommand(
   expectedRevision?: number,
 ): EditorCommand {
   return { type: "tokens/remove-token", setId, tokenId, expectedRevision };
+}
+
+export function renameTokenCommand(
+  setId: string,
+  tokenId: string,
+  name: string,
+  expectedRevision?: number,
+): EditorCommand {
+  return { type: "tokens/rename", setId, tokenId, name, expectedRevision };
 }
 
 export function upsertTokenThemeCommand(theme: TokenTheme, expectedRevision?: number): EditorCommand {

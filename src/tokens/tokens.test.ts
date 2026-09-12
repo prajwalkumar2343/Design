@@ -6,10 +6,18 @@ import {
   createEmptyTokenStore,
   createSeedTokenStore,
   cssVariableName,
+  cssVariableReferenceForProperty,
   dtcgTypeForTokenType,
   findTokenForCssValue,
+  isCssVariableReference,
   isOffSystemValue,
+  isTokenAlias,
+  isUnresolvedCssReference,
+  resolveActiveThemeToken,
   resolveActiveThemeTokens,
+  rewriteTokenCssReference,
+  tokenNameCandidatesForCssVariable,
+  tokenScalarForCssProperty,
   tokenTypeForCssProperty,
   TokenValidationError,
   validateToken,
@@ -161,6 +169,7 @@ describe("theme resolution", () => {
   it("maps CSS properties to token types", () => {
     expect(tokenTypeForCssProperty("background-color")).toBe("color");
     expect(tokenTypeForCssProperty("margin-top")).toBe("spacing");
+    expect(tokenTypeForCssProperty("border-width")).toBe("spacing");
     expect(tokenTypeForCssProperty("border-radius")).toBe("radius");
     expect(tokenTypeForCssProperty("box-shadow")).toBe("shadow");
     expect(tokenTypeForCssProperty("opacity")).toBe("opacity");
@@ -252,5 +261,146 @@ describe("token exporters", () => {
     const color = document.color as { $value?: unknown; accent?: { $value?: unknown } };
     expect(color.$value).toBe("#ffffff");
     expect(color.accent?.$value).toBe("#e5484d");
+  });
+});
+
+describe("token aliases", () => {
+  function storeWithAlias(overrides: Partial<DesignToken> = {}): TokenStoreState {
+    return {
+      sets: {
+        s: {
+          id: "s",
+          name: "S",
+          tokens: {
+            base: { id: "base", name: "color.base", type: "color", value: "#3b74c2" },
+            alias: { id: "alias", name: "color.brand", type: "color", value: "{color.base}", ...overrides },
+          },
+        },
+      },
+      themes: { t: { id: "t", name: "T", setIds: ["s"] } },
+      activeThemeId: "t",
+      revision: 0,
+    };
+  }
+
+  it("recognises alias syntax and validates it for scalar types", () => {
+    expect(isTokenAlias("{color.base}")).toBe(true);
+    expect(isTokenAlias("{color.base")).toBe(false);
+    expect(isTokenAlias("{color.base} solid")).toBe(false);
+    expect(validateToken(colorToken({ value: "{color.base}" }), "t").value).toBe("{color.base}");
+    expect(() => validateToken(colorToken({ value: "{Color.Bad Path}" }), "t")).toThrowError(
+      expect.objectContaining({ code: "invalid-token-value" }),
+    );
+  });
+
+  it("resolves aliases to concrete values through the active theme", () => {
+    const store = storeWithAlias();
+    const resolved = resolveActiveThemeTokens(store).find((item) => item.token.id === "alias");
+    expect(resolved?.resolvedValue).toBe("#3b74c2");
+    expect(resolved?.aliasOf).toBe("color.base");
+    expect(resolved?.aliasStatus).toBeUndefined();
+    expect(resolveActiveThemeToken(store, "color.brand")?.resolvedValue).toBe("#3b74c2");
+  });
+
+  it("flags dangling and cyclic aliases without throwing", () => {
+    const dangling = storeWithAlias({ value: "{color.missing}" });
+    expect(resolveActiveThemeTokens(dangling).find((item) => item.token.id === "alias")?.aliasStatus).toBe("dangling");
+
+    const cyclic: TokenStoreState = {
+      sets: {
+        s: {
+          id: "s",
+          name: "S",
+          tokens: {
+            a: { id: "a", name: "color.a", type: "color", value: "{color.b}" },
+            b: { id: "b", name: "color.b", type: "color", value: "{color.a}" },
+          },
+        },
+      },
+      themes: { t: { id: "t", name: "T", setIds: ["s"] } },
+      activeThemeId: "t",
+      revision: 0,
+    };
+    const entries = resolveActiveThemeTokens(cyclic);
+    expect(entries.find((item) => item.token.id === "a")?.aliasStatus).toBe("cyclic");
+    expect(entries.find((item) => item.token.id === "b")?.aliasStatus).toBe("cyclic");
+  });
+
+  it("matches live values against resolved alias values", () => {
+    const store = storeWithAlias();
+    expect(findTokenForCssValue(store, "background-color", "#3b74c2")).toBeTruthy();
+    const css = buildThemeCssVariables(store);
+    expect(css).toContain("--color-brand: var(--color-base);");
+    const document = buildDTCGDocument(store);
+    expect((document.color as Record<string, { $value: unknown }>).brand.$value).toBe("{color.base}");
+  });
+});
+
+describe("css variable references", () => {
+  it("detects and parses var() references", () => {
+    expect(isCssVariableReference("var(--color-accent-primary)")).toBe(true);
+    expect(isCssVariableReference("var(--x, #fff)")).toBe(true);
+    expect(isCssVariableReference("#3b74c2")).toBe(false);
+    expect(cssVariableReferenceForProperty("color.accent.primary", "background-color")).toBe("var(--color-accent-primary)");
+    expect(cssVariableReferenceForProperty("typography.body", "font-size")).toBe("var(--typography-body-font-size)");
+    expect(cssVariableReferenceForProperty("typography.body", "line-height")).toBe("var(--typography-body-line-height)");
+    expect(cssVariableReferenceForProperty("motion.base", "transition-duration")).toBe("var(--motion-base-duration)");
+  });
+
+  it("maps var names back to token-name candidates", () => {
+    expect(tokenNameCandidatesForCssVariable("var(--color-accent-primary)")).toEqual(["color.accent.primary"]);
+    expect(tokenNameCandidatesForCssVariable("var(--typography-body-font-size)")).toEqual([
+      "typography.body.font.size",
+      "typography.body",
+    ]);
+    expect(tokenNameCandidatesForCssVariable("16px")).toEqual([]);
+  });
+
+  it("treats var(--token) styles as durable links", () => {
+    const store = createSeedTokenStore();
+    expect(findTokenForCssValue(store, "background-color", "var(--color-accent-primary)")).toMatchObject({
+      tokenName: "color.accent.primary",
+      via: "reference",
+    });
+    expect(findTokenForCssValue(store, "font-size", "var(--typography-body-font-size)")).toMatchObject({
+      tokenName: "typography.body",
+      via: "reference",
+    });
+    expect(findTokenForCssValue(store, "border-width", "var(--spacing-md)")).toMatchObject({
+      tokenName: "spacing.md",
+      via: "reference",
+    });
+  });
+
+  it("keeps var() styles out of the off-system flag", () => {
+    const store = createSeedTokenStore();
+    expect(isOffSystemValue(store, "background-color", "var(--color-accent-primary)")).toBe(false);
+    expect(isOffSystemValue(store, "background-color", "var(--doc-own-var)")).toBe(false);
+    expect(isUnresolvedCssReference(store, "var(--doc-own-var)")).toBe(true);
+    expect(isUnresolvedCssReference(store, "var(--color-accent-primary)")).toBe(false);
+    expect(isUnresolvedCssReference(store, "#3b74c2")).toBe(false);
+  });
+
+  it("extracts per-property scalars for detach", () => {
+    expect(tokenScalarForCssProperty("color", "#3b74c2", "background-color")).toBe("#3b74c2");
+    expect(tokenScalarForCssProperty("opacity", 0.5, "opacity")).toBe("0.5");
+    expect(
+      tokenScalarForCssProperty("typography", { fontFamily: "Inter", fontSize: "16px", fontWeight: "650" }, "font-weight"),
+    ).toBe("650");
+    expect(
+      tokenScalarForCssProperty("motion", { duration: "200ms", easing: "ease-out" }, "transition-timing-function"),
+    ).toBe("ease-out");
+  });
+
+  it("rewrites var() references on rename without touching lookalikes", () => {
+    const html = '<div style="color: var(--color-accent-primary); background: var(--color-accent-primary-2); border-radius: var(--radius-md)"></div><style>:root{--color-accent-primary:#000;}</style>';
+    const next = rewriteTokenCssReference(html, "color.accent.primary", "color.accent.main");
+    expect(next).toContain("var(--color-accent-main)");
+    expect(next).toContain("var(--color-accent-primary-2)");
+    expect(next).toContain("--color-accent-main:#000;");
+    expect(rewriteTokenCssReference("x", "color.a", "color.b")).toBe("x");
+    // Composite suffixes follow the rename too.
+    expect(rewriteTokenCssReference("font-size: var(--typography-body-font-size)", "typography.body", "type.body"))
+      .toBe("font-size: var(--type-body-font-size)");
   });
 });

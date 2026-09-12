@@ -1,9 +1,10 @@
 import { Globe, GripHorizontal } from "lucide-react";
-import { memo, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { IframeBridgeTransport, type IframeBridgeController } from "../bridge/transport";
 import type { BridgeElementTarget, BridgeEventMessage, BridgeHierarchySnapshot, BridgeInspection } from "../bridge/protocol";
 import type { CanvasFrame, Point } from "../canvas/types";
 import type { ShapeVariantId } from "../editor/tools";
+import { injectCanvasFonts } from "../fonts";
 import { renderFrameDocument } from "./render-document";
 import { injectTokenTheme } from "./token-theme";
 import { injectWireframeTheme } from "./wireframe-theme";
@@ -241,6 +242,8 @@ export const FrameView = memo(function FrameView({
       setShapeFill: (command) => transport.setShapeFill(command),
       setShapeGlass: (command) => transport.setShapeGlass(command),
       pickElement: (command) => transport.pickElement(command),
+      injectFontFaces: (command) => transport.injectFontFaces(command),
+      setTokenTheme: (command) => transport.setTokenTheme(command),
     });
     transport.attach();
 
@@ -261,7 +264,15 @@ export const FrameView = memo(function FrameView({
     onBridgeSnapshot,
   ]);
 
-  const bridgeSrcDoc = renderFrameDocument(frame.srcDoc, frame.mode, bridgeSession, tokenCss);
+  // Changing the rendered srcDoc reloads the iframe and wipes live DOM edits
+  // (including var() token links), so the theme block is frozen at render time
+  // and updates flow through the `set-token-theme` bridge command instead.
+  const tokenCssRef = useRef(tokenCss);
+  tokenCssRef.current = tokenCss;
+  const bridgeSrcDoc = useMemo(
+    () => renderFrameDocument(frame.srcDoc, frame.mode, bridgeSession, tokenCssRef.current),
+    [frame.srcDoc, frame.mode, bridgeSession],
+  );
 
   const getCreationPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
     const iframe = iframeRef.current;
@@ -334,12 +345,13 @@ export const FrameView = memo(function FrameView({
   const showDeviceChrome = isDeviceFrame;
 
   const openFullPreview = () => {
-    const previewDoc =
+    const previewDoc = injectCanvasFonts(
       frame.mode === "wireframe"
         ? injectWireframeTheme(frame.srcDoc)
         : tokenCss
           ? injectTokenTheme(frame.srcDoc, tokenCss)
-          : frame.srcDoc;
+          : frame.srcDoc,
+    );
     const blob = new Blob([previewDoc], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank", "noopener");
@@ -425,7 +437,7 @@ export const FrameView = memo(function FrameView({
               className="frame-activation-layer"
               aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}
               onClick={isPanTool ? undefined : () => onSelect(frame.id)}
-              onPointerDown={isPanTool ? onStartPan : undefined}
+              onPointerDown={isPanTool ? onStartPan : (event) => onStartMove(frame.id, event)}
               type="button"
             />
           ) : null}

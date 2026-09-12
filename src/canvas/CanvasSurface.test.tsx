@@ -95,7 +95,7 @@ describe("CanvasSurface brainstorming entry", () => {
     const projectUrl = window.location.pathname;
 
     // Lake toggle should now navigate to home and show the persisted project
-    expect(screen.getByTestId("lake-toggle-button").textContent).toContain("Lake");
+    expect(screen.getByTestId("lake-toggle-button").textContent).toContain("Workspace");
     fireEvent.click(screen.getByTestId("lake-toggle-button"));
     await waitFor(() => expect(screen.getByTestId("project-lake")).toBeTruthy());
     expect(window.location.pathname).toBe("/");
@@ -179,5 +179,148 @@ describe("CanvasSurface brainstorming entry", () => {
 
     expect(downloadProjectFile).not.toHaveBeenCalled();
     expect(screen.getByTestId("persistence-feedback").textContent).toContain("no page code to export yet");
+  });
+});
+
+describe("CanvasSurface frame editing", () => {
+  const seedHtml = `<!doctype html><html><body><h1>Seed</h1></body></html>`;
+  const seed = (id: string, x: number, y: number) => ({
+    id,
+    name: id,
+    documentId: `${id}-doc`,
+    x,
+    y,
+    width: 400,
+    height: 300,
+    srcDoc: seedHtml,
+    background: "#ffffff",
+  });
+
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch {}
+    // jsdom lacks pointer-capture APIs used by the surface's drag handling.
+    if (!Element.prototype.setPointerCapture) {
+      Element.prototype.setPointerCapture = () => undefined;
+      Element.prototype.releasePointerCapture = () => undefined;
+      Element.prototype.hasPointerCapture = () => false;
+    }
+  });
+
+  it("deletes the selected frame with Delete and restores it on undo", () => {
+    render(<CanvasSurface frames={[seed("frame-1", 10, 20)]} disableLocalPersistence />);
+
+    const frame = document.querySelector("[data-frame-id='frame-1']");
+    expect(frame?.getAttribute("data-selected")).toBe("true");
+
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(document.querySelectorAll("[data-frame-id]")).toHaveLength(0);
+
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    expect(document.querySelectorAll("[data-frame-id='frame-1']")).toHaveLength(1);
+  });
+
+  it("moves an unselected frame by dragging its body", () => {
+    render(
+      <CanvasSurface
+        frames={[seed("frame-1", 0, 0), seed("frame-2", 10, 20)]}
+        disableLocalPersistence
+      />,
+    );
+
+    const frame = document.querySelector("[data-frame-id='frame-2']") as HTMLElement;
+    const before = frame.style.transform;
+
+    const surface = screen.getByTestId("canvas-surface");
+    const grabLayer = screen.getByRole("button", { name: "Select frame-2" });
+    fireEvent.pointerDown(grabLayer, { button: 0, pointerId: 7, clientX: 500, clientY: 400 });
+    fireEvent.pointerMove(surface, { pointerId: 7, clientX: 570, clientY: 445 });
+    fireEvent.pointerUp(surface, { pointerId: 7, clientX: 570, clientY: 445 });
+
+    expect(frame.getAttribute("data-selected")).toBe("true");
+    expect(frame.style.transform).not.toBe(before);
+  });
+});
+
+describe("CanvasSurface creation threshold", () => {
+  const seedHtml = `<!doctype html><html><body><h1>Seed</h1></body></html>`;
+  const seed = () => ({
+    id: "frame-1",
+    name: "frame-1",
+    documentId: "frame-1-doc",
+    x: 0,
+    y: 0,
+    width: 400,
+    height: 300,
+    srcDoc: seedHtml,
+    background: "#ffffff",
+  });
+
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch {}
+    if (!Element.prototype.setPointerCapture) {
+      Element.prototype.setPointerCapture = () => undefined;
+      Element.prototype.releasePointerCapture = () => undefined;
+      Element.prototype.hasPointerCapture = () => false;
+    }
+  });
+
+  // jsdom reports zero-size rects, so the creation layer maps client pixels to
+  // world units at scaleX = frame.width — tiny client deltas still resolve to
+  // distinct world points (clientX 0.01 → 4 world units here).
+  const drag = (layer: Element, from: number, to: number) => {
+    fireEvent.pointerDown(layer, { button: 0, isPrimary: true, pointerId: 3, clientX: from, clientY: 0 });
+    fireEvent.pointerMove(layer, { isPrimary: true, pointerId: 3, clientX: to, clientY: 0 });
+    fireEvent.pointerUp(layer, { isPrimary: true, pointerId: 3, clientX: to, clientY: 0 });
+  };
+
+  // Creation goes through the iframe bridge: the transport posts a
+  // `create-element` command to the frame's contentWindow (never answered in
+  // jsdom). Spying on postMessage observes the attempt directly.
+  const createCommands = (spy: ReturnType<typeof vi.spyOn>) =>
+    spy.mock.calls
+      .map((call: unknown[]) => call[0])
+      .filter((message: unknown) =>
+        typeof message === "object" && message !== null &&
+        (message as { type?: string }).type === "command" &&
+        (message as { command?: { command?: string } }).command?.command === "create-element",
+      );
+
+  it("does not mint a shape on a sub-threshold (click-like) drag", async () => {
+    render(<CanvasSurface frames={[seed()]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    const layer = await waitFor(() => screen.getByTestId("frame-creation-layer"));
+    const iframe = document.querySelector("iframe") as HTMLIFrameElement;
+    const postSpy = vi.spyOn(iframe.contentWindow as Window, "postMessage");
+
+    // ~4 world units — under the 6-unit minimum. The drag must be treated as a
+    // click: interaction cycles through "creating" but no element is created.
+    drag(layer, 0, 0.01);
+    expect(createCommands(postSpy)).toHaveLength(0);
+    expect(screen.getByTestId("canvas-surface").getAttribute("data-interaction")).toBe("idle");
+  });
+
+  it("posts a create-element command on a real drag", async () => {
+    render(<CanvasSurface frames={[seed()]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    const layer = await waitFor(() => screen.getByTestId("frame-creation-layer"));
+    const iframe = document.querySelector("iframe") as HTMLIFrameElement;
+    const postSpy = vi.spyOn(iframe.contentWindow as Window, "postMessage");
+
+    // ~80 world units — over the threshold, so a creation must be attempted.
+    drag(layer, 0, 0.2);
+    expect(createCommands(postSpy)).toHaveLength(1);
+  });
+
+  it("still treats a click with the text tool as a placement gesture", async () => {
+    render(<CanvasSurface frames={[seed()]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "t" });
+    const layer = await waitFor(() => screen.getByTestId("frame-creation-layer"));
+    const iframe = document.querySelector("iframe") as HTMLIFrameElement;
+    const postSpy = vi.spyOn(iframe.contentWindow as Window, "postMessage");
+
+    // Text layers intentionally bypass the drag threshold — a click places a
+    // text field at the pointer position.
+    drag(layer, 0, 0.001);
+    expect(createCommands(postSpy)).toHaveLength(1);
   });
 });

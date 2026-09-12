@@ -179,6 +179,16 @@ export type BridgeCommand =
       command: "pick-element";
       point: BridgePoint;
       shiftKey: boolean;
+    }
+  | {
+      command: "inject-font-faces";
+      /** @font-face rules carrying data-URI woff2 payloads for bundled fonts. */
+      css: string;
+    }
+  | {
+      command: "set-token-theme";
+      /** `:root` custom-property block for the active token theme. */
+      css: string;
     };
 
 export type BridgeCreationKind =
@@ -311,6 +321,22 @@ export type BridgeCommandAck =
   | {
       kind: "command";
       command: "pick-element";
+    }
+  | {
+      kind: "command";
+      command: "inject-font-faces";
+      /** Sentinel id — the command targets the document, not an element. */
+      targetId: string;
+      /** False when the exact payload was already present. */
+      injected: boolean;
+    }
+  | {
+      kind: "command";
+      command: "set-token-theme";
+      /** Sentinel id — the command targets the document, not an element. */
+      targetId: string;
+      /** False when the theme block was cleared rather than written. */
+      applied: boolean;
     };
 
 export type BridgeResponseResult =
@@ -589,6 +615,12 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
   if (value.command === "pick-element") {
     return isPoint(value.point) && typeof value.shiftKey === "boolean";
   }
+  if (value.command === "inject-font-faces") {
+    return isValidString(value.css, { maxLength: 4_000_000 });
+  }
+  if (value.command === "set-token-theme") {
+    return typeof value.css === "string" && value.css.length <= 262_144;
+  }
   if (value.command === "create-element") {
     return isValidString(value.elementId, { maxLength: 512 }) &&
       isCreationKind(value.kind) &&
@@ -695,6 +727,8 @@ function isCommandAck(value: unknown): value is BridgeCommandAck {
       value.undo.command === "set-shape-glass";
   }
   if (value.command === "pick-element") return true;
+  if (value.command === "inject-font-faces") return typeof value.injected === "boolean";
+  if (value.command === "set-token-theme") return typeof value.applied === "boolean";
   return false;
 }
 

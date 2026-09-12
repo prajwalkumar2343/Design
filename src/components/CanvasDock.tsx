@@ -134,8 +134,18 @@ export function CanvasDock({
       if (!inShapeMenu) setIsShapeMenuOpen(false);
       if (!inShaderMenu) onCloseShaderMenu();
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      onCloseFrameMenu();
+      setIsShapeMenuOpen(false);
+      onCloseShaderMenu();
+    };
     window.addEventListener("pointerdown", handlePointerDown);
-    return () => window.removeEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
   }, [isFrameMenuOpen, isShapeMenuOpen, isShaderMenuOpen, onCloseFrameMenu, onCloseShaderMenu]);
 
   // Human copy per canvas — surfaces in Dock tooltip / menu heading

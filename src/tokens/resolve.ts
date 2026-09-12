@@ -1,10 +1,21 @@
 /**
- * Theme resolution and token/value mapping.
+ * Theme resolution, alias chasing, and token/value mapping.
  *
  * A theme merges its sets in order (later sets win on name collisions), so the
  * active theme yields one flat name -> token map. `findTokenForCssValue` maps a
  * live CSS property/value pair back to that map, which is how PropertiesPanel
  * shows token references and flags off-system raw values.
+ *
+ * Two link strengths are distinguished:
+ * - `reference`: the style literally is `var(--token-name)` — a durable link
+ *   that follows the token through value edits and theme switches.
+ * - `match`: the style is a raw value that happens to equal a token's resolved
+ *   value (what computed styles report for doc-authored `var()` uses too).
+ *
+ * Token values may be DTCG aliases (`{color.neutral.0}`). Resolution chases the
+ * chain inside the active theme's merged map; dangling and cyclic aliases are
+ * reported through `aliasStatus` rather than throwing, so a broken reference
+ * never takes the theme down with it.
  *
  * Wireframe boundary: resolution only feeds design-mode rendering and editing.
  * Wireframe frames never consult tokens.
@@ -12,11 +23,32 @@
  * Color comparison is canonical (hex incl. short forms vs. rgb()/rgba()),
  * because live computed styles report rgb() while authors write hex.
  */
-import type { DesignToken, TokenStoreState, TokenType } from "./model";
+import {
+  cssVariableReferenceForProperty,
+  isCssVariableReference,
+  isTokenAlias,
+  tokenAliasTarget,
+  tokenNameCandidatesForCssVariable,
+  type DesignToken,
+  type TokenStoreState,
+  type TokenType,
+  type TokenValue,
+  type TypographyValue,
+  type MotionValue,
+} from "./model";
+
+export type TokenAliasStatus = "dangling" | "cyclic";
 
 export interface ResolvedToken {
+  /** The winning token as authored (its `value` may be an alias). */
   token: DesignToken;
   setId: string;
+  /** Concrete value after chasing the alias chain; raw value when broken. */
+  resolvedValue: TokenValue;
+  /** Immediate `{path}` target when the token value is an alias. */
+  aliasOf?: string;
+  /** Set when the alias chain could not be resolved in the active theme. */
+  aliasStatus?: TokenAliasStatus;
 }
 
 const COLOR_PROPERTIES: ReadonlySet<string> = new Set([
@@ -50,6 +82,13 @@ const SPACING_PROPERTIES: ReadonlySet<string> = new Set([
   "gap",
   "row-gap",
   "column-gap",
+  "border-width",
+  "border-top-width",
+  "border-right-width",
+  "border-bottom-width",
+  "border-left-width",
+  "outline-width",
+  "outline-offset",
 ]);
 
 const RADIUS_PROPERTIES: ReadonlySet<string> = new Set([
@@ -118,19 +157,101 @@ export function normalizeCssValue(value: string): string {
   return value.trim().replace(/\s+/g, " ");
 }
 
-/** Merges the active theme's sets in order; later sets win on name collisions. */
-export function resolveActiveThemeTokens(store: TokenStoreState): ResolvedToken[] {
-  const theme = store.activeThemeId ? store.themes[store.activeThemeId] : undefined;
-  if (!theme) return [];
+/** Upper bound on alias chain length; longer chains are reported as cyclic. */
+const MAX_ALIAS_DEPTH = 32;
+
+interface ThemeTokenMap {
+  byName: Map<string, ResolvedToken>;
+}
+
+/** Merges a theme's sets into a name -> winning-token map (later sets win). */
+function buildThemeTokenMap(store: TokenStoreState, themeId: string | null): ThemeTokenMap {
   const byName = new Map<string, ResolvedToken>();
+  const theme = themeId ? store.themes[themeId] : undefined;
+  if (!theme) return { byName };
   for (const setId of theme.setIds) {
     const set = store.sets[setId];
     if (!set) continue;
     for (const token of Object.values(set.tokens)) {
-      byName.set(token.name, { token, setId });
+      byName.set(token.name, { token, setId, resolvedValue: token.value });
     }
   }
-  return [...byName.values()].sort((a, b) => a.token.name.localeCompare(b.token.name));
+  return { byName };
+}
+
+function resolveAliases(map: ThemeTokenMap): void {
+  for (const entry of map.byName.values()) {
+    const visited = new Set<string>([entry.token.name]);
+    let current: ResolvedToken = entry;
+    let hops = 0;
+    while (isTokenAlias(current.token.value)) {
+      const targetName = tokenAliasTarget(current.token.value) as string;
+      entry.aliasOf = targetName;
+      if (visited.has(targetName) || hops >= MAX_ALIAS_DEPTH) {
+        entry.aliasStatus = "cyclic";
+        break;
+      }
+      visited.add(targetName);
+      hops += 1;
+      const target = map.byName.get(targetName);
+      if (!target) {
+        entry.aliasStatus = "dangling";
+        break;
+      }
+      current = target;
+    }
+    if (entry.aliasStatus === undefined) {
+      entry.resolvedValue = current.token.value;
+    }
+  }
+}
+
+/**
+ * Merges the active theme's sets in order (later sets win on name collisions)
+ * and resolves every alias chain against the merged map.
+ */
+export function resolveActiveThemeTokens(store: TokenStoreState): ResolvedToken[] {
+  const map = buildThemeTokenMap(store, store.activeThemeId);
+  resolveAliases(map);
+  return [...map.byName.values()].sort((a, b) => a.token.name.localeCompare(b.token.name));
+}
+
+/** Resolved token by name within the active theme, or null. */
+export function resolveActiveThemeToken(store: TokenStoreState, name: string): ResolvedToken | null {
+  const map = buildThemeTokenMap(store, store.activeThemeId);
+  resolveAliases(map);
+  return map.byName.get(name) ?? null;
+}
+
+/**
+ * The concrete scalar a token contributes to a CSS property — for composite
+ * tokens this is the matching field; for scalars the resolved value itself.
+ * Used for picker previews and for detaching a `var()` link back to a raw value.
+ */
+export function tokenScalarForCssProperty(
+  type: TokenType,
+  value: TokenValue,
+  property: string,
+): string | null {
+  if (typeof value === "number") return String(value);
+  if (typeof value === "string") return value;
+  if (type === "typography") {
+    const field = typographyFieldForProperty(property) as keyof TypographyValue | null;
+    if (!field) return null;
+    const entry = (value as TypographyValue)[field];
+    return typeof entry === "string" ? entry : null;
+  }
+  if (type === "motion") {
+    const field = motionFieldForProperty(property);
+    if (!field) return null;
+    return (value as MotionValue)[field] ?? null;
+  }
+  return null;
+}
+
+/** The `var(--…)` style value that links this token on that CSS property. */
+export function cssReferenceForTokenProperty(token: DesignToken, property: string): string {
+  return cssVariableReferenceForProperty(token.name, property);
 }
 
 export interface TokenMatch {
@@ -138,11 +259,52 @@ export interface TokenMatch {
   tokenName: string;
   setId: string;
   type: TokenType;
+  /** `reference` = style is `var(--token)`; `match` = raw value equality. */
+  via: "reference" | "match";
+  /** Concrete value the token resolves to, for previews and detach. */
+  resolvedValue: TokenValue;
+}
+
+function findReferenceMatch(
+  store: TokenStoreState,
+  property: string,
+  rawValue: string,
+): TokenMatch | null {
+  if (!isCssVariableReference(rawValue)) return null;
+  const candidates = tokenNameCandidatesForCssVariable(rawValue);
+  const map = buildThemeTokenMap(store, store.activeThemeId);
+  resolveAliases(map);
+  for (const name of candidates) {
+    const resolved = map.byName.get(name);
+    if (!resolved) continue;
+    return {
+      tokenId: resolved.token.id,
+      tokenName: resolved.token.name,
+      setId: resolved.setId,
+      type: resolved.token.type,
+      via: "reference",
+      resolvedValue: resolved.resolvedValue,
+    };
+  }
+  return null;
 }
 
 /**
- * Returns the active-theme token whose value equals the live CSS value, or
- * null when the property is unmapped or the value is off-system (raw).
+ * True when a style value is a `var(--…)` that does not resolve to any token
+ * in the active theme — either the doc's own custom property or a stale link
+ * left behind by a rename/delete.
+ */
+export function isUnresolvedCssReference(store: TokenStoreState, rawValue: string): boolean {
+  if (!isCssVariableReference(rawValue)) return false;
+  const candidates = tokenNameCandidatesForCssVariable(rawValue);
+  const map = buildThemeTokenMap(store, store.activeThemeId);
+  return !candidates.some((name) => map.byName.has(name));
+}
+
+/**
+ * Returns the active-theme token behind a live CSS value, or null when the
+ * property is unmapped or the value is off-system (raw). `var(--token)`
+ * references match by name; raw values match by resolved-value equality.
  */
 export function findTokenForCssValue(
   store: TokenStoreState,
@@ -150,12 +312,23 @@ export function findTokenForCssValue(
   rawValue: string,
 ): TokenMatch | null {
   const type = tokenTypeForCssProperty(property);
-  if (!type || rawValue.trim().length === 0) return null;
+  if (rawValue.trim().length === 0) return null;
+  if (isCssVariableReference(rawValue)) {
+    return findReferenceMatch(store, property, rawValue);
+  }
+  if (!type) return null;
   const wanted = normalizeCssValue(rawValue).toLowerCase();
-  for (const { token, setId } of resolveActiveThemeTokens(store)) {
-    if (token.type !== type) continue;
-    if (tokenValueMatches(token, type, property, wanted)) {
-      return { tokenId: token.id, tokenName: token.name, setId, type };
+  for (const resolved of resolveActiveThemeTokens(store)) {
+    if (resolved.token.type !== type) continue;
+    if (tokenValueMatches(resolved, type, property, wanted)) {
+      return {
+        tokenId: resolved.token.id,
+        tokenName: resolved.token.name,
+        setId: resolved.setId,
+        type,
+        via: "match",
+        resolvedValue: resolved.resolvedValue,
+      };
     }
   }
   return null;
@@ -163,10 +336,12 @@ export function findTokenForCssValue(
 
 /**
  * True when a mappable property holds a raw value with no matching token.
- * Unmapped properties and empty values are never flagged.
+ * Unmapped properties, empty values, and `var(--…)` references are never
+ * flagged — a var is already an indirection, resolved or not.
  */
 export function isOffSystemValue(store: TokenStoreState, property: string, rawValue: string): boolean {
   if (tokenTypeForCssProperty(property) === null || rawValue.trim().length === 0) return false;
+  if (isCssVariableReference(rawValue)) return false;
   return findTokenForCssValue(store, property, rawValue) === null;
 }
 
@@ -295,27 +470,28 @@ export function colorsEqual(left: string, right: string): boolean {
   return a.r === b.r && a.g === b.g && a.b === b.b && Math.abs(a.a - b.a) < 1e-6;
 }
 
-function tokenValueMatches(token: DesignToken, type: TokenType, property: string, wanted: string): boolean {
+function tokenValueMatches(resolved: ResolvedToken, type: TokenType, property: string, wanted: string): boolean {
+  const value = resolved.resolvedValue;
   switch (type) {
     case "color":
-      return typeof token.value === "string" &&
-        colorsEqual(normalizeCssValue(token.value).toLowerCase(), wanted);
+      return typeof value === "string" && !isTokenAlias(value) &&
+        colorsEqual(normalizeCssValue(value).toLowerCase(), wanted);
     case "spacing":
     case "radius":
     case "shadow":
-      return typeof token.value === "string" && normalizeCssValue(token.value).toLowerCase() === wanted;
+      return typeof value === "string" && normalizeCssValue(value).toLowerCase() === wanted;
     case "opacity":
-      return typeof token.value === "number" && numbersEqual(token.value, Number(wanted));
+      return typeof value === "number" && numbersEqual(value, Number(wanted));
     case "typography": {
       const field = typographyFieldForProperty(property);
-      if (!field || typeof token.value !== "object") return false;
-      const actual = (token.value as unknown as Record<string, unknown>)[field];
+      if (!field || typeof value !== "object") return false;
+      const actual = (value as unknown as Record<string, unknown>)[field];
       return typeof actual === "string" && normalizeCssValue(actual).toLowerCase() === wanted;
     }
     case "motion": {
       const field = motionFieldForProperty(property);
-      if (!field || typeof token.value !== "object") return false;
-      const actual = (token.value as unknown as Record<string, unknown>)[field];
+      if (!field || typeof value !== "object") return false;
+      const actual = (value as unknown as Record<string, unknown>)[field];
       return typeof actual === "string" && normalizeCssValue(actual).toLowerCase() === wanted;
     }
   }

@@ -2,6 +2,7 @@ export interface ProjectFileInput {
   readonly name?: string;
   readonly size?: number;
   text(): Promise<string>;
+  arrayBuffer?(): Promise<ArrayBuffer>;
 }
 
 export interface ProjectDownloadInput {
@@ -17,6 +18,8 @@ export interface ProjectDownloadInput {
  */
 export interface PersistenceAdapter {
   readProjectFile(file: ProjectFileInput): Promise<string>;
+  /** Binary reads for formats like .fig; falls back to a UTF-8 text decode. */
+  readProjectFileBytes?(file: ProjectFileInput): Promise<Uint8Array>;
 }
 
 export interface BrowserDownloadAdapter {
@@ -26,6 +29,10 @@ export interface BrowserDownloadAdapter {
 export class BrowserPersistenceAdapter implements PersistenceAdapter, BrowserDownloadAdapter {
   readProjectFile(file: ProjectFileInput): Promise<string> {
     return file.text();
+  }
+
+  async readProjectFileBytes(file: ProjectFileInput): Promise<Uint8Array> {
+    return new Uint8Array(await readFileBytes(file));
   }
 
   downloadProjectFile(input: ProjectDownloadInput): void {
@@ -43,4 +50,9 @@ export class BrowserPersistenceAdapter implements PersistenceAdapter, BrowserDow
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
+}
+
+export function readFileBytes(file: ProjectFileInput): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === "function") return file.arrayBuffer();
+  return file.text().then((text) => new TextEncoder().encode(text).buffer as ArrayBuffer);
 }

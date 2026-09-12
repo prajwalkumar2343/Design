@@ -10,7 +10,6 @@ import {
   Layers3,
   Lock,
   LockKeyholeOpen,
-  Menu,
   MoreHorizontal,
   MousePointerClick,
   Palette,
@@ -20,12 +19,9 @@ import {
   Plus,
   Search,
   Shapes,
-  Sparkles,
   SquareStack,
   TextCursorInput,
   Type,
-  Upload,
-  WandSparkles,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
@@ -235,10 +231,9 @@ function PagesPanel({ pages, activePageId, frames, onCreatePage, onRenamePage, o
   return (
     <section className="sidebar-panel-content" aria-label="Pages panel">
       <div className="sidebar-panel-heading">
-        <div><span className="sidebar-eyebrow">Workspace</span><h2>Pages</h2></div>
+        <span className="sidebar-count">{pages.length} {pages.length === 1 ? "page" : "pages"}</span>
         <button className="sidebar-icon-button" data-testid="add-page-button" aria-label="Add page" title="Add page" onClick={onCreatePage} type="button"><Plus size={15} /></button>
       </div>
-      <p className="sidebar-panel-copy">Organize responsive explorations into focused flows.</p>
       <div className="page-list">
         {pages.map((page) => {
           const frameCount = frames.filter((frame) => frame.pageId === page.id).length;
@@ -259,7 +254,6 @@ function PagesPanel({ pages, activePageId, frames, onCreatePage, onRenamePage, o
           );
         })}
       </div>
-      <div className="sidebar-footnote"><Sparkles size={13} /><span>Pages are saved with this file</span></div>
     </section>
   );
 }
@@ -287,10 +281,9 @@ function LayersPanel({
 
   return (
     <section className="sidebar-panel-content" aria-label="Layers panel">
-      <div className="sidebar-panel-heading"><div><span className="sidebar-eyebrow">Structure</span><h2>Layers</h2></div><span className="sidebar-count">{selection.nodeIds.length ? `${selection.nodeIds.length} selected` : "Live"}</span></div>
       <div className="sidebar-search"><Search size={14} /><input aria-label="Search layers" placeholder="Search layers" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
       {frameEntries.length === 0 ? (
-        <div className="sidebar-empty"><Layers3 size={20} /><strong>No live layers yet</strong><span>Select a frame to inspect its hierarchy.</span></div>
+        <div className="sidebar-empty"><Layers3 size={20} /><strong>No layers yet</strong></div>
       ) : (
         <div className="layer-frame-list">
           {frameEntries.map(({ frame, snapshot }) => {
@@ -305,7 +298,6 @@ function LayersPanel({
           })}
         </div>
       )}
-      <div className="sidebar-footnote"><span>Live hierarchy</span><span className="sidebar-footnote-dot" /> <span>Bridge synced</span></div>
     </section>
   );
 }
@@ -313,17 +305,15 @@ function LayersPanel({
 function AssetsPanel() {
   return (
     <section className="sidebar-panel-content" aria-label="Assets panel">
-      <div className="sidebar-panel-heading"><div><span className="sidebar-eyebrow">Library</span><h2>Assets</h2></div><button className="sidebar-icon-button" aria-label="Asset options" type="button"><Menu size={15} /></button></div>
-      <div className="assets-empty"><span className="assets-empty-icon"><WandSparkles size={21} /></span><strong>Your library is ready</strong><p>Imported images, components, and shared styles will collect here as the file grows.</p><button className="asset-placeholder-button" disabled type="button"><Upload size={14} /> Import assets <small>Coming soon</small></button></div>
-      <div className="asset-preview-card"><span className="asset-preview-swatch" /><span><strong>Embedded library</strong><small>0 assets · local to this file</small></span></div>
+      <div className="sidebar-empty"><SquareStack size={20} /><strong>No assets yet</strong></div>
     </section>
   );
 }
 
 export function LeftSidebar(props: LeftSidebarProps) {
   const [tab, setTab] = useState<SidebarTab>("layers");
-  const [collapsed, setCollapsed] = useState(false);
-  const [width, setWidth] = useState(276);
+  const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 900);
+  const [width, setWidth] = useState(264);
   const [dragStart, setDragStart] = useState<{ x: number; width: number } | null>(null);
   const onResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
@@ -341,21 +331,37 @@ export function LeftSidebar(props: LeftSidebarProps) {
     ...(props.tokensPanel ? [{ id: "tokens" as SidebarTab, label: "Tokens", icon: Palette }] : []),
     { id: "assets", label: "Assets", icon: SquareStack },
   ];
+  const handleTabKey = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const next = event.key === "ArrowRight" ? (index + 1) % tabs.length
+      : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length
+      : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    setTab(tabs[next].id);
+    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+  };
   return (
-    <aside className={`left-sidebar${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="left-sidebar" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width + 48 }}>
-      <nav className="sidebar-rail" aria-label="Navigation panels">
-        <button className="sidebar-collapse-button" data-testid="left-sidebar-toggle" aria-label={collapsed ? "Expand left sidebar" : "Collapse left sidebar"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}</button>
-        <span className="sidebar-rail-divider" />
-        {tabs.map(({ id, label, icon: Icon }) => <button key={id} className={`sidebar-rail-tab${tab === id ? " is-active" : ""}`} data-testid={`sidebar-tab-${id}`} aria-label={label} aria-pressed={tab === id} onClick={() => { setTab(id); setCollapsed(false); }} type="button"><Icon size={16} /></button>)}
-      </nav>
-      {!collapsed ? <div className="left-sidebar-panel" style={{ width }}>
-        <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label }) => <button key={id} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} type="button">{label}</button>)}</div>
-        {tab === "pages" ? <PagesPanel {...props} /> : null}
-        {tab === "layers" ? <LayersPanel {...props} /> : null}
-        {tab === "tokens" && props.tokensPanel ? props.tokensPanel : null}
-        {tab === "assets" ? <AssetsPanel /> : null}
+    <aside className={`left-sidebar${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="left-sidebar" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}>
+      {collapsed ? <>
+        <div className="sidebar-topline">
+          <button className="sidebar-collapse-button" data-testid="left-sidebar-toggle" aria-label="Expand left sidebar" onClick={() => setCollapsed(false)} type="button"><PanelLeftOpen size={16} /></button>
+        </div>
+        <nav className="sidebar-rail" aria-label="Navigation panels">
+          {tabs.map(({ id, label, icon: Icon }) => <button key={id} className={`sidebar-rail-tab${tab === id ? " is-active" : ""}`} data-testid={`sidebar-tab-${id}`} aria-label={label} aria-pressed={tab === id} onClick={() => { setTab(id); setCollapsed(false); }} type="button"><Icon size={16} /></button>)}
+        </nav>
+      </> : <div className="left-sidebar-panel">
+        <div className="sidebar-tabbar">
+          <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label }, index) => <button key={id} id={`sidebar-view-${id}`} data-testid={`sidebar-tab-${id}`} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} aria-controls="sidebar-active-panel" tabIndex={tab === id ? 0 : -1} onClick={() => setTab(id)} onKeyDown={(event) => handleTabKey(event, index)} type="button">{label}</button>)}</div>
+          <button className="sidebar-collapse-button" data-testid="left-sidebar-toggle" aria-label="Collapse left sidebar" onClick={() => setCollapsed(true)} type="button"><PanelLeftClose size={16} /></button>
+        </div>
+        <div className="sidebar-active-panel" id="sidebar-active-panel" role="tabpanel" aria-labelledby={`sidebar-view-${tab}`}>
+          {tab === "pages" ? <PagesPanel {...props} /> : null}
+          {tab === "layers" ? <LayersPanel {...props} /> : null}
+          {tab === "tokens" && props.tokensPanel ? props.tokensPanel : null}
+          {tab === "assets" ? <AssetsPanel /> : null}
+        </div>
         <button className="sidebar-resize-handle" aria-label="Resize left sidebar" onPointerDown={onResizePointerDown} onPointerMove={onResizePointerMove} onPointerUp={onResizePointerUp} onPointerCancel={onResizePointerUp} onLostPointerCapture={onResizePointerUp} type="button" />
-      </div> : null}
+      </div>}
     </aside>
   );
 }

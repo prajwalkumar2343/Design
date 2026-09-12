@@ -1877,6 +1877,20 @@ button:focus-visible,
   inset: 0;
 }
 
+.shader-card-thumb {
+  display: block;
+}
+
+/* The live preview fades in over the static thumbnail on hover/focus. */
+.shader-preview-mount {
+  animation: shader-live-in 200ms ease;
+}
+
+@keyframes shader-live-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .shader-preview-mount [data-paper-shader] {
   width: 100%;
   height: 100%;

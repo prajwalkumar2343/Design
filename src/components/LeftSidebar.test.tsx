@@ -59,6 +59,19 @@ function renderSidebar() {
 }
 
 describe("LeftSidebar layer rename", () => {
+  it("provides one keyboard-accessible navigation strip and restores it after collapse", () => {
+    const { getByRole, getByTestId, queryByRole } = renderSidebar();
+    const layers = getByRole("tab", { name: "Layers" });
+    expect(layers.getAttribute("aria-selected")).toBe("true");
+    fireEvent.keyDown(layers, { key: "ArrowRight" });
+    expect(getByRole("tab", { name: "Assets" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(getByTestId("left-sidebar-toggle"));
+    expect(queryByRole("tablist")).toBeNull();
+    fireEvent.click(getByRole("button", { name: "Pages" }));
+    expect(getByRole("tab", { name: "Pages" }).getAttribute("aria-selected")).toBe("true");
+    expect(getByRole("region", { name: "Pages panel" })).toBeTruthy();
+  });
+
   it("does not resurrect an abandoned rename draft on the next edit", () => {
     const { container, getByRole, onRenameNode } = renderSidebar();
 

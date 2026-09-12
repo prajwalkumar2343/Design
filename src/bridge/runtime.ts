@@ -129,10 +129,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       capabilities: [
         "hover", "select", "pointer-events", "snapshot", "inspect", "set-inline-style", "set-text",
         "create-element", "delete-element", "duplicate-element", "set-shape-radius",
-        "set-shape-fill", "set-shape-glass",
+        "set-shape-fill", "set-shape-glass", "inject-font-faces", "set-token-theme",
       ],
     });
   }
+
+  const FONT_FACES_ATTR = "data-design-tool-font-faces";
 
   function encodeId(value) {
     return encodeURIComponent(value);
@@ -215,6 +217,34 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
 
   function findElement(targetId) {
     if (!isSafeString(targetId, 512)) return null;
+    // Fast paths keep per-frame edits (radius/glass slider drags) off the
+    // full-document scan: data:/id: targets resolve in O(1) and only the
+    // path: fallback walks the tree.
+    if (targetId.indexOf("data:") === 0) {
+      let decoded = null;
+      try { decoded = decodeURIComponent(targetId.slice(5)); } catch { decoded = null; }
+      if (decoded) {
+        if (typeof CSS !== "undefined" && CSS.escape) {
+          try {
+            const hit = document.querySelector("[data-design-element-id='" + CSS.escape(decoded) + "']");
+            if (hit) return hit;
+          } catch {}
+        } else {
+          const tagged = document.querySelectorAll("[data-design-element-id]");
+          for (const taggedElement of tagged) {
+            if (taggedElement.getAttribute("data-design-element-id") === decoded) return taggedElement;
+          }
+        }
+      }
+    }
+    if (targetId.indexOf("id:") === 0) {
+      let decoded = null;
+      try { decoded = decodeURIComponent(targetId.slice(3)); } catch { decoded = null; }
+      if (decoded) {
+        const hit = document.getElementById(decoded);
+        if (hit) return hit;
+      }
+    }
     const elements = document.querySelectorAll("*");
     for (const element of elements) {
       if (elementId(element) === targetId) return element;
@@ -334,6 +364,11 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       rect.removeAttribute("ry");
     }
     element.setAttribute("data-design-tool-radius", String(radius));
+    // A frosted pane clips its backdrop to the element's border-radius, so the
+    // clip has to track the live radius while a glass shape is being rounded.
+    if (element.hasAttribute("data-design-tool-glass")) {
+      element.style.setProperty("border-radius", radius + "px", "important");
+    }
     return true;
   }
 
@@ -572,6 +607,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       const ids = [liquidFilterId(rawId), liquidFilterId(rawId + "-surface")];
       const container = document.getElementById("design-tool-liquid-filters");
       ids.forEach(function(fid) {
+        delete liquidMapCache[fid];
         let existing = null;
         try {
           existing = container ? container.querySelector("filter[id='" + fid + "']") : null;
@@ -844,6 +880,65 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     filter.appendChild(blendRGB);
   }
 
+  // The displacement map is level-independent — only the element's size,
+  // corner radius and kind shape the SDF. Caching it per filter id keeps
+  // slider drags cheap: a level change just retunes the three staggered
+  // feDisplacementMap scales instead of re-rasterizing the map on a canvas.
+  const liquidMapCache = {};
+
+  function liquidLensScales(filter, scale) {
+    const nodes = filter.querySelectorAll("feDisplacementMap");
+    if (nodes.length !== 3) return false;
+    const delta = glassChromaDelta();
+    nodes[0].setAttribute("scale", String(scale - delta));
+    nodes[1].setAttribute("scale", String(scale));
+    nodes[2].setAttribute("scale", String(scale + delta));
+    return true;
+  }
+
+  /**
+   * Returns the lens filter id when the displacement pipeline is ready for
+   * (w, h, radius, kind) at the given level, reusing the cached map whenever
+   * only the level moved. Null when the engine lacks backdrop-filter:url()
+   * support or the element is too small/large to lens.
+   */
+  function ensureLiquidLens(rawId, w, h, level, radius, kind) {
+    if (!isBackdropUrlSupported()) return null;
+    try {
+      const fid = liquidFilterId(rawId);
+      const cacheKey = kind + ":" + Math.round(w) + "x" + Math.round(h) + ":r" + Math.round(radius);
+      const container = ensureLiquidFilterContainer();
+      let filter = container.querySelector("filter[id='" + fid + "']");
+      if (!filter && typeof CSS !== "undefined" && CSS.escape) {
+        try { filter = container.querySelector("#" + CSS.escape(fid)); } catch {}
+      }
+      const cached = liquidMapCache[fid];
+      if (filter && cached && cached.key === cacheKey && liquidLensScales(filter, glassDisplacementScale(level))) {
+        return fid;
+      }
+      let dataUrl = cached && cached.key === cacheKey ? cached.dataUrl : null;
+      if (!dataUrl) {
+        dataUrl = buildLiquidDisplacementDataUrl(w, h, level, radius, kind);
+        if (!dataUrl) return null;
+        liquidMapCache[fid] = { key: cacheKey, dataUrl: dataUrl };
+      }
+      if (!filter) {
+        filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
+        filter.setAttribute("id", fid);
+        filter.setAttribute("x", "0");
+        filter.setAttribute("y", "0");
+        filter.setAttribute("width", "100%");
+        filter.setAttribute("height", "100%");
+        filter.setAttribute("color-interpolation-filters", "sRGB");
+        container.appendChild(filter);
+      } else {
+        while (filter.firstChild) filter.removeChild(filter.firstChild);
+      }
+      appendLiquidGlassLens(filter, dataUrl, w, h, glassDisplacementScale(level));
+      return fid;
+    } catch { return null; }
+  }
+
   function shapeGeometryChild(element) {
     return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
   }
@@ -858,7 +953,17 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const child = shapeGeometryChild(element);
     if (!child) throw { code: "shape-fill-not-supported", message: "This shape has no paintable geometry" };
     rememberOriginalFill(element, child);
-    child.setAttribute("fill", color);
+    if (typeof color === "string" && /^\\s*var\\(/.test(color)) {
+      // var() only resolves in style context, never in presentation
+      // attributes — paint token links through the child's inline style and
+      // keep the previous solid fill as the var() fallback.
+      const fallback = child.getAttribute("fill") || element.getAttribute("data-design-tool-original-fill");
+      const linked = fallback ? color.replace(/\\)\\s*$/, ", " + fallback + ")") : color;
+      child.style.setProperty("fill", linked, "important");
+    } else {
+      child.style.removeProperty("fill");
+      child.setAttribute("fill", color);
+    }
     element.setAttribute("data-design-tool-fill", color);
   }
 
@@ -919,34 +1024,17 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const bg = glassTintBackground(base, level);
     const shadow = GLASS_LIQUID_SHADOW;
 
-    // Try to add edge refraction via SVG displacement (Chromium only, rectangle/ellipse)
+    // Try to add edge refraction via SVG displacement (Chromium only,
+    // rectangle/ellipse). The cached lens keeps level ticks cheap — only the
+    // displacement scale retunes, the map is not re-rasterized.
     let backdropValue = glassFallbackBackdropFilter(level);
     let hadRefraction = false;
-    if ((kind === "rectangle" || kind === "ellipse") && isBackdropUrlSupported()) {
-      try {
-        const dataUrl = buildLiquidDisplacementDataUrl(w, h, level, radius, kind);
-        if (dataUrl) {
-          const fid = liquidFilterId(rawId);
-          let container = ensureLiquidFilterContainer();
-          let filter = container.querySelector("filter[id='" + fid + "']");
-          if (!filter && typeof CSS !== "undefined" && CSS.escape) { try { filter = container.querySelector("#" + CSS.escape(fid)); } catch {} }
-          if (!filter) {
-            filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
-            filter.setAttribute("id", fid);
-            filter.setAttribute("x", "0");
-            filter.setAttribute("y", "0");
-            filter.setAttribute("width", "100%");
-            filter.setAttribute("height", "100%");
-            filter.setAttribute("color-interpolation-filters", "sRGB");
-            container.appendChild(filter);
-          } else {
-            while (filter.firstChild) filter.removeChild(filter.firstChild);
-          }
-          appendLiquidGlassLens(filter, dataUrl, w, h, glassDisplacementScale(level));
-          backdropValue = glassBackdropFilterWithRefraction(level, fid);
-          hadRefraction = true;
-        }
-      } catch {}
+    if (kind === "rectangle" || kind === "ellipse") {
+      const fid = ensureLiquidLens(rawId, w, h, level, radius, kind);
+      if (fid) {
+        backdropValue = glassBackdropFilterWithRefraction(level, fid);
+        hadRefraction = true;
+      }
     }
     // Fallback: legacy gradient cleanup if refraction not used
     if (!hadRefraction) {
@@ -1033,31 +1121,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     } catch {}
     let backdropValue = glassFallbackBackdropFilter(level);
     const rawIdS = element.getAttribute("data-design-element-id") || element.id || "surface";
-    if (isBackdropUrlSupported()) {
-      try {
-        const dataUrl = buildLiquidDisplacementDataUrl(w, h, level, radius, "rectangle");
-        if (dataUrl) {
-          const fid = liquidFilterId(rawIdS + "-surface");
-          let container = ensureLiquidFilterContainer();
-          let filter = container.querySelector("filter[id='" + fid + "']");
-          if (!filter && typeof CSS !== "undefined" && CSS.escape) { try { filter = container.querySelector("#" + CSS.escape(fid)); } catch {} }
-          if (!filter) {
-            filter = document.createElementNS("http://www.w3.org/2000/svg", "filter");
-            filter.setAttribute("id", fid);
-            filter.setAttribute("x", "0");
-            filter.setAttribute("y", "0");
-            filter.setAttribute("width", "100%");
-            filter.setAttribute("height", "100%");
-            filter.setAttribute("color-interpolation-filters", "sRGB");
-            container.appendChild(filter);
-          } else {
-            while (filter.firstChild) filter.removeChild(filter.firstChild);
-          }
-          appendLiquidGlassLens(filter, dataUrl, w, h, glassDisplacementScale(level));
-          backdropValue = glassBackdropFilterWithRefraction(level, fid);
-        }
-      } catch {}
-    }
+    const fid = ensureLiquidLens(rawIdS + "-surface", w, h, level, radius, "rectangle");
+    if (fid) backdropValue = glassBackdropFilterWithRefraction(level, fid);
 
     element.style.setProperty("backdrop-filter", backdropValue, "important");
     try { element.style.setProperty("-webkit-backdrop-filter", backdropValue, "important"); } catch {}
@@ -1461,6 +1526,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         // the injected wireframe theme's blanket resets (transform, shadow…).
         element.style.setProperty(command.property, command.value, "important");
       }
+      // Foreign surfaces frosted through inline styles carry no glass
+      // attribute; this sticky marker opts them into the motion stylesheet so
+      // backdrop/background edits tween like created elements do.
+      if (command.property === "backdrop-filter" && command.value) {
+        element.setAttribute("data-design-tool-backdrop", "1");
+      }
       if (command.property === "width" || command.property === "height") {
         // Outer SVG size changed without touching the viewBox/inner geometry,
         // so with the default preserveAspectRatio the inner border letterboxes
@@ -1718,6 +1789,56 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         undo: { command: "set-shape-glass", targetId: command.targetId, level: previousLevel },
       };
     }
+    if (command.command === "inject-font-faces") {
+      // Document-scoped: appends Canvas-bundled @font-face CSS (data-URI woff2)
+      // so fonts picked after the frame rendered resolve inside this opaque
+      // origin, which cannot fetch app-origin font files.
+      if (!isSafeString(command.css, 4000000) || command.css.length === 0 ||
+        /<\\/style|javascript\\s*:|expression\\s*\\(|@import/i.test(command.css)) {
+        throw { code: "invalid-font-css", message: "The font face payload is invalid" };
+      }
+      const existing = document.querySelectorAll("style[" + FONT_FACES_ATTR + "]");
+      let duplicate = false;
+      for (let i = 0; i < existing.length; i++) {
+        if (existing[i].textContent === command.css) duplicate = true;
+      }
+      if (!duplicate) {
+        const style = document.createElement("style");
+        style.setAttribute(FONT_FACES_ATTR, "runtime");
+        style.textContent = command.css;
+        (document.head || document.documentElement).appendChild(style);
+      }
+      return {
+        kind: "command",
+        command: "inject-font-faces",
+        targetId: "document",
+        injected: !duplicate,
+      };
+    }
+    if (command.command === "set-token-theme") {
+      // Swaps the Canvas-owned token theme block in place so variable values
+      // update without an iframe reload — live inline styles (var() links)
+      // survive a mode switch, which is the whole point of token links.
+      if (typeof command.css !== "string" || command.css.length > 262144 ||
+        /<\\/style|javascript\\s*:|expression\\s*\\(|@import/i.test(command.css)) {
+        throw { code: "invalid-theme-css", message: "The token theme payload is invalid" };
+      }
+      // Split literal: the serialized runtime is embedded in the document and
+      // must not contain the reserved marker verbatim (tests count it).
+      const TOKEN_THEME_ATTR = "data-design-tool-" + "token-theme";
+      let style = document.querySelector("style[" + TOKEN_THEME_ATTR + "]");
+      if (command.css.length === 0) {
+        if (style) style.remove();
+        return { kind: "command", command: "set-token-theme", targetId: "document", applied: false };
+      }
+      if (!style) {
+        style = document.createElement("style");
+        style.setAttribute(TOKEN_THEME_ATTR, "1");
+        (document.head || document.documentElement).appendChild(style);
+      }
+      style.textContent = command.css;
+      return { kind: "command", command: "set-token-theme", targetId: "document", applied: true };
+    }
     if (command.command === "pick-element") {
       if (!isPoint(command.point) || typeof command.shiftKey !== "boolean") {
         throw { code: "invalid-pick", message: "The pick request is invalid" };
@@ -1767,7 +1888,34 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
   }
 
+  /**
+   * Short ease-out tweens on the surface/geometry properties the panel drives.
+   * Slider drags retarget them every frame so the shape reads as one fluid
+   * transform, and one-shot applies animate instead of snapping. Layout
+   * properties (left/top/width/height/transform) stay instant on purpose so
+   * move and resize gestures never trail the pointer.
+   */
+  function installMotionStyles() {
+    try {
+      if (document.querySelector("style[data-design-tool-motion]")) return;
+      const style = document.createElement("style");
+      style.setAttribute("data-design-tool-motion", "1");
+      style.textContent =
+        "[data-design-tool-created],[data-design-tool-glass],[data-design-tool-backdrop]{" +
+        "transition:border-radius .16s cubic-bezier(.2,.8,.2,1)," +
+        "background-color .16s cubic-bezier(.2,.8,.2,1)," +
+        "background-image .16s cubic-bezier(.2,.8,.2,1)," +
+        "box-shadow .16s cubic-bezier(.2,.8,.2,1)," +
+        "backdrop-filter .16s cubic-bezier(.2,.8,.2,1)," +
+        "-webkit-backdrop-filter .16s cubic-bezier(.2,.8,.2,1)}" +
+        "[data-design-tool-created]>rect,[data-design-tool-created]>ellipse{" +
+        "transition:rx .16s cubic-bezier(.2,.8,.2,1),ry .16s cubic-bezier(.2,.8,.2,1)}";
+      (document.head || document.documentElement || document.body).appendChild(style);
+    } catch {}
+  }
+
   function install() {
+    installMotionStyles();
     // Migrate legacy shapes: outline should scale with shape (remove non-scaling-stroke)
     try {
       document.querySelectorAll("[data-design-tool-created='true']").forEach(function(el) {

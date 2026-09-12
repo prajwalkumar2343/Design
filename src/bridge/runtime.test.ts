@@ -56,6 +56,18 @@ describe("createBridgeRuntimeSource", () => {
     expect(source).toContain("inset 0 1.5px 0.5px");
   });
 
+  it("paints var() shape fills through style, not the fill attribute", () => {
+    const source = createBridgeRuntimeSource({
+      parentOrigin: "http://localhost:5173",
+      channel: "test-channel",
+      frameId: "frame-1",
+    });
+    // var() never resolves in a presentation attribute — token links on shape
+    // fills go through the geometry child's inline style with a fallback.
+    expect(source).toContain('child.style.setProperty("fill", linked, "important")');
+    expect(source).toContain('child.style.removeProperty("fill")');
+  });
+
   it("keeps the fill tint when glass is re-applied over a cleared fill", () => {
     const source = createBridgeRuntimeSource({
       parentOrigin: "http://localhost:5173",

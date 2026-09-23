@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronRight, Code2, Download, FileCode2, Globe, Layers, Smartphone, Upload } from "lucide-react";
+import { ArrowUpRight, ChevronRight, Code2, Component, Download, FileCode2, Globe, Layers, Smartphone, Upload } from "lucide-react";
 import { useRef, type ChangeEvent } from "react";
 import type { CanvasCategory } from "../persistence/local-projects";
 
@@ -12,6 +12,7 @@ interface WorkspaceHeaderProps {
   onExport?: () => void;
   onExportFigma?: () => void;
   onExportCode?: () => void;
+  onExportReact?: () => void;
   persistenceFeedback?: { kind: "success" | "error"; message: string } | null;
   onShowLake?: () => void;
   lakeCount?: number;
@@ -30,6 +31,7 @@ export function WorkspaceHeader({
   onExport,
   onExportFigma,
   onExportCode,
+  onExportReact,
   persistenceFeedback,
   onShowLake,
   lakeCount,
@@ -117,6 +119,9 @@ export function WorkspaceHeader({
             <button className="workspace-file-button" data-testid="export-figma-button" onClick={onExportFigma} type="button" title="Download a Figma file">Export .fig</button>
             {onExportCode ? <button className="workspace-file-button workspace-export-code-button" data-testid="export-code-button" onClick={onExportCode} type="button" title="Download the working HTML code for every page on this canvas">
               <Code2 size={14} aria-hidden="true" /><span>Export Code</span><ArrowUpRight size={13} aria-hidden="true" />
+            </button> : null}
+            {onExportReact ? <button className="workspace-file-button workspace-export-code-button" data-testid="export-react-button" onClick={onExportReact} type="button" title="Download a runnable React project for every page on this canvas">
+              <Component size={14} aria-hidden="true" /><span>Export React</span><ArrowUpRight size={13} aria-hidden="true" />
             </button> : null}
           </> : null}
         </div>

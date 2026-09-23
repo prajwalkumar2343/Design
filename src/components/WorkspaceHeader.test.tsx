@@ -21,19 +21,23 @@ describe("WorkspaceHeader", () => {
       onExport: vi.fn(),
       onExportFigma: vi.fn(),
       onExportCode: vi.fn(),
+      onExportReact: vi.fn(),
     });
     fireEvent.click(screen.getByTestId("export-project-button"));
     fireEvent.click(screen.getByTestId("export-figma-button"));
     fireEvent.click(screen.getByTestId("export-code-button"));
+    fireEvent.click(screen.getByTestId("export-react-button"));
     expect(props.onExport).toHaveBeenCalled();
     expect(props.onExportFigma).toHaveBeenCalled();
     expect(props.onExportCode).toHaveBeenCalled();
+    expect(props.onExportReact).toHaveBeenCalled();
   });
 
   it("gates Export Code on its own callback even when canExport is true", () => {
     renderHeader({ canExport: true, onExport: vi.fn(), onExportFigma: vi.fn() });
     expect(screen.getByTestId("export-project-button")).toBeTruthy();
     expect(screen.queryByTestId("export-code-button")).toBeNull();
+    expect(screen.queryByTestId("export-react-button")).toBeNull();
   });
 
   it("forwards the chosen project file and resets the input for re-picks", () => {

@@ -135,7 +135,7 @@ test.describe("WireCanvas project persistence", () => {
     await page.getByTestId("add-mobile-frame").click();
     const frame = page.locator('[data-frame-id]').filter({ has: page.locator("iframe") }).last();
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
     if (!box) throw new Error("The active frame creation layer is unavailable");
@@ -180,7 +180,7 @@ test.describe("WireCanvas project persistence", () => {
     await page.getByTestId("add-mobile-frame").click();
     const frame = page.locator('[data-frame-id]').filter({ has: page.locator("iframe") }).last();
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
     if (!box) throw new Error("The active frame creation layer is unavailable");

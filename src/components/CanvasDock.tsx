@@ -7,20 +7,17 @@ import {
   Frame,
   Hand,
   Image,
-  Maximize2,
   MessageCircle,
   Minus,
   Monitor,
   MousePointer2,
-  Plus,
-  Redo2,
+  Pentagon,
   Smartphone,
   Sparkles,
   Square,
   Star,
   Tablet,
   Type,
-  Undo2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getToolsForCanvasCategory, isToolAvailable, normalizeActiveTool, SHAPE_VARIANTS, type ShapeVariantId, type ToolId } from "../editor/tools";
@@ -31,18 +28,12 @@ import type { ShaderId } from "../shaders";
 import { ShaderMenu } from "./ShaderMenu";
 
 interface CanvasDockProps {
-  zoom: number;
   activeTool: ActiveTool;
   temporaryHand: boolean;
   isFrameMenuOpen: boolean;
   isShaderMenuOpen: boolean;
-  canUndo: boolean;
-  canRedo: boolean;
   onAddFrame: (preset: FramePreset) => void;
   onAddShader: (shaderId: ShaderId) => void;
-  onFit: () => void;
-  onZoomIn: () => void;
-  onZoomOut: () => void;
   onSelectTool: (tool: ToolId) => void;
   activeShape: ShapeVariantId;
   onSelectShape: (shape: ShapeVariantId) => void;
@@ -50,11 +41,18 @@ interface CanvasDockProps {
   onCloseFrameMenu: () => void;
   onToggleShaderMenu: () => void;
   onCloseShaderMenu: () => void;
-  onUndo: () => void;
-  onRedo: () => void;
   /** Active canvas category drives frame preset filtering (website: all, mobile: no desktop) */
   canvasCategory?: CanvasCategory;
 }
+
+const shapeIcons: Record<ShapeVariantId, typeof Square> = {
+  rectangle: Square,
+  ellipse: Circle,
+  line: Minus,
+  arrow: ArrowUpRight,
+  polygon: Pentagon,
+  star: Star,
+};
 
 const presetIcons: Record<FramePreset["category"], typeof Smartphone> = {
   desktop: Monitor,
@@ -74,18 +72,12 @@ const toolIcons = {
 };
 
 export function CanvasDock({
-  zoom,
   activeTool,
   temporaryHand,
   isFrameMenuOpen,
   isShaderMenuOpen,
-  canUndo,
-  canRedo,
   onAddFrame,
   onAddShader,
-  onFit,
-  onZoomIn,
-  onZoomOut,
   onSelectTool,
   activeShape,
   onSelectShape,
@@ -93,8 +85,6 @@ export function CanvasDock({
   onCloseFrameMenu,
   onToggleShaderMenu,
   onCloseShaderMenu,
-  onUndo,
-  onRedo,
   canvasCategory = "website",
 }: CanvasDockProps) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -103,6 +93,7 @@ export function CanvasDock({
   const [isShapeMenuOpen, setIsShapeMenuOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState<DeviceCategory | null>(null);
   const activeToolId = normalizeActiveTool(activeTool);
+  const ActiveShapeIcon = shapeIcons[activeShape] ?? Square;
   const presetSections = useMemo(
     () => getFramePresetSectionsForCanvasCategory(canvasCategory),
     [canvasCategory],
@@ -158,7 +149,7 @@ export function CanvasDock({
   return (
     <div className="canvas-dock" data-canvas-control aria-label="Canvas controls">
       <div className="tool-group" role="toolbar" aria-label="Design tools">
-        {visibleTools.filter((tool) => tool.id !== "frame" && tool.id !== "shader").map((tool) => {
+        {visibleTools.filter((tool) => tool.id !== "frame" && tool.id !== "shader" && tool.id !== "rectangle").map((tool) => {
           const Icon = toolIcons[tool.icon];
           const isActive =
             tool.id === "hand"
@@ -195,32 +186,36 @@ export function CanvasDock({
               <div><strong>Shape tools</strong><span>Choose a vector primitive</span></div>
               <kbd>R</kbd>
             </div>
-            {SHAPE_VARIANTS.map((shape) => (
-              <button
-                className={`shape-menu-item${activeShape === shape.id ? " is-active" : ""}`}
-                data-testid={`shape-menu-${shape.id}`}
-                key={shape.id}
-                onClick={() => { onSelectShape(shape.id); setIsShapeMenuOpen(false); }}
-                role="menuitem"
-                type="button"
-              >
-                {shape.id === "ellipse" ? <Circle size={14} /> : shape.id === "line" ? <Minus size={14} /> : shape.id === "arrow" ? <ArrowUpRight size={14} /> : shape.id === "star" ? <Star size={14} /> : <Square size={14} />}
-                <span>{shape.label}</span>
-              </button>
-            ))}
+            {SHAPE_VARIANTS.map((shape) => {
+              const ShapeIcon = shapeIcons[shape.id] ?? Square;
+              return (
+                <button
+                  className={`shape-menu-item${activeShape === shape.id ? " is-active" : ""}`}
+                  data-testid={`shape-menu-${shape.id}`}
+                  key={shape.id}
+                  onClick={() => { onSelectShape(shape.id); setIsShapeMenuOpen(false); }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <ShapeIcon size={14} />
+                  <span>{shape.label}</span>
+                </button>
+              );
+            })}
           </div>
         ) : null}
         <button
           aria-expanded={isShapeMenuOpen}
           aria-haspopup="menu"
           aria-label="Shape tools"
-          className={`tool-button shape-menu-button${isShapeMenuOpen ? " is-active" : ""}`}
+          aria-pressed={activeToolId === "rectangle"}
+          className={`tool-button shape-menu-button${isShapeMenuOpen || activeToolId === "rectangle" ? " is-active" : ""}`}
           data-testid="shape-menu-button"
           onClick={() => setIsShapeMenuOpen((current) => !current)}
           title="Shape tools"
           type="button"
         >
-          <Square size={14} strokeWidth={1.8} />
+          <ActiveShapeIcon size={14} strokeWidth={1.8} />
           <ChevronDown size={10} strokeWidth={1.8} />
         </button>
       </div>
@@ -348,49 +343,6 @@ export function CanvasDock({
           <ChevronDown size={10} strokeWidth={1.8} aria-hidden="true" />
         </button>
       </div>
-
-      <span className="dock-divider" />
-
-      <button
-        aria-label="Undo"
-        className="dock-icon"
-        data-testid="undo-button"
-        disabled={!canUndo}
-        onClick={onUndo}
-        title="Undo · ⌘/Ctrl Z"
-        type="button"
-      >
-        <Undo2 size={15} strokeWidth={1.8} />
-      </button>
-      <button
-        aria-label="Redo"
-        className="dock-icon"
-        data-testid="redo-button"
-        disabled={!canRedo}
-        onClick={onRedo}
-        title="Redo · ⇧⌘/Ctrl Z"
-        type="button"
-      >
-        <Redo2 size={15} strokeWidth={1.8} />
-      </button>
-
-      <span className="dock-divider" />
-
-      <div className="zoom-control" aria-label="Zoom controls">
-        <button aria-label="Zoom out" onClick={onZoomOut} type="button">
-          <Minus size={15} strokeWidth={1.8} />
-        </button>
-        <button className="zoom-value" aria-label="Fit all frames" onClick={onFit} type="button">
-          {Math.round(zoom * 100)}%
-        </button>
-        <button aria-label="Zoom in" onClick={onZoomIn} type="button">
-          <Plus size={15} strokeWidth={1.8} />
-        </button>
-      </div>
-
-      <button className="dock-icon" aria-label="Fit all frames" onClick={onFit} type="button">
-        <Maximize2 size={15} strokeWidth={1.7} />
-      </button>
     </div>
   );
 }

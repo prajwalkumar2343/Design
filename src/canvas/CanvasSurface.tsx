@@ -61,6 +61,7 @@ import {
 } from "../editor/model";
 import {
   clampGlassLevel,
+  clampShapeRadius,
   glassFallbackBackdropFilter,
   glassLevelFromAttribute,
   glassLiquidShadow,
@@ -86,7 +87,17 @@ import { fontFacesCssForFamilyValue } from "../fonts";
 import { BriefFrameView } from "../frame/BriefFrameView";
 import { FrameView } from "../frame/FrameView";
 import { createFrameFromPreset, type FramePreset } from "../frame/presets";
-import { normalizedBounds, shapeDragPoints, shapeLabel } from "../frame/shape-geometry";
+import {
+  bridgeNodeIdForElement,
+  buildFreeformDocument,
+  buildFreeformImageMarkup,
+  buildFreeformShapeMarkup,
+  buildFreeformTextMarkup,
+  FREEFORM_FRAME_PAD,
+  FREEFORM_TEXT_HEADROOM,
+  FREEFORM_TEXT_MIN_HEIGHT,
+} from "../frame/freeform";
+import { normalizedBounds, shapeDragPoints, shapeLabel, ShapePreview } from "../frame/shape-geometry";
 import { useBrainstormSessionController } from "./brainstorm-session-controller";
 import { ProjectLake } from "./ProjectLake";
 import {
@@ -109,6 +120,7 @@ import {
   readFileBytes,
   serializeFigmaProject,
   serializeWireCanvasProject,
+  serializeWireCanvasProjectCompact,
   WIRECANVAS_FILE_MIME_TYPE,
   WIRECANVAS_FILE_NAME,
   WireCanvasCodecError,
@@ -129,7 +141,9 @@ import {
   getBriefPresetForKind,
   getCanvasCategoryForKind,
   getLocalProjectSummaries,
+  hasLocalProject,
   hydrateInitialState,
+  loadEditorStateForProjectDetailed,
   loadProjectIndex,
   renameLocalProject,
   saveProjectIndex,
@@ -151,8 +165,11 @@ import {
 import {
   createCanvasShaderElement,
   detectPaperShaderSupport,
+  maxShaderElementRadius,
+  SHADER_ELEMENT_DEFAULT_RADIUS,
   type CanvasShaderElement,
   type ShaderId,
+  type ShaderParams,
 } from "../shaders";
 import {
   buildProjectUrl,
@@ -171,7 +188,6 @@ import {
   type OverlayBridgeTargetState,
 } from "../overlay/useNodeOverlayGestures";
 import {
-  cameraAtZoomProgress,
   cameraTransform,
   fitRect,
   panCamera,
@@ -179,7 +195,6 @@ import {
   screenToWorld,
   worldToScreen,
   zoomCameraAtPoint,
-  ZOOM_SMOOTH_STEPS,
 } from "./camera";
 import type { Camera, CanvasFrame, Point, Rect, Size } from "./types";
 
@@ -245,7 +260,10 @@ const worldStyle: CSSProperties = {
 type PointerOperation =
   | { type: "pan"; pointerId: number; last: Point }
   | { type: "move-frame"; pointerId: number; last: Point; frameId: string; start: Point; frameStart: Point }
-  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string; start: Point; briefStart: Point };
+  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string; start: Point; briefStart: Point }
+  // A creation-tool drag on empty canvas. `start`/`last` are world-space
+  // points; on release it mints a chromeless freeform frame holding the shape.
+  | { type: "canvas-create"; pointerId: number; tool: "rectangle" | "text" | "image"; start: Point; last: Point };
 
 type CreationOperation =
   | { type: "box"; tool: "rectangle" | "text" | "image"; frameId: string; pointerId: number; start: Point; last: Point };
@@ -268,6 +286,11 @@ function createElementId(prefix: string): string {
 
 function isCreationTool(tool: ToolId): boolean {
   return tool === "rectangle" || tool === "text" || tool === "image" || tool === "comment";
+}
+
+/** Creation tools that can mint a freeform frame when dragged on empty canvas. */
+function isCanvasCreationTool(tool: ToolId): tool is "rectangle" | "text" | "image" {
+  return tool === "rectangle" || tool === "text" || tool === "image";
 }
 
 /**
@@ -458,11 +481,6 @@ export function CanvasSurface({
     () => briefFrame ? [...frames, briefFrame] : frames,
     [briefFrame, frames],
   );
-  const isEmptyState = frames.length === 0
-    && briefFrame === null
-    && Object.keys(editorState.documents).length === 0
-    && Object.keys(editorState.pages).length === 0;
-  const showDesignChrome = !isEmptyState;
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 });
   const surfaceRectRef = useRef<DOMRect | null>(null);
   const updateSurfaceRect = useCallback(() => {
@@ -481,7 +499,15 @@ export function CanvasSurface({
   const pointerRef = useRef<PointerOperation | null>(null);
   const creationRef = useRef<CreationOperation | null>(null);
   const pendingImageRef = useRef<PendingImagePlacement | null>(null);
+  const pendingCanvasImageRef = useRef<Rect | null>(null);
+  // A text element baked into a fresh freeform frame gets its caret once the
+  // frame's bridge reports its first snapshot.
+  const pendingFreeformTextRef = useRef<{ frameId: string; targetId: string } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  // Set while the file picker is open so its dismissal can drop the pending
+  // placement — pendingImageRef can also hold a pre-pick in-frame drag, which
+  // must not be cleared by an unrelated window refocus.
+  const imagePickerOpenRef = useRef(false);
   const clipboardTargetRef = useRef<{ frameId: string; nodeId: string } | null>(null);
   const frameTextEditRef = useRef<Set<string>>(new Set());
   const spacePressedRef = useRef(false);
@@ -528,11 +554,20 @@ export function CanvasSurface({
   const [isShaderMenuOpen, setIsShaderMenuOpen] = useState(false);
   const [shaderElements, setShaderElements] = useState<CanvasShaderElement[]>([]);
   const [selectedShaderElementId, setSelectedShaderElementId] = useState<string | null>(null);
+  // A canvas holding only shader elements still counts as non-empty — its
+  // chrome (sidebar/dock) is how those shaders get edited.
+  const isEmptyState = frames.length === 0
+    && briefFrame === null
+    && shaderElements.length === 0
+    && Object.keys(editorState.documents).length === 0
+    && Object.keys(editorState.pages).length === 0;
+  const showDesignChrome = !isEmptyState;
   const selectedShaderElementIdRef = useRef<string | null>(null);
   selectedShaderElementIdRef.current = selectedShaderElementId;
   const [activeShape, setActiveShape] = useState<ShapeVariantId>("rectangle");
   const [shapeRadius, setShapeRadius] = useState(0);
   const [creationError, setCreationError] = useState<string | null>(null);
+  const [canvasCreationPreview, setCanvasCreationPreview] = useState<{ start: Point; end: Point } | null>(null);
   const [pasteFeedback, setPasteFeedback] = useState<{
     kind: "success" | "error";
     message: string;
@@ -576,8 +611,10 @@ export function CanvasSurface({
     if (initialHydrationRef.current) return initialHydrationRef.current.notFound;
     const id = getProjectIdFromUrl();
     if (!id) return false;
-    return !loadProjectIndex().some((p) => p.id === id);
+    return !hasLocalProject(id);
   });
+  const isHomeRoute = shouldUseLocalMemory && routeProjectId === null && !routeNotFound;
+  const isProjectRoute = shouldUseLocalMemory && routeProjectId !== null && !routeNotFound;
   const pendingKindRef = useRef<ProjectKind | null>(null);
   const [pendingCanvasCategory, setPendingCanvasCategory] = useState<CanvasCategory | null>(null);
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -711,7 +748,7 @@ export function CanvasSurface({
         createdId = id;
         const name = `${PROJECT_KINDS.find((k) => k.id === kind)?.label ?? kind} · ${new Date().toLocaleDateString()}`;
         const blank = createEmptyEditorState();
-        const serialized = serializeWireCanvasProject(blank);
+        const serialized = serializeWireCanvasProjectCompact(blank);
         const record = {
           id,
           name: name.slice(0, 80),
@@ -750,7 +787,7 @@ export function CanvasSurface({
           setTimeout(() => {
             try {
               const state = editorStore.getState();
-              const serialized = serializeWireCanvasProject(state);
+              const serialized = serializeWireCanvasProjectCompact(state);
               const idxNow = loadProjectIndex();
               const recNow = idxNow.find((p) => p.id === targetId);
               if (recNow) {
@@ -781,7 +818,16 @@ export function CanvasSurface({
         return;
       }
       try {
-        const next = parseWireCanvasProject(rec.data);
+        const loaded = loadEditorStateForProjectDetailed(id);
+        if (!loaded) {
+          showPersistenceFeedback({
+            kind: "error",
+            message: `Could not open “${rec.name}” — its saved data is damaged beyond repair.`,
+          });
+          refreshLocalProjects();
+          return;
+        }
+        const next = loaded.state;
         clearComments();
         setShaderElements([]);
         setSelectedShaderElementId(null);
@@ -801,7 +847,14 @@ export function CanvasSurface({
         refreshLocalProjects();
         setPersistenceVersion((v) => v + 1);
         setShowLakeOverlay(false);
-        showPersistenceFeedback({ kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` });
+        showPersistenceFeedback(
+          loaded.source === "primary"
+            ? { kind: "success", message: `Opened “${rec.name}”. Continuing where you left off.` }
+            : {
+                kind: "success",
+                message: `Opened “${rec.name}” — the saved file was damaged and has been repaired automatically.`,
+              },
+        );
         setTimeout(() => {
           const state = editorStore.getState();
           const rects: Array<{ x: number; y: number; width: number; height: number }> = [
@@ -1037,7 +1090,7 @@ export function CanvasSurface({
         showPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
         if (shouldUseLocalMemory) {
           const state = editorStore.getState();
-          const serialized = serializeWireCanvasProject(state);
+          const serialized = serializeWireCanvasProjectCompact(state);
           const active = getActiveProjectId();
           const idx = loadProjectIndex();
           const existing = active ? idx.find((p) => p.id === active) : undefined;
@@ -1105,7 +1158,7 @@ export function CanvasSurface({
             Object.keys(state.frames).length === 0 &&
             Object.keys(state.pages).length === 0;
           if (isEmpty) return;
-          const serialized = serializeWireCanvasProject(state);
+          const serialized = serializeWireCanvasProjectCompact(state);
           if (serialized === lastSerializedRef.current) return;
           lastSerializedRef.current = serialized;
           const active = getActiveProjectId();
@@ -1186,11 +1239,12 @@ export function CanvasSurface({
       const nextId = getProjectIdFromUrl();
       setRouteProjectId(nextId);
       if (nextId) {
-        const state = loadProjectIndex().find((p) => p.id === nextId);
-        if (state) {
+        const rec = loadProjectIndex().find((p) => p.id === nextId);
+        const loaded = loadEditorStateForProjectDetailed(nextId);
+        if (rec && loaded) {
           setRouteNotFound(false);
           try {
-            const next = parseWireCanvasProject(state.data);
+            const next = loaded.state;
             clearComments();
             setShaderElements([]);
             setSelectedShaderElementId(null);
@@ -1199,7 +1253,7 @@ export function CanvasSurface({
             snapshotSequenceRef.current.clear();
             setBridgeTargets({});
             setBridgeHierarchies({});
-            editorStore.replaceState(next, { label: `Navigate to ${state.name}` });
+            editorStore.replaceState(next, { label: `Navigate to ${rec.name}` });
             setActiveProjectId(nextId);
             setActiveProjectIdState(nextId);
             setPersistenceVersion((v) => v + 1);
@@ -1265,13 +1319,28 @@ export function CanvasSurface({
 
   const openImagePicker = useCallback(() => {
     const selectedFrameId = editorStore.getState().selection.primaryFrameId;
-    if (!pendingImageRef.current && selectedFrameId) {
-      pendingImageRef.current = {
-        frameId: selectedFrameId,
-        bounds: { x: 48, y: 48, width: 160, height: 120 },
-      };
+    if (!pendingImageRef.current && !pendingCanvasImageRef.current) {
+      if (selectedFrameId) {
+        pendingImageRef.current = {
+          frameId: selectedFrameId,
+          bounds: { x: 48, y: 48, width: 160, height: 120 },
+        };
+      } else {
+        // No frame needed: the image lands as a freeform element at the
+        // current viewport center.
+        const center = screenToWorld(
+          { x: viewport.width / 2, y: viewport.height / 2 },
+          cameraRef.current,
+        );
+        pendingCanvasImageRef.current = {
+          x: center.x - 80,
+          y: center.y - 60,
+          width: 160,
+          height: 120,
+        };
+      }
     }
-    if (!pendingImageRef.current) {
+    if (!pendingImageRef.current && !pendingCanvasImageRef.current) {
       setCreationError("Select a live frame before choosing an image.");
       return;
     }
@@ -1281,8 +1350,9 @@ export function CanvasSurface({
       return;
     }
     setCreationError(null);
+    imagePickerOpenRef.current = true;
     input.click();
-  }, [editorStore]);
+  }, [editorStore, viewport]);
 
   const beginCreationPointer = useCallback((frameId: string, point: Point, pointerId: number) => {
     const tool = activeToolRef.current;
@@ -1318,7 +1388,9 @@ export function CanvasSurface({
     }
     creationRef.current = null;
     setInteractionMode("idle");
-    const bounds = normalizedBounds(operation.start, point);
+    // The committed bounds use the same 1px floor as the drag preview so the
+    // created shape lands exactly where the preview left it — no snap.
+    const bounds = normalizedBounds(operation.start, point, 1);
     // A sub-threshold "drag" is a click — it must not mint a degenerate shape.
     const dragDistance = Math.max(Math.abs(point.x - operation.start.x), Math.abs(point.y - operation.start.y));
     if (operation.tool === "image") {
@@ -1332,15 +1404,18 @@ export function CanvasSurface({
     if (operation.tool !== "text" && dragDistance < MIN_SHAPE_DRAG) return;
     const shape = activeShapeRef.current;
     const kind: BridgeCreationKind = operation.tool === "text" ? "text" : shape;
-    void createLiveElementRef.current(frameId, {
+    // Returned to the caller so the drag preview can stay up until the bridge
+    // acks the new element — releasing the pointer then swaps preview for the
+    // real shape with no blank frame in between.
+    return createLiveElementRef.current(frameId, {
       command: "create-element",
       elementId: createElementId(kind),
       kind,
       bounds: kind === "text" ? textPlacementBounds(bounds) : bounds,
-      ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapeDragPoints(shape, operation.start, point) }),
+      ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapeDragPoints(shape, operation.start, point, 1) }),
       fill: kind === "text" ? "#171717" : "#d9d9d9",
       stroke: kind === "text" ? "#171717" : "#222222",
-      strokeWidth: 2,
+      strokeWidth: kind === "line" || kind === "arrow" ? 2 : 0,
       radius: shapeRadiusRef.current,
     }, kind === "text" ? "Create text" : `Create ${shape}`);
   }, [openImagePicker]);
@@ -1391,7 +1466,7 @@ export function CanvasSurface({
       if (message.event === "pointerup" && creationRef.current?.type === "box" && creationRef.current.frameId === frameId) {
         const operation = creationRef.current;
         creationRef.current = null;
-        const bounds = normalizedBounds(operation.start, message.point);
+        const bounds = normalizedBounds(operation.start, message.point, 1);
         // A sub-threshold "drag" is a click — it must not mint a degenerate shape.
         const dragDistance = Math.max(Math.abs(message.point.x - operation.start.x), Math.abs(message.point.y - operation.start.y));
         if (operation.tool === "image") {
@@ -1403,10 +1478,10 @@ export function CanvasSurface({
             elementId: createElementId(kind),
             kind,
             bounds: kind === "text" ? textPlacementBounds(bounds) : bounds,
-            ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapeDragPoints(currentShape, operation.start, message.point) }),
+            ...(kind === "text" ? { text: "Type to edit", editable: true } : { points: shapeDragPoints(currentShape, operation.start, message.point, 1) }),
             fill: kind === "text" ? "#171717" : "#d9d9d9",
             stroke: kind === "text" ? "#171717" : "#222222",
-            strokeWidth: 2,
+            strokeWidth: kind === "line" || kind === "arrow" ? 2 : 0,
             radius: shapeRadiusRef.current,
           };
           void createLiveElementRef.current(frameId, command, kind === "text" ? "Create text" : `Create ${currentShape}`);
@@ -1790,6 +1865,16 @@ export function CanvasSurface({
           },
         }));
       }
+      // A text element baked into a fresh freeform frame enters editing as
+      // soon as the bridge can see it — same as a bridge-created text layer.
+      const pendingText = pendingFreeformTextRef.current;
+      if (pendingText && pendingText.frameId === frameId
+        && snapshot.nodes.some((node) => node.elementId === pendingText.targetId)) {
+        pendingFreeformTextRef.current = null;
+        void bridgeControllersRef.current.get(frameId)
+          ?.startTextEdit(pendingText.targetId)
+          .catch(() => undefined);
+      }
     },
     [editorStore, snapshotSequenceRef],
   );
@@ -1922,6 +2007,208 @@ export function CanvasSurface({
   }, [bridgeControllersRef, editorStore, refreshBridgeSnapshot]);
   createLiveElementRef.current = createLiveElement;
 
+  const freeformName = useCallback((base: string): string => {
+    const names = new Set(
+      Object.values(editorStore.getState().frames).map((frame) => frame.name),
+    );
+    if (!names.has(base)) return base;
+    let index = 2;
+    while (names.has(`${base} ${index}`)) index += 1;
+    return `${base} ${index}`;
+  }, [editorStore]);
+
+  /**
+   * Drawing on empty canvas mints a chromeless freeform frame whose document
+   * already carries the element markup — identical to a bridge-created
+   * element, minus the wait for a live iframe. The node is upserted and
+   * selected eagerly so layers/selection are correct before the frame's first
+   * snapshot lands (the snapshot then re-parents it under body and attaches
+   * the live bridge target).
+   */
+  const createFreeformElement = useCallback((options: {
+    name: string;
+    markup: string;
+    frameRect: Rect;
+    elementId: string;
+    nodeKind: NodeEntity["kind"];
+    nodeName: string;
+    tagName: string;
+    kindAttr: string;
+  }): { frameId: string; nodeId: string } => {
+    const frameId = createElementId("draw");
+    const documentId = `${frameId}-doc`;
+    const nodeId = bridgeNodeIdForElement(options.elementId);
+    const seed = {
+      id: frameId,
+      name: options.name,
+      documentId,
+      documentName: options.name,
+      pageId: editorStore.getState().activePageId ?? "page-1",
+      x: Math.round(options.frameRect.x),
+      y: Math.round(options.frameRect.y),
+      width: Math.max(1, Math.round(options.frameRect.width)),
+      height: Math.max(1, Math.round(options.frameRect.height)),
+      srcDoc: buildFreeformDocument(options.markup, options.name),
+      background: "transparent",
+      freeform: true,
+    };
+    editorStore.beginTransaction(`Create ${options.name}`);
+    try {
+      editorStore.execute(selectBriefFrameCommand(null), { history: "skip" });
+      editorStore.execute(createFrameCommand(seed), { history: "skip" });
+      editorStore.execute({
+        type: "node/upsert",
+        node: {
+          id: nodeId,
+          documentId,
+          parentId: null,
+          kind: options.nodeKind,
+          name: options.nodeName,
+          tagName: options.tagName,
+          attributes: {
+            "data-design-tool-created": "true",
+            "data-design-tool-kind": options.kindAttr,
+          },
+          childIds: [],
+          frameId,
+        },
+      }, { history: "skip" });
+      editorStore.execute(setSelectionCommand({
+        frameIds: [frameId],
+        nodeIds: [nodeId],
+        primaryFrameId: frameId,
+        primaryNodeId: nodeId,
+      }), { history: "skip" });
+      editorStore.commitTransaction();
+    } catch (error) {
+      if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
+      throw error;
+    }
+    setCreationError(null);
+    return { frameId, nodeId };
+  }, [editorStore]);
+
+  const finishCanvasCreation = useCallback(
+    (operation: Extract<PointerOperation, { type: "canvas-create" }>) => {
+      const { tool, start, last } = operation;
+      // Thresholds are measured in screen px so a click stays a click at any
+      // zoom — the minted element still gets its true world-space size.
+      const dragDistance = Math.max(Math.abs(last.x - start.x), Math.abs(last.y - start.y))
+        * cameraRef.current.zoom;
+      const pad = FREEFORM_FRAME_PAD;
+
+      if (tool === "image") {
+        pendingCanvasImageRef.current = dragDistance >= MIN_SHAPE_DRAG
+          ? normalizedBounds(start, last, 1)
+          : { x: start.x, y: start.y, width: 160, height: 120 };
+        setCreationError(null);
+        imagePickerOpenRef.current = true;
+        imageInputRef.current?.click();
+        return;
+      }
+
+      if (tool === "text") {
+        const bounds = textPlacementBounds(normalizedBounds(start, last, 1));
+        const elementHeight = Math.max(bounds.height, FREEFORM_TEXT_MIN_HEIGHT);
+        const elementId = createElementId("text");
+        const markup = buildFreeformTextMarkup({
+          elementId,
+          bounds: { x: pad, y: pad, width: bounds.width, height: elementHeight },
+          text: "Type to edit",
+        });
+        const created = createFreeformElement({
+          name: freeformName("Text"),
+          markup,
+          frameRect: {
+            x: bounds.x - pad,
+            y: bounds.y - pad,
+            width: bounds.width + pad * 2,
+            height: elementHeight + pad * 2 + FREEFORM_TEXT_HEADROOM,
+          },
+          elementId,
+          nodeKind: "text",
+          nodeName: "Type to edit",
+          tagName: "div",
+          kindAttr: "text",
+        });
+        pendingFreeformTextRef.current = { frameId: created.frameId, targetId: created.nodeId };
+        return;
+      }
+
+      // A sub-threshold "drag" is a click — it must not mint a shape.
+      if (dragDistance < MIN_SHAPE_DRAG) return;
+      const shape = activeShapeRef.current;
+      const bounds = normalizedBounds(start, last, 1);
+      const frameRect = {
+        x: bounds.x - pad,
+        y: bounds.y - pad,
+        width: bounds.width + pad * 2,
+        height: bounds.height + pad * 2,
+      };
+      const elementId = createElementId("shape");
+      const markup = buildFreeformShapeMarkup({
+        elementId,
+        kind: shape,
+        bounds: { x: pad, y: pad, width: bounds.width, height: bounds.height },
+        points: shapeDragPoints(
+          shape,
+          { x: start.x - frameRect.x, y: start.y - frameRect.y },
+          { x: last.x - frameRect.x, y: last.y - frameRect.y },
+          1,
+        ),
+        fill: "#d9d9d9",
+        stroke: "#222222",
+        strokeWidth: shape === "line" || shape === "arrow" ? 2 : 0,
+        radius: shapeRadiusRef.current,
+      });
+      createFreeformElement({
+        name: freeformName(shapeLabel(shape)),
+        markup,
+        frameRect,
+        elementId,
+        nodeKind: "element",
+        nodeName: shape,
+        tagName: "svg",
+        kindAttr: shape,
+      });
+      editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+    },
+    [createFreeformElement, editorStore, freeformName],
+  );
+
+  const placeCanvasImage = useCallback(
+    (rect: Rect, src: string, fileName: string) => {
+      const pad = FREEFORM_FRAME_PAD;
+      const elementId = createElementId("image");
+      const alt = fileName.replace(/\.[^.]+$/, "").slice(0, 120);
+      const markup = buildFreeformImageMarkup({
+        elementId,
+        bounds: { x: pad, y: pad, width: rect.width, height: rect.height },
+        src,
+        alt,
+      });
+      createFreeformElement({
+        name: freeformName(alt || "Image"),
+        markup,
+        frameRect: {
+          x: rect.x - pad,
+          y: rect.y - pad,
+          width: rect.width + pad * 2,
+          height: rect.height + pad * 2,
+        },
+        elementId,
+        nodeKind: "element",
+        nodeName: alt || "Image",
+        tagName: "img",
+        kindAttr: "image",
+      });
+      setCreationError(null);
+      setInteractionMode("idle");
+      editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
+    },
+    [createFreeformElement, editorStore, freeformName],
+  );
+
   const radiusSelection = useMemo(() => {
     const nodeId = editorState.selection.primaryNodeId ?? editorState.selection.nodeIds[0];
     const frameId = editorState.selection.primaryFrameId;
@@ -1971,7 +2258,7 @@ export function CanvasSurface({
   }, [bridgeControllersRef]);
 
   const changeShapeRadius = useCallback((next: number) => {
-    const radius = Math.max(0, Math.min(48, Math.round(next)));
+    const radius = clampShapeRadius(next);
     setShapeRadius(radius);
     const selection = radiusSelectionRef.current;
     if (!selection) return;
@@ -2052,7 +2339,10 @@ export function CanvasSurface({
   const handleImageFile = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     const pendingPlacement = pendingImageRef.current;
+    const pendingCanvasPlacement = pendingCanvasImageRef.current;
     pendingImageRef.current = null;
+    pendingCanvasImageRef.current = null;
+    imagePickerOpenRef.current = false;
     event.target.value = "";
     const fallbackFrameId = editorStore.getState().selection.primaryFrameId;
     const placement = pendingPlacement ?? (fallbackFrameId ? {
@@ -2063,7 +2353,7 @@ export function CanvasSurface({
       setCreationError("No image was selected. Choose a PNG, JPEG, GIF, WebP, or AVIF file.");
       return;
     }
-    if (!placement) {
+    if (!placement && !pendingCanvasPlacement) {
       setCreationError("Select a live frame before placing an image.");
       return;
     }
@@ -2081,6 +2371,11 @@ export function CanvasSurface({
         setCreationError("The image could not be read. Try exporting it as PNG or JPEG and choose it again.");
         return;
       }
+      if (pendingCanvasPlacement) {
+        placeCanvasImage(pendingCanvasPlacement, reader.result, file.name);
+        return;
+      }
+      if (!placement) return;
       void createLiveElementRef.current(placement.frameId, {
         command: "create-element",
         elementId: createElementId("image"),
@@ -2102,7 +2397,32 @@ export function CanvasSurface({
       setCreationError("The image could not be read. Check the file and try again.");
     };
     reader.readAsDataURL(file);
-  }, [editorStore]);
+  }, [editorStore, placeCanvasImage]);
+
+  // Closing the picker without a file abandons the pending placement, so a
+  // later "Choose image" re-derives its target instead of reusing the stale
+  // drag bounds. `cancel` covers modern browsers; the focus fallback covers
+  // the rest — change runs before focus returns, so an empty files list there
+  // means the picker was dismissed.
+  useEffect(() => {
+    const input = imageInputRef.current;
+    if (!input) return;
+    const onPickerDismissed = () => {
+      imagePickerOpenRef.current = false;
+      pendingImageRef.current = null;
+      pendingCanvasImageRef.current = null;
+    };
+    const onWindowFocus = () => {
+      if (!imagePickerOpenRef.current || input.files?.length) return;
+      onPickerDismissed();
+    };
+    input.addEventListener("cancel", onPickerDismissed);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      input.removeEventListener("cancel", onPickerDismissed);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, []);
 
   const duplicateSelectedNode = useCallback(async () => {
     const selection = editorStore.getState().selection;
@@ -2737,6 +3057,12 @@ export function CanvasSurface({
           : "select";
       creationRef.current = null;
       pendingImageRef.current = null;
+      pendingCanvasImageRef.current = null;
+      pendingFreeformTextRef.current = null;
+      if (pointerRef.current?.type === "canvas-create") {
+        pointerRef.current = null;
+        setCanvasCreationPreview(null);
+      }
       setCreationError(null);
       setInteractionMode("idle");
       editorStore.execute(setActiveToolCommand(nextTool), { history: "skip" });
@@ -2781,6 +3107,23 @@ export function CanvasSurface({
     }
   }, [editorStore]);
 
+  // Shader elements live outside the editor selection model — selecting one
+  // clears any node/frame selection so the inspector shows a single subject.
+  const selectShaderElement = useCallback(
+    (elementId: string | null) => {
+      setSelectedShaderElementId(elementId);
+      if (!elementId) return;
+      const selection = editorStore.getState().selection;
+      if (selection.nodeIds.length > 0 || selection.frameIds.length > 0) {
+        editorStore.execute(
+          setSelectionCommand({ frameIds: [], nodeIds: [], primaryFrameId: null, primaryNodeId: null }),
+          { history: "skip" },
+        );
+      }
+    },
+    [editorStore],
+  );
+
   const addShaderElement = useCallback(
     (shaderId: ShaderId) => {
       if (!detectPaperShaderSupport().supported) {
@@ -2794,17 +3137,29 @@ export function CanvasSurface({
       const element = createCanvasShaderElement(shaderId, worldCenter);
       if (!element) return;
       setShaderElements((current) => [...current, element]);
-      setSelectedShaderElementId(element.id);
+      selectShaderElement(element.id);
       setIsShaderMenuOpen(false);
       setCreationError(null);
       editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
     },
-    [editorStore, viewport],
+    [editorStore, selectShaderElement, viewport],
   );
 
-  const updateShaderElement = useCallback((elementId: string, patch: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height">>) => {
+  const updateShaderElement = useCallback((elementId: string, patch: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height" | "radius" | "params">>) => {
     setShaderElements((current) =>
-      current.map((entry) => (entry.id === elementId ? { ...entry, ...patch } : entry)),
+      current.map((entry) => {
+        if (entry.id !== elementId) return entry;
+        const next = { ...entry, ...patch };
+        const stored = next.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS;
+        const max = maxShaderElementRadius(next);
+        return stored > max ? { ...next, radius: max } : next;
+      }),
+    );
+  }, []);
+
+  const updateShaderElementParams = useCallback((elementId: string, params: ShaderParams) => {
+    setShaderElements((current) =>
+      current.map((entry) => (entry.id === elementId ? { ...entry, params } : entry)),
     );
   }, []);
 
@@ -2868,40 +3223,6 @@ export function CanvasSurface({
     setCamera(nextCamera);
   }, []);
 
-  const zoomFrameRef = useRef<number | null>(null);
-
-  const cancelZoomAnimation = useCallback(() => {
-    if (zoomFrameRef.current !== null) {
-      cancelAnimationFrame(zoomFrameRef.current);
-      zoomFrameRef.current = null;
-    }
-  }, []);
-
-  const animateZoomTo = useCallback(
-    (target: Camera, anchor: Point) => {
-      cancelZoomAnimation();
-      const from = cameraRef.current;
-      if (Math.abs(target.zoom - from.zoom) < 0.0001) {
-        updateCamera(target);
-        return;
-      }
-      let step = 0;
-      const frame = () => {
-        step += 1;
-        const progress = step / ZOOM_SMOOTH_STEPS;
-        if (step >= ZOOM_SMOOTH_STEPS) {
-          zoomFrameRef.current = null;
-          updateCamera(target);
-          return;
-        }
-        updateCamera(cameraAtZoomProgress(from, target, anchor, progress));
-        zoomFrameRef.current = requestAnimationFrame(frame);
-      };
-      zoomFrameRef.current = requestAnimationFrame(frame);
-    },
-    [cancelZoomAnimation, cameraRef, updateCamera],
-  );
-
   const switchPage = useCallback((pageId: string) => {
     editorStore.execute(switchPageCommand(pageId), { history: "skip" });
     const nextState = editorStore.getState();
@@ -2910,20 +3231,19 @@ export function CanvasSurface({
       .map((frameId) => nextState.frames[frameId])
       .filter((frame): frame is NonNullable<typeof frame> => Boolean(frame));
     if (pageFrames.length > 0 && viewport.width > 0 && viewport.height > 0) {
-      cancelZoomAnimation();
       updateCamera(fitRect(getFramesBounds(pageFrames), viewport, cameraFitPadding(viewport)));
     }
-  }, [cancelZoomAnimation, editorStore, updateCamera, viewport]);
+  }, [editorStore, updateCamera, viewport]);
 
   const fitAllFrames = useCallback(() => {
     if (viewport.width <= 0 || viewport.height <= 0) {
       return;
     }
-    cancelZoomAnimation();
     updateCamera(fitRect(getFramesBounds(renderRects), viewport, cameraFitPadding(viewport)));
-  }, [cancelZoomAnimation, renderRects, updateCamera, viewport]);
+  }, [renderRects, updateCamera, viewport]);
 
   const selectNode = useCallback((frameId: string, nodeId: string, shiftKey: boolean) => {
+    setSelectedShaderElementId(null);
     const current = editorStore.getState().selection;
     const alreadySelected = current.nodeIds.includes(nodeId);
     const nodeIds = shiftKey
@@ -2945,14 +3265,13 @@ export function CanvasSurface({
           : frameRect;
         const nextCamera = revealCamera(cameraRef.current, viewport, focusRect, cameraFitPadding(viewport));
         if (nextCamera) {
-          cancelZoomAnimation();
           updateCamera(nextCamera);
         }
       }
     }
     const controller = bridgeControllersRef.current.get(frameId);
     if (controller) void controller.inspect(nodeId).then((inspection) => { if (inspection) handleBridgeInspection(frameId, inspection); }).catch(() => undefined);
-  }, [bridgeControllersRef, bridgeHierarchies, cancelZoomAnimation, editorStore, handleBridgeInspection, updateCamera, viewport]);
+  }, [bridgeControllersRef, bridgeHierarchies, editorStore, handleBridgeInspection, updateCamera, viewport]);
 
   useEffect(() => {
     if (
@@ -2972,10 +3291,6 @@ export function CanvasSurface({
 
   useEffect(
     () => () => {
-      if (zoomFrameRef.current !== null) {
-        cancelAnimationFrame(zoomFrameRef.current);
-        zoomFrameRef.current = null;
-      }
       if (motionTimeoutRef.current !== null) {
         clearTimeout(motionTimeoutRef.current);
       }
@@ -2995,21 +3310,6 @@ export function CanvasSurface({
       motionTimeoutRef.current = null;
     }, delay);
   }, []);
-
-  const zoomAtViewportCenter = useCallback(
-    (factor: number) => {
-      const center = { x: viewport.width / 2, y: viewport.height / 2 };
-      const target = zoomCameraAtPoint(
-        cameraRef.current,
-        cameraRef.current.zoom * factor,
-        center,
-      );
-      animateZoomTo(target, center);
-      setInteractionMode("zooming");
-      settleInteraction();
-    },
-    [animateZoomTo, cameraRef, settleInteraction, viewport],
-  );
 
   const addFrame = useCallback(
     (preset: FramePreset) => {
@@ -3046,10 +3346,9 @@ export function CanvasSurface({
       editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
       editorStore.commitTransaction();
       setIsFrameMenuOpen(false);
-      cancelZoomAnimation();
       updateCamera(fitRect(frame, usableViewport, cameraFitPadding(usableViewport)));
     },
-    [cancelZoomAnimation, editorState.activePageId, editorStore, renderRects, setSelectedFrameId, updateCamera, viewport],
+    [editorState.activePageId, editorStore, renderRects, setSelectedFrameId, updateCamera, viewport],
   );
 
   const showPasteFeedback = useCallback(
@@ -3104,7 +3403,6 @@ export function CanvasSurface({
           x: center.x - size.width / 2,
           y: center.y - size.height / 2,
         });
-        cancelZoomAnimation();
         updateCamera(fitRect(result.rect, usableViewport, cameraFitPadding(usableViewport)));
         showPasteFeedback(
           "success",
@@ -3119,7 +3417,7 @@ export function CanvasSurface({
         );
       }
     },
-    [cancelZoomAnimation, editorStore, renderRects, showPasteFeedback, updateCamera, viewport],
+    [editorStore, renderRects, showPasteFeedback, updateCamera, viewport],
   );
 
   const importHtmlFile = useCallback(async (file: File) => {
@@ -3138,7 +3436,6 @@ export function CanvasSurface({
         x: center.x - size.width / 2,
         y: center.y - size.height / 2,
       });
-      cancelZoomAnimation();
       updateCamera(fitRect(result.rect, usableViewport, cameraFitPadding(usableViewport)));
       showPersistenceFeedback({
         kind: "success",
@@ -3150,7 +3447,7 @@ export function CanvasSurface({
       const message = error instanceof Error ? error.message : "The file could not be imported.";
       showPersistenceFeedback({ kind: "error", message: `Could not import HTML: ${message}` });
     }
-  }, [cancelZoomAnimation, editorStore, renderRects, showPersistenceFeedback, updateCamera, viewport]);
+  }, [editorStore, renderRects, showPersistenceFeedback, updateCamera, viewport]);
 
   const importFigmaFile = useCallback(async (file: File) => {
     try {
@@ -3171,7 +3468,6 @@ export function CanvasSurface({
         ? measuredViewport
         : { width: Math.max(viewport.width, 1), height: Math.max(viewport.height, 1) };
       if (rects.length > 0) {
-        cancelZoomAnimation();
         updateCamera(fitRect(getFramesBounds(rects), usableViewport, cameraFitPadding(usableViewport)));
       }
       showPersistenceFeedback({
@@ -3182,7 +3478,7 @@ export function CanvasSurface({
       const message = error instanceof Error ? error.message : "The Figma file could not be imported.";
       showPersistenceFeedback({ kind: "error", message: `Could not import Figma file: ${message}` });
     }
-  }, [cancelZoomAnimation, editorStore, showPersistenceFeedback, updateCamera, viewport]);
+  }, [editorStore, showPersistenceFeedback, updateCamera, viewport]);
 
   const importProjectFile = useCallback(async (file: File) => {
     // Dispatch by extension, falling back to the ZIP magic so a renamed .fig
@@ -3212,7 +3508,6 @@ export function CanvasSurface({
       event.stopPropagation();
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
-      cancelZoomAnimation();
       if (panning) {
         pointerRef.current = {
           type: "pan",
@@ -3236,7 +3531,7 @@ export function CanvasSurface({
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, setSelectedFrameId, cancelZoomAnimation, getCachedPointerPosition],
+    [editorStore, setSelectedFrameId, getCachedPointerPosition],
   );
 
   const beginBriefFramePointer = useCallback(
@@ -3247,7 +3542,6 @@ export function CanvasSurface({
       event.stopPropagation();
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
-      cancelZoomAnimation();
       updateSurfaceRect();
       const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
       if (spacePressedRef.current || currentTool === "hand") {
@@ -3274,7 +3568,7 @@ export function CanvasSurface({
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, selectBriefFrame, cancelZoomAnimation, getCachedPointerPosition, updateSurfaceRect],
+    [editorStore, selectBriefFrame, getCachedPointerPosition, updateSurfaceRect],
   );
 
   const beginCanvasPan = useCallback(
@@ -3287,7 +3581,6 @@ export function CanvasSurface({
       event.stopPropagation();
       surface.focus({ preventScroll: true });
       surface.setPointerCapture(event.pointerId);
-      cancelZoomAnimation();
       updateSurfaceRect();
       pointerRef.current = {
         type: "pan",
@@ -3296,7 +3589,7 @@ export function CanvasSurface({
       };
       setInteractionMode("panning");
     },
-    [cancelZoomAnimation, getCachedPointerPosition, updateSurfaceRect],
+    [getCachedPointerPosition, updateSurfaceRect],
   );
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -3312,8 +3605,28 @@ export function CanvasSurface({
     if (!spacePressedRef.current && activeTool !== "hand" && isFrameTarget(event.target)) {
       return;
     }
+    // Creation tools draw on empty canvas too — the drag mints a freeform
+    // frame holding the element on pointer-up. The home/not-found routes show
+    // their own screens instead of the world, so drawing is disabled there.
+    if (!spacePressedRef.current && isCanvasCreationTool(activeTool) && !isHomeRoute && !routeNotFound && !showLakeOverlay) {
+      event.preventDefault();
+      event.currentTarget.focus({ preventScroll: true });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      updateSurfaceRect();
+      const start = screenToWorld(getCachedPointerPosition(event), cameraRef.current);
+      pointerRef.current = {
+        type: "canvas-create",
+        pointerId: event.pointerId,
+        tool: activeTool,
+        start,
+        last: start,
+      };
+      setCanvasCreationPreview({ start, end: start });
+      setCreationError(null);
+      setInteractionMode("creating");
+      return;
+    }
 
-    cancelZoomAnimation();
     event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -3413,6 +3726,14 @@ export function CanvasSurface({
       return;
     }
 
+    if (operation.type === "canvas-create") {
+      const world = screenToWorld(getCachedPointerPosition(event), cameraRef.current);
+      if (world.x === operation.last.x && world.y === operation.last.y) return;
+      operation.last = world;
+      setCanvasCreationPreview({ start: operation.start, end: world });
+      return;
+    }
+
     const next = getCachedPointerPosition(event);
     const delta = { x: next.x - operation.last.x, y: next.y - operation.last.y };
     operation.last = next;
@@ -3436,14 +3757,42 @@ export function CanvasSurface({
     endNodeGesture(event);
     const operation = pointerRef.current;
     pointerRef.current = null;
+    // The release event carries the pointer's final position — the last
+    // pointermove can lag a fast drag and leave `last` short of it.
+    if (operation) {
+      operation.last = operation.type === "canvas-create"
+        ? screenToWorld(getCachedPointerPosition(event), cameraRef.current)
+        : getCachedPointerPosition(event);
+    }
     if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
       finalizeFrameDrag(operation);
       editorStore.commitTransaction();
+    }
+    if (operation?.type === "canvas-create") {
+      setCanvasCreationPreview(null);
+      try {
+        finishCanvasCreation(operation);
+      } catch (error) {
+        setCreationError(
+          `Could not create the element: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
     }
     if (operation?.type === "pan") {
       updateCamera(cameraRef.current);
     }
     setInteractionMode("idle");
+  };
+
+  const handlePointerCancel = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // A cancelled canvas draw aborts instead of minting a half-dragged shape.
+    if (pointerRef.current?.type === "canvas-create") {
+      pointerRef.current = null;
+      setCanvasCreationPreview(null);
+      setInteractionMode("idle");
+      return;
+    }
+    endPointerOperation(event);
   };
 
   const handleLostPointerCapture = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -3544,6 +3893,7 @@ export function CanvasSurface({
       }
     }
     frameDragRef.current = null;
+    setCanvasCreationPreview(null);
     setInteractionMode("idle");
   }, [cancelNodeGesture, editorStore]);
 
@@ -3552,6 +3902,8 @@ export function CanvasSurface({
     cancelInteraction();
     creationRef.current = null;
     pendingImageRef.current = null;
+    pendingCanvasImageRef.current = null;
+    pendingFreeformTextRef.current = null;
     setCreationError(null);
     setIsFrameMenuOpen(false);
     setIsShaderMenuOpen(false);
@@ -3604,7 +3956,45 @@ export function CanvasSurface({
         if (selectedShaderElementIdRef.current) {
           deleteShaderElement(selectedShaderElementIdRef.current);
         } else if (editorStore.getState().selection.nodeIds.length > 0) {
-          void deleteSelectedNodes();
+          // A freeform frame is packaging for what was drawn into it — when
+          // every drawn element it holds is selected, delete the frame itself
+          // so no invisible empty shell is left behind.
+          {
+            const state = editorStore.getState();
+            const selectedNodeIds = new Set(state.selection.nodeIds);
+            const absorbedFrameIds = new Set<string>();
+            let covered = true;
+            for (const nodeId of selectedNodeIds) {
+              const node = state.nodes[nodeId];
+              const frame = node?.frameId ? state.frames[node.frameId] : undefined;
+              if (!node || !frame?.freeform) { covered = false; break; }
+              absorbedFrameIds.add(frame.id);
+            }
+            for (const frameId of absorbedFrameIds) {
+              if (!covered) break;
+              for (const node of Object.values(state.nodes)) {
+                if (
+                  node.frameId === frameId
+                  && node.attributes["data-design-tool-created"] === "true"
+                  && !selectedNodeIds.has(node.id)
+                ) {
+                  covered = false;
+                  break;
+                }
+              }
+            }
+            if (covered && absorbedFrameIds.size > 0) {
+              editorStore.execute(setSelectionCommand({
+                frameIds: [...absorbedFrameIds],
+                nodeIds: [],
+                primaryFrameId: [...absorbedFrameIds][0] ?? null,
+                primaryNodeId: null,
+              }), { history: "skip" });
+              deleteSelectedFrames();
+            } else {
+              void deleteSelectedNodes();
+            }
+          }
         } else {
           deleteSelectedFrames();
         }
@@ -3735,9 +4125,6 @@ export function CanvasSurface({
       })()
     : null;
 
-  const isHomeRoute = shouldUseLocalMemory && routeProjectId === null && !routeNotFound;
-  const isProjectRoute = shouldUseLocalMemory && routeProjectId !== null && !routeNotFound;
-
   return (
     <main
       ref={surfaceRef}
@@ -3750,7 +4137,7 @@ export function CanvasSurface({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={endPointerOperation}
-      onPointerCancel={endPointerOperation}
+      onPointerCancel={handlePointerCancel}
       onLostPointerCapture={handleLostPointerCapture}
       onBlur={() => {
         spacePressedRef.current = false;
@@ -3794,7 +4181,7 @@ export function CanvasSurface({
             onBridgeInspection={handleBridgeInspection}
             onBridgeSnapshot={handleBridgeSnapshot}
             onBridgeController={handleBridgeController}
-            isCreationMode={creationMode && frame.id === selectedFrameId}
+            isCreationMode={creationMode}
             creationShape={activeTool === "rectangle" ? activeShape : null}
             creationRadius={activeTool === "rectangle" ? shapeRadius : 0}
             onCreationPointerDown={beginCreationPointer}
@@ -3812,9 +4199,34 @@ export function CanvasSurface({
             element={element}
             onChange={updateShaderElement}
             onDelete={deleteShaderElement}
-            onSelect={setSelectedShaderElementId}
+            onSelect={selectShaderElement}
           />
         ))}
+        {canvasCreationPreview ? (
+          activeTool === "rectangle" ? (
+            <ShapePreview
+              end={canvasCreationPreview.end}
+              radius={shapeRadius}
+              shape={activeShape}
+              start={canvasCreationPreview.start}
+            />
+          ) : (
+            <div
+              aria-hidden="true"
+              className="canvas-creation-outline"
+              data-testid="canvas-creation-outline"
+              style={(() => {
+                const bounds = normalizedBounds(canvasCreationPreview.start, canvasCreationPreview.end, 1);
+                return {
+                  left: bounds.x,
+                  top: bounds.y,
+                  width: bounds.width,
+                  height: bounds.height,
+                };
+              })()}
+            />
+          )
+        ) : null}
         <NodeOverlayLayer
           zoom={camera.zoom}
           hoveredTarget={overlayHoveredTarget}
@@ -3893,7 +4305,18 @@ export function CanvasSurface({
           aria-hidden="true"
           className="canvas-comment-preview"
           data-testid="comment-hover-preview"
-          style={{ left: hoveredCommentAnchor.x + 18, top: hoveredCommentAnchor.y + 18 }}
+          style={(() => {
+            const surfaceEl = surfaceRef.current;
+            const inspector = surfaceEl?.querySelector(".right-properties-panel")?.getBoundingClientRect();
+            const surfaceRect = surfaceRectRef.current;
+            const freeRight = inspector && surfaceRect
+              ? inspector.left - surfaceRect.left - 8
+              : (surfaceRect?.width ?? 1440) - 12;
+            return {
+              left: Math.max(12, Math.min(hoveredCommentAnchor.x + 18, freeRight - 280)),
+              top: Math.max(12, hoveredCommentAnchor.y + 18),
+            };
+          })()}
         >
           {hoveredComment.body || "Add a note"}
         </div>
@@ -4053,18 +4476,12 @@ export function CanvasSurface({
       />
       {showDesignChrome && !isHomeRoute ? (
         <CanvasDock
-          zoom={camera.zoom}
           activeTool={activeTool}
           temporaryHand={spacePressed}
           isFrameMenuOpen={isFrameMenuOpen}
           isShaderMenuOpen={isShaderMenuOpen}
-          canUndo={editorStore.canUndo()}
-          canRedo={editorStore.canRedo()}
           onAddFrame={addFrame}
           onAddShader={addShaderElement}
-          onFit={fitAllFrames}
-          onZoomIn={() => zoomAtViewportCenter(1.22)}
-          onZoomOut={() => zoomAtViewportCenter(1 / 1.22)}
           canvasCategory={activeCanvasCategory}
           onSelectTool={setActiveTool}
           activeShape={activeShape}
@@ -4073,12 +4490,6 @@ export function CanvasSurface({
           onCloseFrameMenu={() => setIsFrameMenuOpen(false)}
           onToggleShaderMenu={toggleShaderMenu}
           onCloseShaderMenu={closeShaderMenu}
-          onUndo={() => {
-            if (!editorStore.hasActiveTransaction()) editorStore.undo();
-          }}
-          onRedo={() => {
-            if (!editorStore.hasActiveTransaction()) editorStore.redo();
-          }}
         />
       ) : null}
 
@@ -4090,11 +4501,11 @@ export function CanvasSurface({
           role={creationError ? "alert" : "status"}
         >
           <strong>{creationToolLabel(activeTool, activeShape)} mode</strong>
-          <span>{creationError ?? (selectedFrameId
-            ? activeTool === "image"
-              ? "Drag inside the active frame, then choose a local image."
-              : `Drag inside ${frames.find((frame) => frame.id === selectedFrameId)?.name ?? "the active frame"}.`
-            : "Select a live frame to begin.")}</span>
+          <span>{creationError ?? (activeTool === "comment"
+            ? "Click a frame to place a comment."
+            : activeTool === "image"
+              ? "Drag on the canvas or inside a frame, then choose a local image."
+              : "Drag on the canvas, or inside a frame to draw there.")}</span>
           {activeTool === "image" ? (
             <button data-testid="choose-image-button" onClick={openImagePicker} type="button">
               Choose image
@@ -4148,6 +4559,11 @@ export function CanvasSurface({
             onHoverNode={(frameId, nodeId) => setSidebarHoveredNode({ frameId, nodeId })}
             onHoverNodeEnd={() => setSidebarHoveredNode(null)}
             hoveredLayerNode={hoveredOverlayTarget ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId } : null}
+            shaderElements={shaderElements}
+            selectedShaderElementId={selectedShaderElementId}
+            onSelectShaderElement={selectShaderElement}
+            onUpdateShaderParams={updateShaderElementParams}
+            onDeleteShaderElement={deleteShaderElement}
             tokensPanel={
               <TokensPanel
                 tokens={editorState.tokens}
@@ -4181,6 +4597,11 @@ export function CanvasSurface({
             shapeRadiusVisible={activeTool === "rectangle" || radiusSelection !== null}
             onShapeRadiusChange={changeShapeRadius}
             onShapeRadiusCommit={commitShapeRadius}
+            shaderElements={shaderElements}
+            selectedShaderElementId={selectedShaderElementId}
+            onUpdateShaderElement={updateShaderElement}
+            onUpdateShaderParams={updateShaderElementParams}
+            onDeleteShaderElement={deleteShaderElement}
           />
         </>
       ) : null}

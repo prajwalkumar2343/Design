@@ -15,7 +15,7 @@ test.describe("QA regressions", () => {
     await expect.poll(() => page.evaluate(() => document.activeElement?.tagName)).toBe("IFRAME");
 
     await page.keyboard.press("r");
-    await expect(page.getByTestId("tool-button-rectangle")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("creation-mode-status")).toContainText("Rectangle mode");
     await page.keyboard.press("v");
     await expect(page.getByTestId("tool-button-select")).toHaveAttribute("aria-pressed", "true");
 
@@ -33,7 +33,7 @@ test.describe("QA regressions", () => {
     await expect(frame).toHaveAttribute("data-bridge-status", "ready");
     const before = await preview.locator("[data-design-tool-created='true']").count();
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     const layer = frame.getByTestId("frame-creation-layer");
     const box = (await layer.boundingBox())!;
     await page.mouse.move(box.x + 60, box.y + 60);

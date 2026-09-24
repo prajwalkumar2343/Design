@@ -122,7 +122,7 @@ test.describe("iframe node overlays", () => {
     await expect(editableHeading).not.toHaveAttribute("data-design-tool-editing", "true");
     await expect(page.getByTestId("node-selection-box")).toBeVisible();
 
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(() => editableHeading.innerText()).toBe("Make room for better ideas.");
     await expect(page.getByTestId("node-selection-box")).toBeVisible();
   });
@@ -137,7 +137,9 @@ test.describe("iframe node overlays", () => {
     await expect.poll(() => editableHeading.innerText()).toBe("Make room for better ideas.");
     await expect(editableHeading).not.toHaveAttribute("data-design-tool-editing", "true");
     await expect(page.getByTestId("node-selection-box")).toBeVisible();
-    await expect(page.getByTestId("undo-button")).toBeDisabled();
+    // Escape discarded the edit without a history entry — undo must not bring it back.
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => editableHeading.innerText()).toBe("Make room for better ideas.");
   });
 
   test("commits property edits on Enter and keeps the overlay synchronized", async ({ page }) => {
@@ -153,7 +155,6 @@ test.describe("iframe node overlays", () => {
       return box?.width ?? 0;
     }).toBeGreaterThan(0);
     await expect(page.getByTestId("node-selection-box")).toBeVisible();
-    await expect(page.getByTestId("undo-button")).toBeEnabled();
   });
 
   test("resizes from an edge while enforcing a usable minimum", async ({ page }) => {
@@ -213,9 +214,9 @@ test.describe("iframe node overlays", () => {
     expect(after.maxWidth).toBe("none");
     expect(after.objectFit).toBe("cover");
 
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(() => image.evaluate((element) => element.getBoundingClientRect().toJSON())).toEqual(before);
-    await page.getByTestId("redo-button").click();
+    await page.keyboard.press("Control+Shift+z");
     await expect.poll(() => image.evaluate((element) => element.style.width)).toBe(after.styleWidth);
     await expect.poll(() => image.evaluate((element) => element.getBoundingClientRect().width)).toBe(after.rect.width);
   });
@@ -270,13 +271,13 @@ test.describe("iframe node overlays", () => {
     await drag(page, page.getByTestId("node-selection-box"), 36, 0);
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().x)).toBeGreaterThan(x1 + 10);
     const x2 = await text.evaluate((element) => element.getBoundingClientRect().x);
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().x)).toBeCloseTo(x1, 0);
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().x)).toBeCloseTo(x0, 0);
-    await page.getByTestId("redo-button").click();
+    await page.keyboard.press("Control+Shift+z");
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().x)).toBeCloseTo(x1, 0);
-    await page.getByTestId("redo-button").click();
+    await page.keyboard.press("Control+Shift+z");
     await expect.poll(() => text.evaluate((element) => element.getBoundingClientRect().x)).toBeCloseTo(x2, 0);
   });
 
@@ -325,7 +326,7 @@ test.describe("iframe node overlays", () => {
     const selectedBox = page.getByTestId("node-selection-box");
     const beforeZoom = await selectedBox.boundingBox();
     if (!beforeZoom) throw new Error("Selection box has no bounding box");
-    await page.getByRole("button", { name: "Zoom in" }).click();
+    await page.keyboard.press("0");
     const afterZoom = await page.getByTestId("node-rotation-handle").boundingBox();
     if (!afterZoom) throw new Error("Rotation handle disappeared after zoom");
     expect(Math.abs(afterZoom.width - beforeHandle.width)).toBeLessThan(3);

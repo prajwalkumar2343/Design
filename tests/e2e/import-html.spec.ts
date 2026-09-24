@@ -81,7 +81,7 @@ test.describe("HTML file import", () => {
     await expect(page.locator(frameSelector)).toHaveCount(1);
     await expect(page.locator('[aria-label="Pricing plans"]')).toBeVisible();
 
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect(page.locator(frameSelector)).toHaveCount(4);
   });
 

@@ -28,6 +28,9 @@ export function CommentPopover({ comment, feedback, style, onClose, onSave, onDe
     textareaRef.current?.focus({ preventScroll: true });
   }, [comment.id]);
 
+  // The anchor point sits at the marker in surface coordinates — clamp the
+  // popover into the free canvas area so it never opens under the overlay
+  // chrome (sidebars) or partially offscreen.
   useLayoutEffect(() => {
     const root = rootRef.current;
     const parent = root?.offsetParent;
@@ -35,8 +38,19 @@ export function CommentPopover({ comment, feedback, style, onClose, onSave, onDe
     const place = () => {
       const left = typeof style.left === "number" ? style.left : 12;
       const top = typeof style.top === "number" ? style.top : 12;
+      const pRect = parent.getBoundingClientRect();
+      const rail = document.querySelector(".left-sidebar")?.getBoundingClientRect();
+      const inspector = document.querySelector(".right-properties-panel")?.getBoundingClientRect();
+      const viewportMax = parent.clientWidth - 12 - root.offsetWidth;
+      const railBound = (rail ? rail.right - pRect.left : 0) + 8;
+      const inspectorBound = (inspector ? inspector.left - pRect.left : parent.clientWidth) - 8 - root.offsetWidth;
+      // Side-chrome bounds only apply when the free band can fit the popover —
+      // on narrow layouts it can't, so fall back to plain viewport clamping.
+      const fitsBetweenPanels = inspectorBound >= Math.max(12, railBound);
+      const minLeft = fitsBetweenPanels ? Math.max(12, railBound) : 12;
+      const maxLeft = fitsBetweenPanels ? Math.min(viewportMax, inspectorBound) : viewportMax;
       setPosition({
-        left: Math.max(12, Math.min(left, parent.clientWidth - root.offsetWidth - 12)),
+        left: Math.max(minLeft, Math.min(left, Math.max(minLeft, maxLeft))),
         top: Math.max(12, Math.min(top, parent.clientHeight - root.offsetHeight - 12)),
       });
     };
@@ -44,6 +58,7 @@ export function CommentPopover({ comment, feedback, style, onClose, onSave, onDe
     const observer = new ResizeObserver(place);
     observer.observe(root);
     observer.observe(parent);
+    document.querySelectorAll(".left-sidebar, .right-properties-panel").forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [style.left, style.top]);
 
@@ -130,7 +145,7 @@ export function CommentPopover({ comment, feedback, style, onClose, onSave, onDe
         </div>
       </div>
       <footer className="comment-footer">
-        <span className="comment-hint" id={hintId}>Click away or Esc to save & close</span>
+        <span className="comment-hint" id={hintId}>Click away or Esc to save &amp; close</span>
         {!isNew && onToggleResolved ? (
           <button className="comment-resolve-button" disabled={!hasBody} onClick={() => finalize(body, true)} aria-label={isResolved ? "Reopen comment" : "Resolve comment"} type="button">
             {isResolved ? <RotateCcw size={13} aria-hidden="true" /> : <Check size={14} aria-hidden="true" />}{isResolved ? "Reopen" : "Resolve"}

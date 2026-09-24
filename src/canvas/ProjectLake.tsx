@@ -352,8 +352,9 @@ function BlankCanvasChooser({
                 onClick={() => onChoose(canvas.id)}
                 type="button"
                 aria-label={`Create blank ${canvas.label}`}
+                style={{ "--option-accent": canvas.accent } as React.CSSProperties}
               >
-                <span className="blank-chooser-option-icon" style={{ background: `${canvas.accent}14`, color: canvas.accent, borderColor: `${canvas.accent}22` }}>
+                <span className="blank-chooser-option-icon" style={{ background: `${canvas.accent}14`, color: canvas.accent }}>
                   <Icon size={18} />
                 </span>
                 <span className="blank-chooser-option-copy">
@@ -363,7 +364,6 @@ function BlankCanvasChooser({
                 <span className="blank-chooser-option-arrow" aria-hidden="true">
                   <Plus size={14} />
                 </span>
-                <span className="blank-chooser-accent" style={{ background: canvas.accent }} />
               </button>
             );
           })}
@@ -529,8 +529,8 @@ export function ProjectLake({
 
   const filtered = useFilteredProjects(projects, kindFilter, query, sort);
   const hasProjects = projects.length > 0;
-  // Show every matching file. The lake caps at 24 stored projects, and an
-  // arbitrary cut made files look missing / unopenable.
+  // Show every matching file. An arbitrary cut made files look missing /
+  // unopenable — the store caps at 100 projects, so no slice here.
   const recent = filtered;
 
   const startRename = (id: string, currentName: string) => {

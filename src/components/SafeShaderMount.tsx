@@ -4,6 +4,8 @@ import { collectShaderCanvases, releaseShaderContexts } from "../shaders/webgl-r
 interface SafeShaderMountProps {
   component: ComponentType<{ width?: string; height?: string }>;
   className: string;
+  /** Extra props for the shader component (e.g. a filter's sample image). */
+  componentProps?: Record<string, unknown>;
 }
 
 /**
@@ -11,7 +13,7 @@ interface SafeShaderMountProps {
  * when the mount goes away, so the browser's per-page context budget is never
  * exhausted by preview churn (see webgl-release.ts).
  */
-export const SafeShaderMount = memo(function SafeShaderMount({ component: Component, className }: SafeShaderMountProps) {
+export const SafeShaderMount = memo(function SafeShaderMount({ component: Component, className, componentProps }: SafeShaderMountProps) {
   const holderRef = useRef<HTMLDivElement | null>(null);
   const canvasesRef = useRef<Set<HTMLCanvasElement>>(new Set());
 
@@ -28,7 +30,7 @@ export const SafeShaderMount = memo(function SafeShaderMount({ component: Compon
 
   return (
     <div className={className} ref={holderRef}>
-      <Component width="100%" height="100%" />
+      <Component width="100%" height="100%" {...componentProps} />
     </div>
   );
 });

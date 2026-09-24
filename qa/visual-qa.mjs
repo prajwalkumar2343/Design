@@ -107,7 +107,7 @@ const browser = await chromium.launch({ headless: true });
     const sel = c.testid ? `[data-testid="${c.testid}"]` : null;
     if (!sel) continue;
     const loc = page.locator(sel).first();
-    if (!(await loc.count())) continue;
+    if (!(await loc.count())) { note("lake", "WARN", `control not reachable: ${c.testid} "${c.label}" — skipped`); continue; }
     // skip destructive confirm chains for now — exercised separately
     const r = await clickAndWatch(page, loc, `lake:${c.testid}`);
     if (r && !r.changed) note("lake", "FAIL", `inactive button: ${c.testid} "${c.label}" — click produced no observable change`);
@@ -115,6 +115,13 @@ const browser = await chromium.launch({ headless: true });
     // Restore: dismiss any menu/dialog that opened
     await page.keyboard.press("Escape");
     await page.waitForTimeout(250);
+    // Template cards and project rows navigate to /design/<id>; return to the
+    // lake or every remaining control is skipped.
+    if (new URL(page.url()).pathname !== "/") {
+      await page.goto(BASE + "/");
+      await page.waitForSelector('[data-testid="project-lake"]', { timeout: 15000 });
+      await page.waitForTimeout(800);
+    }
   }
 
   // Specific flows

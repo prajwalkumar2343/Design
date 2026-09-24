@@ -87,4 +87,15 @@ describe("ShadersPanel", () => {
     fireEvent.click(utils.getByRole("button", { name: "Delete Mesh Gradient" }));
     expect(utils.props.onDeleteShaderElement).toHaveBeenCalledWith("shader-el-1");
   });
+
+  it("keeps a collapsed selection collapsed when the element array is replaced", () => {
+    const utils = renderPanel({ selectedShaderElementId: "shader-el-1" });
+    const toggle = () => utils.getByRole("button", { name: /Mesh Gradient controls/ });
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(toggle());
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+    // A param edit upstream hands the panel a fresh array of the same elements.
+    utils.rerender(<ShadersPanel {...utils.props} shaderElements={[{ ...ELEMENT }]} />);
+    expect(toggle().getAttribute("aria-expanded")).toBe("false");
+  });
 });

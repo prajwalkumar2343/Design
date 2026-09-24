@@ -4,7 +4,7 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getShaderDefinition,
   type CanvasShaderElement,
@@ -29,10 +29,16 @@ function ShadersPanel({
 }: ShadersPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // Selecting a shader element on the canvas expands its editor here.
+  // Selecting a shader element on the canvas expands its editor here —
+  // fired only on selection transitions so a replaced element array (param
+  // edits) can't re-expand a row the user collapsed.
+  const lastSelectedIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (selectedShaderElementId && shaderElements.some((entry) => entry.id === selectedShaderElementId)) {
-      setExpandedId(selectedShaderElementId);
+    const selected = selectedShaderElementId ?? null;
+    if (selected === lastSelectedIdRef.current) return;
+    lastSelectedIdRef.current = selected;
+    if (selected && shaderElements.some((entry) => entry.id === selected)) {
+      setExpandedId(selected);
     }
   }, [selectedShaderElementId, shaderElements]);
 

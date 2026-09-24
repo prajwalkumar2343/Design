@@ -21,6 +21,7 @@ import { createPortal } from "react-dom";
 import type { SafeInlineStyleProperty } from "../bridge/protocol";
 import {
   MAX_GLASS_LEVEL,
+  MAX_SHAPE_RADIUS,
   clampGlassLevel,
   glassLevelFromAttribute,
   parseCssColor,
@@ -841,7 +842,7 @@ function CornerRadiusSection({
   onChange: (radius: number) => void;
   onCommit: () => void;
 }) {
-  const progress = Math.max(0, Math.min(100, (radius / 48) * 100));
+  const progress = Math.max(0, Math.min(100, (radius / MAX_SHAPE_RADIUS) * 100));
   const decrement = () => {
     const next = Math.max(0, radius - 1);
     if (next !== radius) {
@@ -851,7 +852,7 @@ function CornerRadiusSection({
     }
   };
   const increment = () => {
-    const next = Math.min(48, radius + 1);
+    const next = Math.min(MAX_SHAPE_RADIUS, radius + 1);
     if (next !== radius) {
       onChange(next);
       queueMicrotask(() => onCommit());
@@ -884,7 +885,7 @@ function CornerRadiusSection({
             <input
               aria-label="Corner radius"
               data-testid="shape-radius-slider"
-              max={48}
+              max={MAX_SHAPE_RADIUS}
               min={0}
               onBlur={onCommit}
               onChange={(event) => onChange(Number(event.target.value))}

@@ -164,6 +164,8 @@ import {
 import {
   createCanvasShaderElement,
   detectPaperShaderSupport,
+  maxShaderElementRadius,
+  SHADER_ELEMENT_DEFAULT_RADIUS,
   type CanvasShaderElement,
   type ShaderId,
   type ShaderParams,
@@ -3104,7 +3106,13 @@ export function CanvasSurface({
 
   const updateShaderElement = useCallback((elementId: string, patch: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height" | "radius" | "params">>) => {
     setShaderElements((current) =>
-      current.map((entry) => (entry.id === elementId ? { ...entry, ...patch } : entry)),
+      current.map((entry) => {
+        if (entry.id !== elementId) return entry;
+        const next = { ...entry, ...patch };
+        const stored = next.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS;
+        const max = maxShaderElementRadius(next);
+        return stored > max ? { ...next, radius: max } : next;
+      }),
     );
   }, []);
 

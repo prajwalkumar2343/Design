@@ -1,0 +1,30 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "design",
+  "metadata": {
+    "description": "Plugins for the agent-native Design workspace (Canvas)."
+  },
+  "owner": {
+    "name": "Canvas"
+  },
+  "plugins": [
+    {
+      "name": "canvas-design",
+      "source": "./plugins/canvas-design",
+      "description": "Run and visually iterate on the Canvas HTML design workspace from Claude Code.",
+      "author": {
+        "name": "Canvas"
+      },
+      "category": "development",
+      "keywords": [
+        "canvas",
+        "design",
+        "html",
+        "css",
+        "browser-preview",
+        "visual-qa",
+        "wireframe"
+      ]
+    }
+  ]
+}

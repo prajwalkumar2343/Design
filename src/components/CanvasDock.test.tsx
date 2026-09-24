@@ -5,18 +5,12 @@ import { CanvasDock } from "./CanvasDock";
 
 function renderDock(overrides: Partial<Parameters<typeof CanvasDock>[0]> = {}) {
   const props: Parameters<typeof CanvasDock>[0] = {
-    zoom: 1,
     activeTool: "select",
     temporaryHand: false,
     isFrameMenuOpen: false,
     isShaderMenuOpen: false,
-    canUndo: false,
-    canRedo: false,
     onAddFrame: vi.fn(),
     onAddShader: vi.fn(),
-    onFit: vi.fn(),
-    onZoomIn: vi.fn(),
-    onZoomOut: vi.fn(),
     onSelectTool: vi.fn(),
     activeShape: "rectangle",
     onSelectShape: vi.fn(),
@@ -24,8 +18,6 @@ function renderDock(overrides: Partial<Parameters<typeof CanvasDock>[0]> = {}) {
     onCloseFrameMenu: vi.fn(),
     onToggleShaderMenu: vi.fn(),
     onCloseShaderMenu: vi.fn(),
-    onUndo: vi.fn(),
-    onRedo: vi.fn(),
     ...overrides,
   };
   return { props, ...render(<CanvasDock {...props} />) };
@@ -34,7 +26,7 @@ function renderDock(overrides: Partial<Parameters<typeof CanvasDock>[0]> = {}) {
 describe("CanvasDock tools", () => {
   it("renders the core tools and marks the active one", () => {
     renderDock({ activeTool: "text" });
-    for (const tool of ["select", "hand", "rectangle", "text", "image", "comment"]) {
+    for (const tool of ["select", "hand", "text", "image", "comment"]) {
       expect(screen.getByTestId(`tool-button-${tool}`)).toBeTruthy();
     }
     expect((screen.getByTestId("tool-button-text") as HTMLButtonElement).getAttribute("aria-pressed")).toBe("true");
@@ -113,26 +105,5 @@ describe("CanvasDock frame menu", () => {
     renderDock({ isFrameMenuOpen: true, canvasCategory: "mobile" });
     expect(screen.queryByTestId("frame-category-desktop")).toBeNull();
     expect(screen.getByTestId("frame-category-mobile")).toBeTruthy();
-  });
-});
-
-describe("CanvasDock history and zoom", () => {
-  it("disables undo and redo when the stacks are empty", () => {
-    renderDock({ canUndo: false, canRedo: false });
-    expect((screen.getByTestId("undo-button") as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByTestId("redo-button") as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("invokes undo/redo/zoom callbacks and renders the zoom percentage", () => {
-    const { props } = renderDock({ zoom: 1.5, canUndo: true, canRedo: true });
-    expect(screen.getByLabelText("Fit all frames", { selector: ".zoom-value" }).textContent).toBe("150%");
-    fireEvent.click(screen.getByTestId("undo-button"));
-    fireEvent.click(screen.getByTestId("redo-button"));
-    fireEvent.click(screen.getByLabelText("Zoom in"));
-    fireEvent.click(screen.getByLabelText("Zoom out"));
-    expect(props.onUndo).toHaveBeenCalled();
-    expect(props.onRedo).toHaveBeenCalled();
-    expect(props.onZoomIn).toHaveBeenCalled();
-    expect(props.onZoomOut).toHaveBeenCalled();
   });
 });

@@ -208,7 +208,8 @@ export function CanvasDock({
           aria-expanded={isShapeMenuOpen}
           aria-haspopup="menu"
           aria-label="Shape tools"
-          className={`tool-button shape-menu-button${isShapeMenuOpen ? " is-active" : ""}`}
+          aria-pressed={activeToolId === "rectangle"}
+          className={`tool-button shape-menu-button${isShapeMenuOpen || activeToolId === "rectangle" ? " is-active" : ""}`}
           data-testid="shape-menu-button"
           onClick={() => setIsShapeMenuOpen((current) => !current)}
           title="Shape tools"

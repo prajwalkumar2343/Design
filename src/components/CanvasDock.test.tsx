@@ -69,6 +69,17 @@ describe("CanvasDock shape menu", () => {
     expect((screen.getByTestId("shape-menu-rectangle") as HTMLButtonElement).className).not.toContain("is-active");
   });
 
+  it("keeps the shape button pressed while the shape tool is active", () => {
+    const { props, rerender } = renderDock({ activeTool: "rectangle" });
+    const button = screen.getByTestId("shape-menu-button") as HTMLButtonElement;
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(button.className).toContain("is-active");
+
+    rerender(<CanvasDock {...props} activeTool="select" />);
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(button.className).not.toContain("is-active");
+  });
+
   it("closes when a pointer lands outside the menu", () => {
     renderDock();
     fireEvent.click(screen.getByTestId("shape-menu-button"));

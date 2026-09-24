@@ -77,7 +77,7 @@ test.describe("sandboxed iframe bridge", () => {
     await expect(frame).toHaveAttribute("data-bridge-status", "ready");
     const initialHierarchyCount = Number(await frame.getAttribute("data-bridge-hierarchy-node-count"));
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     await iframePointer(preview, "pointerdown", { x: 520, y: 180 });
     await iframePointer(preview, "pointermove", { x: 820, y: 315 });
     await iframePointer(preview, "pointerup", { x: 820, y: 315 });
@@ -110,9 +110,9 @@ test.describe("sandboxed iframe bridge", () => {
     await expect.poll(() => preview.locator('[data-design-tool-kind="image"]').count()).toBe(1);
     await expect.poll(async () => Number(await frame.getAttribute("data-bridge-hierarchy-node-count"))).toBeGreaterThan(initialHierarchyCount);
 
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(() => preview.locator('[data-design-tool-kind="image"]').count()).toBe(0);
-    await page.getByTestId("redo-button").click();
+    await page.keyboard.press("Control+Shift+z");
     await expect.poll(() => preview.locator('[data-design-tool-kind="image"]').count()).toBe(1);
   });
 
@@ -125,7 +125,7 @@ test.describe("sandboxed iframe bridge", () => {
     if (!box || !preview) throw new Error("Live desktop frame is unavailable");
     await expect(frame).toHaveAttribute("data-bridge-status", "ready");
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     await iframePointer(preview, "pointerdown", { x: 520, y: 180 });
     await iframePointer(preview, "pointermove", { x: 820, y: 315 });
     await iframePointer(preview, "pointerup", { x: 820, y: 315 });
@@ -148,7 +148,8 @@ test.describe("sandboxed iframe bridge", () => {
     await page.goto("/?demo=1");
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.getByTestId("shape-menu-button").click();
+    await page.getByTestId("shape-menu-rectangle").click();
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
     if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
@@ -165,9 +166,9 @@ test.describe("sandboxed iframe bridge", () => {
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
     await expect(page.locator("[data-testid^='node-selection-outline-']")).toHaveCount(1);
 
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(0);
-    await page.getByTestId("redo-button").click();
+    await page.keyboard.press("Control+Shift+z");
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
   });
 
@@ -177,7 +178,8 @@ test.describe("sandboxed iframe bridge", () => {
     const preview = frame.locator("iframe").contentFrame();
     if (!preview) throw new Error("The live desktop frame is unavailable");
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.getByTestId("shape-menu-button").click();
+    await page.getByTestId("shape-menu-rectangle").click();
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
     if (!box) throw new Error("The active frame creation layer is unavailable");
@@ -191,7 +193,8 @@ test.describe("sandboxed iframe bridge", () => {
     };
 
     await drawAt(0);
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.getByTestId("shape-menu-button").click();
+    await page.getByTestId("shape-menu-rectangle").click();
     await drawAt(200);
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(2);
 

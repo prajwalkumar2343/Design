@@ -28,7 +28,7 @@ function shapeState(page: Page) {
 async function drawRectangle(page: Page) {
   const frame = page.locator('[data-frame-id="desktop"]');
   const preview = frame.locator("iframe").contentFrame();
-  await page.getByTestId("tool-button-rectangle").click();
+  await page.keyboard.press("r");
   const creationLayer = frame.getByTestId("frame-creation-layer");
   const box = await creationLayer.boundingBox();
   if (!box) throw new Error("The active frame creation layer is unavailable");

@@ -213,10 +213,9 @@ test.describe("infinite canvas infrastructure", () => {
     });
     expect(hasOverlap).toBe(false);
 
-    await expect(page.getByTestId("undo-button")).toBeEnabled();
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect(frames).toHaveCount(beforeCount);
-    await page.getByTestId("redo-button").click();
+    await page.keyboard.press("Control+Shift+z");
     await expect(frames).toHaveCount(beforeCount + 1);
     await expect(frames.last()).toHaveAttribute("data-selected", "true");
   });
@@ -245,14 +244,18 @@ test.describe("infinite canvas infrastructure", () => {
     ).not.toBe(before);
   });
 
-  test("exposes professional zoom and fit controls", async ({ page }) => {
+  test("zooms with ctrl-wheel and fits all frames from the keyboard", async ({ page }) => {
     await openCanvas(page);
 
+    const { point } = await findBackgroundPoint(page);
     const before = await worldTransform(page);
-    await page.getByRole("button", { name: "Zoom in" }).click();
+    await page.mouse.move(point.x, point.y);
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -240);
+    await page.keyboard.up("Control");
     await expect.poll(() => worldTransform(page)).not.toBe(before);
 
-    await page.getByRole("button", { name: "Fit all frames" }).last().click();
+    await page.keyboard.press("0");
     await expect(page.getByTestId("canvas-world")).toBeVisible();
   });
 
@@ -265,7 +268,6 @@ test.describe("infinite canvas infrastructure", () => {
     const handTool = page.getByTestId("tool-button-hand");
 
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("tool-button-rectangle")).toBeEnabled();
     await expect(page.getByTestId("tool-button-text")).toBeEnabled();
 
     await page.keyboard.press("h");
@@ -284,7 +286,7 @@ test.describe("infinite canvas infrastructure", () => {
     await expect(page.getByRole("menu", { name: "Frame presets" })).toBeHidden();
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
     await page.keyboard.press("r");
-    await expect(page.getByTestId("tool-button-rectangle")).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByTestId("creation-mode-status")).toContainText("Rectangle mode");
     await page.keyboard.press("i");
     await expect(page.getByTestId("tool-button-image")).toHaveAttribute("aria-pressed", "true");
   });
@@ -293,14 +295,14 @@ test.describe("infinite canvas infrastructure", () => {
     await openCanvas(page);
 
     const selectTool = page.getByTestId("tool-button-select");
-    const rectangleTool = page.getByTestId("tool-button-rectangle");
+    const textTool = page.getByTestId("tool-button-text");
     const handTool = page.getByTestId("tool-button-hand");
 
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
-    await rectangleTool.click();
-    await expect(rectangleTool).toHaveAttribute("aria-pressed", "true");
-    await rectangleTool.click();
-    await expect(rectangleTool).toHaveAttribute("aria-pressed", "false");
+    await textTool.click();
+    await expect(textTool).toHaveAttribute("aria-pressed", "true");
+    await textTool.click();
+    await expect(textTool).toHaveAttribute("aria-pressed", "false");
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
 
     await handTool.click();
@@ -327,10 +329,9 @@ test.describe("infinite canvas infrastructure", () => {
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
 
-    const rectangleTool = page.getByTestId("tool-button-rectangle");
     const selectTool = page.getByTestId("tool-button-select");
-    await rectangleTool.click();
-    await expect(rectangleTool).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("r");
+    await expect(page.getByTestId("creation-mode-status")).toContainText("Rectangle mode");
 
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
@@ -343,7 +344,6 @@ test.describe("infinite canvas infrastructure", () => {
     await page.mouse.up();
 
     await expect.poll(() => preview.locator('[data-design-tool-kind="rectangle"]').count()).toBe(1);
-    await expect(rectangleTool).toHaveAttribute("aria-pressed", "false");
     await expect(selectTool).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByTestId("creation-mode-status")).toHaveCount(0);
   });
@@ -518,7 +518,7 @@ test.describe("infinite canvas infrastructure", () => {
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     const creationLayer = frame.getByTestId("frame-creation-layer");
     const box = await creationLayer.boundingBox();
     if (!box || !preview) throw new Error("The active frame creation layer is unavailable");
@@ -550,7 +550,6 @@ test.describe("infinite canvas infrastructure", () => {
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
 
-    await page.getByTestId("tool-button-rectangle").click();
     await page.getByTestId("shape-menu-button").click();
     await page.getByTestId("shape-menu-arrow").click();
 
@@ -576,7 +575,6 @@ test.describe("infinite canvas infrastructure", () => {
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
 
-    await page.getByTestId("tool-button-rectangle").click();
     await page.getByTestId("shape-menu-button").click();
     await page.getByTestId("shape-menu-arrow").click();
 
@@ -628,7 +626,7 @@ test.describe("infinite canvas infrastructure", () => {
     const frame = page.locator('[data-frame-id="desktop"]');
     const preview = frame.locator("iframe").contentFrame();
 
-    await page.getByTestId("tool-button-rectangle").click();
+    await page.keyboard.press("r");
     const radiusSlider = page.getByTestId("shape-radius-slider");
     await expect(radiusSlider).toBeVisible();
     await radiusSlider.fill("16");

@@ -324,3 +324,125 @@ describe("CanvasSurface creation threshold", () => {
     expect(createCommands(postSpy)).toHaveLength(1);
   });
 });
+
+describe("CanvasSurface drawing on empty canvas", () => {
+  const seedHtml = `<!doctype html><html><body><h1>Seed</h1></body></html>`;
+  const seed = (id: string, x = 0, y = 0) => ({
+    id,
+    name: id,
+    documentId: `${id}-doc`,
+    x,
+    y,
+    width: 400,
+    height: 300,
+    srcDoc: seedHtml,
+    background: "#ffffff",
+  });
+
+  beforeEach(() => {
+    try { window.localStorage.clear(); } catch {}
+    if (!Element.prototype.setPointerCapture) {
+      Element.prototype.setPointerCapture = () => undefined;
+      Element.prototype.releasePointerCapture = () => undefined;
+      Element.prototype.hasPointerCapture = () => false;
+    }
+  });
+
+  const canvasDrag = (surface: Element, fromX: number, toX: number, fromY = 0, toY = 0) => {
+    fireEvent.pointerDown(surface, { button: 0, isPrimary: true, pointerId: 5, clientX: fromX, clientY: fromY });
+    fireEvent.pointerMove(surface, { isPrimary: true, pointerId: 5, clientX: toX, clientY: toY });
+    fireEvent.pointerUp(surface, { isPrimary: true, pointerId: 5, clientX: toX, clientY: toY });
+  };
+
+  // jsdom reports zero-size rects, so the creation layer maps client pixels to
+  // world units at scaleX = frame.width.
+  const layerDrag = (layer: Element, from: number, to: number) => {
+    fireEvent.pointerDown(layer, { button: 0, isPrimary: true, pointerId: 6, clientX: from, clientY: 0 });
+    fireEvent.pointerMove(layer, { isPrimary: true, pointerId: 6, clientX: to, clientY: 0 });
+    fireEvent.pointerUp(layer, { isPrimary: true, pointerId: 6, clientX: to, clientY: 0 });
+  };
+
+  const createCommands = (spy: ReturnType<typeof vi.spyOn>) =>
+    spy.mock.calls
+      .map((call: unknown[]) => call[0])
+      .filter((message: unknown) =>
+        typeof message === "object" && message !== null &&
+        (message as { type?: string }).type === "command" &&
+        (message as { command?: { command?: string } }).command?.command === "create-element",
+      );
+
+  it("creates a chromeless freeform frame when dragging a shape on empty canvas", async () => {
+    render(<CanvasSurface frames={[seed("frame-1")]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    await waitFor(() => screen.getByTestId("frame-creation-layer"));
+    const surface = screen.getByTestId("canvas-surface");
+
+    canvasDrag(surface, 5000, 5200, 4000, 4150);
+
+    const freeform = document.querySelectorAll("[data-frame-id][data-freeform='true']");
+    expect(freeform).toHaveLength(1);
+    // The seeded frame is untouched — the element lives in the new frame.
+    expect(document.querySelectorAll("[data-frame-id]")).toHaveLength(2);
+  });
+
+  it("draws a shape on a completely frame-less canvas", () => {
+    render(<CanvasSurface frames={[]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    const surface = screen.getByTestId("canvas-surface");
+
+    canvasDrag(surface, 100, 300, 100, 250);
+
+    expect(document.querySelectorAll("[data-frame-id][data-freeform='true']")).toHaveLength(1);
+  });
+
+  it("does not mint a shape on a sub-threshold canvas drag", async () => {
+    render(<CanvasSurface frames={[seed("frame-1")]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    await waitFor(() => screen.getByTestId("frame-creation-layer"));
+    const surface = screen.getByTestId("canvas-surface");
+
+    canvasDrag(surface, 5000, 5002);
+
+    expect(document.querySelectorAll("[data-freeform='true']")).toHaveLength(0);
+    expect(document.querySelectorAll("[data-frame-id]")).toHaveLength(1);
+    expect(surface.getAttribute("data-interaction")).toBe("idle");
+  });
+
+  it("places text on the canvas with a click and removes it on undo", async () => {
+    render(<CanvasSurface frames={[seed("frame-1")]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "t" });
+    const surface = screen.getByTestId("canvas-surface");
+
+    canvasDrag(surface, 5000, 5000);
+
+    expect(document.querySelectorAll("[data-frame-id][data-freeform='true']")).toHaveLength(1);
+
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-freeform='true']")).toHaveLength(0),
+    );
+  });
+
+  it("lets a creation tool draw inside an unselected frame", async () => {
+    render(
+      <CanvasSurface
+        frames={[seed("frame-1"), seed("frame-2", 500, 400)]}
+        disableLocalPersistence
+      />,
+    );
+    fireEvent.keyDown(window, { key: "r" });
+    // With a creation tool active every live frame gets a creation layer.
+    const layers = await waitFor(() => {
+      const found = screen.getAllByTestId("frame-creation-layer");
+      expect(found).toHaveLength(2);
+      return found;
+    });
+    const frames = document.querySelectorAll("[data-frame-id]");
+    const secondIframe = frames[1]!.querySelector("iframe") as HTMLIFrameElement;
+    const postSpy = vi.spyOn(secondIframe.contentWindow as Window, "postMessage");
+
+    layerDrag(layers[1]!, 0, 0.2);
+    expect(createCommands(postSpy)).toHaveLength(1);
+    expect(document.querySelectorAll("[data-freeform='true']")).toHaveLength(0);
+  });
+});

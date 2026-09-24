@@ -63,7 +63,7 @@ test.describe("clipboard paste", () => {
     await expect(pasted).toBeVisible();
 
     // One undo restores the demo page with all four frames.
-    await page.getByTestId("undo-button").click();
+    await page.keyboard.press("Control+z");
     await expect(page.locator(frameSelector)).toHaveCount(4);
   });
 

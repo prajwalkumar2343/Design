@@ -44,35 +44,6 @@ export function zoomCameraAtPoint(
   };
 }
 
-/** Number of eased animation steps used to smooth a zoom transition. */
-export const ZOOM_SMOOTH_STEPS = 6;
-
-/** Eases a normalized progress value so zoom decelerates toward its target. */
-export function easeOutCubic(progress: number): number {
-  return 1 - Math.pow(1 - progress, 3);
-}
-
-/**
- * Returns the camera at `progress` (0..1) along an eased zoom transition from
- * `from` to `to`, keeping the world point beneath `anchor` stationary so the
- * motion reads as pure zoom rather than a pan.
- */
-export function cameraAtZoomProgress(
-  from: Camera,
-  to: Camera,
-  anchor: Point,
-  progress: number,
-): Camera {
-  const eased = easeOutCubic(progress);
-  const zoom = from.zoom + (to.zoom - from.zoom) * eased;
-  const worldPoint = screenToWorld(anchor, from);
-  return {
-    x: worldPoint.x - anchor.x / zoom,
-    y: worldPoint.y - anchor.y / zoom,
-    zoom,
-  };
-}
-
 export function fitRect(rect: Rect, viewport: Size, padding = 0): Camera {
   const availableWidth = Math.max(0, viewport.width - padding * 2);
   const availableHeight = Math.max(0, viewport.height - padding * 2);

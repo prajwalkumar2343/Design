@@ -911,7 +911,15 @@ function ShaderDesignPanel({
   const commitGeometry = (patch: (next: number) => Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height">>, raw: string) => {
     const next = numericValue(raw);
     if (next === null) return;
-    onUpdateShaderElement?.(element.id, patch(next));
+    const update: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height" | "radius">> = patch(next);
+    // A size edit can shrink the pill cap below the stored radius; clamp it
+    // so the canvas renders what this inspector shows.
+    if (update.width !== undefined || update.height !== undefined) {
+      const maxRadius = maxShaderElementRadius({ width: update.width ?? element.width, height: update.height ?? element.height });
+      const stored = element.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS;
+      if (stored > maxRadius) update.radius = maxRadius;
+    }
+    onUpdateShaderElement?.(element.id, update);
   };
   return (
     <>

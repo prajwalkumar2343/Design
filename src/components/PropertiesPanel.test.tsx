@@ -374,6 +374,21 @@ describe("PropertiesPanel shader inspector", () => {
     expect(onUpdateShaderElement).toHaveBeenCalledWith("shader-el-1", { width: 96 });
   });
 
+  it("clamps the stored radius when a size edit shrinks below it", () => {
+    const onUpdateShaderElement = vi.fn();
+    render(
+      <PropertiesPanel
+        {...shaderProps}
+        shaderElements={[{ ...shaderElement, radius: 60 }]}
+        onUpdateShaderElement={onUpdateShaderElement}
+      />,
+    );
+    const w = screen.getByTestId("property-shader-width");
+    fireEvent.change(w, { target: { value: "100" } });
+    fireEvent.blur(w);
+    expect(onUpdateShaderElement).toHaveBeenCalledWith("shader-el-1", { width: 100, radius: 50 });
+  });
+
   it("rounds corners through the radius slider", () => {
     const onUpdateShaderElement = vi.fn();
     render(<PropertiesPanel {...shaderProps} onUpdateShaderElement={onUpdateShaderElement} />);

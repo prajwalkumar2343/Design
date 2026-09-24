@@ -3,10 +3,9 @@
  *
  * Boundary responsibilities: bridge-runtime safety strip, editor-attribute
  * stripping, lifting <style>/<script>/head items into typed slots, merging
- * <html>/<body> attributes onto the scope-root wrapper (and recording them
- * for the emitted useDocumentAttributes hook), and appending the render-time
- * theme asset the canvas would inject (token theme for design docs,
- * WIREFRAME_THEME_CSS for wireframes).
+ * <html>/<body> attributes onto the scope-root wrapper, and appending the
+ * render-time theme asset the canvas would inject (token theme for design
+ * docs, WIREFRAME_THEME_CSS for wireframes).
  */
 import { stripBridgeRuntime } from "../code-export";
 import { WIREFRAME_THEME_CSS } from "../../frame/wireframe-theme";
@@ -240,8 +239,8 @@ export function parseExportDocument(
       code: "script-preserved",
       severity: "warning",
       message: asset.src
-        ? `A <script src="${asset.src}"> was preserved; it runs after mount.`
-        : "An inline <script> was preserved; it runs after mount via a marker element.",
+        ? `A <script src="${asset.src}"> was preserved; it runs after mount where the host enables scripts.`
+        : "An inline <script> was preserved; it runs after mount where the host enables scripts.",
       componentName,
       detail: asset.src ?? "inline script",
     });
@@ -358,28 +357,20 @@ export function parseExportDocument(
       continue;
     }
     if (tag === "link") {
-      const attributes = elementAttrRecord(element);
-      head.push({ kind: "link", attributes });
       const href = element.getAttribute("href") ?? "";
       if (linkRel(element).split(/\s+/).includes("stylesheet")) {
-        if (isRemoteUrl(href)) {
-          notes.push({
-            code: "remote-stylesheet",
-            severity: "warning",
-            message: "A remote stylesheet <link> was kept; it needs network access.",
-            componentName,
-            detail: href.slice(0, 200),
-          });
-        } else if (isRelativeUrl(href)) {
-          notes.push({
-            code: "relative-url-unresolved",
-            severity: "warning",
-            message: `Stylesheet "${href.slice(0, 120)}" is relative and is not bundled in the export.`,
-            componentName,
-            detail: href.slice(0, 120),
-          });
-        }
-      } else if (isRemoteUrl(href)) {
+        notes.push({
+          code: "stylesheet-dropped",
+          severity: "warning",
+          message:
+            "A stylesheet <link> was dropped; the external sheet would load global, unscoped CSS.",
+          componentName,
+          detail: href.slice(0, 200) || undefined,
+        });
+        continue;
+      }
+      head.push({ kind: "link", attributes: elementAttrRecord(element) });
+      if (isRemoteUrl(href)) {
         notes.push({
           code: "remote-asset",
           severity: "warning",
@@ -395,7 +386,7 @@ export function parseExportDocument(
     if (node) head.push({ kind: "element", node });
   }
 
-  // html/body attributes feed both the wrapper and the emitted hook.
+  // html/body attributes merge onto the scope-root wrapper.
   const htmlAttrs: DocumentAttr[] = Array.from(document.documentElement.attributes)
     .filter((attr) => attr.name !== "xmlns")
     .map((attr) => ({ name: attr.name, value: attr.value }));

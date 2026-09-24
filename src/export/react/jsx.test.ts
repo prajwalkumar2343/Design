@@ -210,6 +210,21 @@ describe("elementToJsx", () => {
     expect(ctx.notes.map((n) => n.code)).toEqual(["remote-asset", "relative-url-unresolved"]);
   });
 
+  it("drops a body-position stylesheet link with a note", () => {
+    const ctx = makeCtx();
+    const doc = new DOMParser().parseFromString(
+      '<body><link rel="stylesheet" href="https://cdn.example.com/x.css"><link rel="icon" href="f.png"></body>',
+      "text/html",
+    );
+    const out: JsxNode[] = [];
+    childrenToJsx(doc.body, out, ctx);
+    expect(out.map((n) => (n.kind === "element" ? n.tag : n.kind))).toEqual(["link"]);
+    expect(ctx.notes.map((n) => n.code)).toEqual([
+      "stylesheet-dropped",
+      "relative-url-unresolved",
+    ]);
+  });
+
   it("converts a marked script position into a ScriptNode element", () => {
     const asset: ScriptAsset = {
       markerId: "s0",
@@ -377,7 +392,7 @@ describe("printJsx", () => {
 });
 
 describe("printComponent", () => {
-  it("emits imports, the hook call, and a fragment with head items", () => {
+  it("emits imports and a fragment with head items", () => {
     const jsx: JsxElement = {
       kind: "element",
       tag: "div",
@@ -392,7 +407,7 @@ describe("printComponent", () => {
       head: [
         { kind: "title", text: "Hello & bye" },
         { kind: "meta", attributes: { name: "description", content: "d" } },
-        { kind: "link", attributes: { rel: "stylesheet", href: "https://x/a.css" } },
+        { kind: "link", attributes: { rel: "icon", href: "https://x/f.png" } },
       ],
       headScripts: [
         {
@@ -405,20 +420,17 @@ describe("printComponent", () => {
       cssImport: "./Card.css",
       importsFontsCss: true,
       usesScriptNode: true,
-      documentAttributes: { html: { lang: "en" }, body: { class: "dark" } },
     });
-    expect(out).toBe(`import { useDocumentAttributes } from "./useDocumentAttributes";
-import { ScriptNode } from "./ScriptNode";
+    expect(out).toBe(`import { ScriptNode } from "./ScriptNode";
 import "./Card.css";
 import "./fonts.css";
 
 export default function Card() {
-  useDocumentAttributes({"lang":"en"}, {"class":"dark"});
   return (
     <>
       <title>{"Hello & bye"}</title>
       <meta name="description" content="d" />
-      <link rel="stylesheet" href="https://x/a.css" />
+      <link rel="icon" href="https://x/f.png" />
       <ScriptNode attributes={{"src":"a.js"}} />
       <div className="dc-x">hi</div>
     </>

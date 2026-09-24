@@ -43,16 +43,12 @@ describe("parseExportDocument partition", () => {
     expect(doc.documentMeta).toEqual({ charset: "utf-8", viewport: "width=device-width", lang: undefined });
     expect(doc.head).toEqual([
       { kind: "meta", attributes: { name: "description", content: "hello" } },
-      {
-        kind: "link",
-        attributes: { rel: "stylesheet", href: "https://cdn.example.com/x.css" },
-      },
       { kind: "link", attributes: { rel: "icon", href: "favicon.png" } },
       { kind: "title", text: "Hello" },
     ]);
     expect(doc.notes.map((n) => n.code)).toEqual([
       "meta-refresh-dropped",
-      "remote-stylesheet",
+      "stylesheet-dropped",
       "base-dropped",
     ]);
   });

@@ -156,15 +156,11 @@ function noteUrl(
     });
     return;
   }
-  const isStylesheetLink =
-    tag === "link" && (element.getAttribute("rel") ?? "").toLowerCase().includes("stylesheet");
   if (kind === "remote" && tag !== "a" && tag !== "area") {
     ctx.notes.push({
-      code: isStylesheetLink ? "remote-stylesheet" : "remote-asset",
+      code: "remote-asset",
       severity: "warning",
-      message: isStylesheetLink
-        ? "A remote stylesheet <link> was kept; it needs network access."
-        : `<${tag}> loads a remote URL that needs network access.`,
+      message: `<${tag}> loads a remote URL that needs network access.`,
       componentName: ctx.componentName,
       detail: trimmed.slice(0, 200),
     });
@@ -319,6 +315,24 @@ function elementToJsxInternal(
       message: "A <base> element was dropped; it would hijack relative URLs in the host app.",
       componentName: ctx.componentName,
       detail: element.getAttribute("href") ?? undefined,
+    });
+    return null;
+  }
+
+  // A stylesheet link outside <head> would render as a real <link> whose
+  // rules apply globally, so it is dropped like the head links in document.ts.
+  if (
+    namespace === "html" &&
+    tag === "link" &&
+    (element.getAttribute("rel") ?? "").toLowerCase().split(/\s+/).includes("stylesheet")
+  ) {
+    ctx.notes.push({
+      code: "stylesheet-dropped",
+      severity: "warning",
+      message:
+        "A stylesheet <link> was dropped; the external sheet would load global, unscoped CSS.",
+      componentName: ctx.componentName,
+      detail: (element.getAttribute("href") ?? "").slice(0, 200) || undefined,
     });
     return null;
   }
@@ -615,29 +629,17 @@ export interface PrintComponentInput {
   cssImport?: string;
   importsFontsCss: boolean;
   usesScriptNode: boolean;
-  /** html/body attribute pairs for the emitted useDocumentAttributes hook. */
-  documentAttributes?: {
-    html: Record<string, string>;
-    body: Record<string, string>;
-  };
 }
 
 /** Wraps the printed JSX tree in a complete .tsx module. */
 export function printComponent(input: PrintComponentInput): string {
   const lines: string[] = [];
-  if (input.documentAttributes) {
-    lines.push(`import { useDocumentAttributes } from "./useDocumentAttributes";`);
-  }
   if (input.usesScriptNode) {
     lines.push(`import { ScriptNode } from "./ScriptNode";`);
   }
   if (input.cssImport) lines.push(`import "${input.cssImport}";`);
   if (input.importsFontsCss) lines.push(`import "./fonts.css";`);
   if (lines.length > 0) lines.push("");
-
-  const hookCall = input.documentAttributes
-    ? `useDocumentAttributes(${JSON.stringify(input.documentAttributes.html)}, ${JSON.stringify(input.documentAttributes.body)});`
-    : null;
 
   const topNodes: JsxNode[] = [
     ...input.head.map(headItemToJsx),
@@ -647,7 +649,6 @@ export function printComponent(input: PrintComponentInput): string {
   const fragment = topNodes.length > 1;
 
   lines.push(`export default function ${input.componentName}() {`);
-  if (hookCall) lines.push(`  ${hookCall}`);
   lines.push(`  return (`);
   if (fragment) lines.push(`    <>`);
   for (const node of topNodes) {

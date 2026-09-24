@@ -116,7 +116,6 @@ describe("buildReactExportProject", { timeout: 30000 }, () => {
       "src/design/tokens.css",
       "src/design/tokens.json",
       "src/design/fonts.css",
-      "src/design/useDocumentAttributes.ts",
       "src/design/export-manifest.json",
     ]);
     expect(project!.components.map((c) => c.componentName)).toEqual([
@@ -165,11 +164,39 @@ describe("buildReactExportProject", { timeout: 30000 }, () => {
     );
     const project = buildReactExportProject(state, "X")!;
     expect(project.usesScriptNode).toBe(true);
-    expect(project.files.some((f) => f.path === "src/design/ScriptNode.tsx")).toBe(true);
+    const scriptNode = project.files.find((f) => f.path === "src/design/ScriptNode.tsx")!;
+    // Scripts are inert unless a host opts in; the generated App opts in.
+    expect(scriptNode.text).toContain("export function EnableScripts");
+    expect(scriptNode.text).toContain("createContext(false)");
     const tsx = project.files.find((f) => f.path.endsWith("PageOne.tsx"))!.text;
     expect(tsx).toContain('import { ScriptNode } from "./ScriptNode";');
     expect(tsx).toContain('<ScriptNode code={"window.a = 1;"} />');
+    const app = project.files.find((f) => f.path === "src/App.tsx")!.text;
+    expect(app).toContain('import { EnableScripts } from "./design/ScriptNode";');
+    expect(app).toContain("<EnableScripts><PageOne /></EnableScripts>");
     expect(project.notes.map((n) => n.code)).toContain("script-preserved");
+  });
+
+  it("drops stylesheet links and @import rules instead of loading global CSS", () => {
+    const state = stateWith(
+      `<html><head>
+      <link rel="stylesheet" href="https://cdn.example.com/global.css">
+      <link rel="icon" href="f.png">
+      <style>@import "https://cdn.example.com/other.css"; body { display: none }</style>
+      </head><body><link rel="stylesheet" href="more.css"><p>x</p></body></html>`,
+    );
+    const project = buildReactExportProject(state, "X")!;
+    const index = project.files.find((f) => f.path === "index.html")!.text;
+    expect(index).not.toContain("stylesheet");
+    expect(index).toContain('<link rel="icon" href="f.png" />');
+    const tsx = project.files.find((f) => f.path.endsWith("PageOne.tsx"))!.text;
+    expect(tsx).not.toContain("stylesheet");
+    const css = project.files.find((f) => f.path.endsWith("PageOne.css"))!.text;
+    expect(css).not.toContain("@import");
+    expect(css).toContain(".dc-page-one{display:none}");
+    expect(
+      project.notes.filter((n) => n.code === "stylesheet-dropped"),
+    ).toHaveLength(3);
   });
 
   it("renders a single page without the switcher", () => {

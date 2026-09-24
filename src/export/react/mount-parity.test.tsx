@@ -14,6 +14,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createElement } from "react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { createServer, type ViteDevServer } from "vite";
 
@@ -61,7 +62,7 @@ const SCRIPT_DOC = `<!doctype html>
   <p>second</p>
 </body></html>`;
 
-const HARNESS_TSX = `import { createElement, type ComponentType } from "react";
+const HARNESS_TSX = `import { createElement, StrictMode, type ComponentType } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -69,6 +70,14 @@ export function mount(container: Element, Component: ComponentType): Root {
   const root = createRoot(container);
   flushSync(() => {
     root.render(createElement(Component));
+  });
+  return root;
+}
+
+export function mountStrict(container: Element, Component: ComponentType): Root {
+  const root = createRoot(container);
+  flushSync(() => {
+    root.render(createElement(StrictMode, null, createElement(Component)));
   });
   return root;
 }
@@ -265,7 +274,7 @@ describe("mount parity", { timeout: 60000 }, () => {
     }
   }, 60_000);
 
-  it("applies document-level attributes and hoists the title", async () => {
+  it("keeps document attributes on the scope root and hoists the title", async () => {
     const harness = (await server.ssrLoadModule(
       join(FIXTURE_DIR, "mount-harness.tsx"),
     )) as { mount: (el: Element, c: never) => { unmount: () => void } };
@@ -274,11 +283,17 @@ describe("mount parity", { timeout: 60000 }, () => {
       default: never;
     };
     const container = document.createElement("div");
+    document.body.appendChild(container);
     const previousLang = document.documentElement.getAttribute("lang");
     try {
       const root = harness.mount(container, mod.default);
       await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
-      expect(document.documentElement.getAttribute("lang")).toBe("en");
+      // The wrapper carries merged html/body attributes; the real document
+      // is never touched, so a host app embedding the component is safe.
+      expect(
+        container.querySelector(".dc-figma-paste")?.getAttribute("lang"),
+      ).toBe("en");
+      expect(document.documentElement.getAttribute("lang")).toBe(previousLang);
       root.unmount();
       await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
       expect(document.documentElement.getAttribute("lang")).toBe(previousLang);
@@ -287,33 +302,59 @@ describe("mount parity", { timeout: 60000 }, () => {
     }
   }, 60_000);
 
-  it("re-creates scripts at their original position on mount", async () => {
+  it("runs authored scripts only inside EnableScripts, once under StrictMode", async () => {
     const harness = (await server.ssrLoadModule(
       join(FIXTURE_DIR, "mount-harness.tsx"),
-    )) as { mount: (el: Element, c: never) => { unmount: () => void } };
+    )) as {
+      mount: (el: Element, c: never) => { unmount: () => void };
+      mountStrict: (el: Element, c: never) => { unmount: () => void };
+    };
     const scripted = project.components.find((c) => c.slug === "scripted-page")!;
     const mod = (await server.ssrLoadModule(join(FIXTURE_DIR, scripted.fileName))) as {
       default: never;
     };
+    const scriptNodeModule = (await server.ssrLoadModule(
+      join(FIXTURE_DIR, "src/design/ScriptNode.tsx"),
+    )) as { EnableScripts: never };
+
+    const appended: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of Array.from(record.addedNodes)) {
+          if (node instanceof HTMLScriptElement) {
+            appended.push(node.getAttribute("src") ?? "inline");
+          }
+        }
+      }
+    });
+
     const container = document.createElement("div");
+    document.body.appendChild(container);
+    observer.observe(container, { childList: true, subtree: true });
     try {
-      const root = harness.mount(container, mod.default);
+      // Without the opt-in a dropped-in component stays inert.
+      const plain = harness.mount(container, mod.default);
       await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
-      const markers = Array.from(container.querySelectorAll("[data-script-node]"));
-      // One head script (top of component) + one inline body script marker.
-      expect(markers).toHaveLength(2);
-      const scripts = Array.from(container.querySelectorAll("script"));
-      expect(scripts.map((s) => s.getAttribute("src") ?? "inline")).toEqual([
-        "https://cdn.example.com/head.js",
-        "inline",
-      ]);
-      expect(scripts[1]!.textContent).toBe("window.__inline = 1;");
+      expect(container.querySelectorAll("[data-script-node]")).toHaveLength(2);
+      expect(appended).toEqual([]);
+      plain.unmount();
+      await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
+
+      // With EnableScripts under StrictMode each script element is appended
+      // exactly once. The replay cleanup removes it, but it ran only once.
+      const enabled = () =>
+        createElement(scriptNodeModule.EnableScripts, null, createElement(mod.default));
+      const strict = harness.mountStrict(container, enabled as never);
+      await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
+      expect(appended).toEqual(["https://cdn.example.com/head.js", "inline"]);
+      expect(container.querySelectorAll("script")).toHaveLength(0);
       // React hoists the emitted <title> into the real document head.
       expect(document.title).toBe("Scripted");
-      root.unmount();
+      strict.unmount();
       await new Promise((resolveFlush) => setTimeout(resolveFlush, 0));
       expect(container.querySelectorAll("script")).toHaveLength(0);
     } finally {
+      observer.disconnect();
       container.remove();
     }
   }, 60_000);

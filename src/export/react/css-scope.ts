@@ -5,6 +5,8 @@
  * CSS is global at bundle time). Declarations are never rewritten — the only
  * semantic touches are selector prefixes, per-page @keyframes renames, and
  * extracted `dc-i{n}` rules appended for inline !important declarations.
+ * `@import` rules are dropped with a note: the external sheet would load
+ * global, unscoped CSS, and a pure exporter cannot fetch and rewrite it.
  */
 import { generate, parse, walk, type CssTreeList, type CssTreeNode } from "css-tree";
 
@@ -283,8 +285,6 @@ function scopeRuleList(
   keyframeRenames: Map<string, string>,
   notes: ExportNote[],
   componentName: string,
-  hoistedImports: CssTreeNode[],
-  topLevel: boolean,
 ): CssTreeNode[] {
   const out: CssTreeNode[] = [];
   for (const node of nodes) {
@@ -309,8 +309,19 @@ function scopeRuleList(
       continue;
     }
     const name = nodeName(node).toLowerCase();
-    if (name === "import" && topLevel) {
-      hoistedImports.push(node);
+    if (name === "import") {
+      const prelude = node.prelude;
+      notes.push({
+        code: "stylesheet-dropped",
+        severity: "warning",
+        message:
+          "An @import rule was dropped; the external sheet would load global, unscoped CSS.",
+        componentName,
+        detail:
+          typeof prelude === "object" && prelude !== null
+            ? generate(prelude as CssTreeNode).slice(0, 200)
+            : undefined,
+      });
       continue;
     }
     if (name.endsWith("keyframes")) {
@@ -335,8 +346,6 @@ function scopeRuleList(
           keyframeRenames,
           notes,
           componentName,
-          hoistedImports,
-          false,
         );
       }
       out.push(node);
@@ -353,8 +362,6 @@ function scopeRuleList(
         keyframeRenames,
         notes,
         componentName,
-        hoistedImports,
-        false,
       );
     }
     out.push(node);
@@ -371,9 +378,9 @@ const ASSET_LABELS: Record<StyleAsset["origin"], string | null> = {
 /**
  * Scopes every stylesheet asset under `.${scopeClassName}` and appends the
  * extracted `dc-i{n}` !important rules. Returns the concatenated CSS text
- * (hoisted `@import`s first) plus any scoping notes. Unparseable stylesheets
- * are emitted unscoped at the end of the file with a fallback note — losing
- * the CSS entirely would cost more fidelity than the leak risks.
+ * plus any scoping notes. Unparseable stylesheets are emitted unscoped at
+ * the end of the file with a fallback note — losing the CSS entirely would
+ * cost more fidelity than the leak risks.
  */
 export function scopeStylesheet(input: {
   assets: StyleAsset[];
@@ -383,7 +390,6 @@ export function scopeStylesheet(input: {
 }): { cssText: string; notes: ExportNote[] } {
   const { assets, scopeClassName, extractedRules, componentName } = input;
   const notes: ExportNote[] = [];
-  const hoistedImports: CssTreeNode[] = [];
   const sections: string[] = [];
 
   const parsedAssets = assets.map((asset) => {
@@ -433,8 +439,6 @@ export function scopeStylesheet(input: {
       keyframeRenames,
       notes,
       componentName,
-      hoistedImports,
-      true,
     );
     if (keyframeRenames.size > 0) renameKeyframeReferences(ast, keyframeRenames);
     const body = scoped.map((node) => generate(node)).join("\n");
@@ -453,9 +457,12 @@ export function scopeStylesheet(input: {
   }
 
   if (extractedRules.length > 0) {
+    // dc-i{n} classes land on the scope root itself for <html>/<body> inline
+    // styles and on descendants for element styles, so both selector forms
+    // are emitted.
     const lines = extractedRules.map(
       (rule) =>
-        `.${scopeClassName} .${rule.className} {${rule.declarations
+        `.${scopeClassName}.${rule.className},.${scopeClassName} .${rule.className} {${rule.declarations
           .map((decl) => `${decl.property}: ${decl.value};`)
           .join("")}}`,
     );
@@ -464,8 +471,7 @@ export function scopeStylesheet(input: {
     );
   }
 
-  const importText = hoistedImports.map((node) => generate(node)).join("\n");
-  const cssText = [importText, ...sections]
+  const cssText = sections
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   return { cssText: cssText ? `${cssText}\n` : "", notes };

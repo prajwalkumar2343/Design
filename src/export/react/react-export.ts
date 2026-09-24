@@ -28,7 +28,6 @@ import {
   emitReadme,
   emitScriptNodeTsx,
   emitTsConfig,
-  emitUseDocumentAttributesTs,
   emitViteConfig,
   type ScaffoldHeadItem,
 } from "./scaffold";
@@ -60,7 +59,7 @@ export interface ExportNote {
 
 export type ExportNoteCode =
   | "script-preserved"
-  | "remote-stylesheet"
+  | "stylesheet-dropped"
   | "remote-asset"
   | "relative-url-unresolved"
   | "form-neutralized"
@@ -216,7 +215,6 @@ export function buildReactExportProject(
   const notes: ExportNote[] = [];
   const fonts = new Map<string, FontOption>();
   let usesScriptNode = false;
-  let usesDocumentAttributes = false;
   let firstExportDoc: ReturnType<typeof parseExportDocument> | null = null;
 
   for (const document of documents) {
@@ -255,14 +253,6 @@ export function buildReactExportProject(
     const pageCss = `.${scopeClassName} { margin: 8px; }\n\n${scoped.cssText}`;
     const cssFileName = `${componentName}.css`;
 
-    const documentAttributes =
-      exportDoc.htmlAttrs.length > 0 || exportDoc.bodyAttrs.length > 0
-        ? {
-            html: Object.fromEntries(exportDoc.htmlAttrs.map((attr) => [attr.name, attr.value])),
-            body: Object.fromEntries(exportDoc.bodyAttrs.map((attr) => [attr.name, attr.value])),
-          }
-        : undefined;
-
     const tsx = printComponent({
       componentName,
       jsx: exportDoc.root,
@@ -271,11 +261,9 @@ export function buildReactExportProject(
       cssImport: `./${cssFileName}`,
       importsFontsCss: documentFonts.length > 0,
       usesScriptNode: exportDoc.scripts.length > 0,
-      documentAttributes,
     });
 
     usesScriptNode ||= exportDoc.scripts.length > 0;
-    usesDocumentAttributes ||= documentAttributes !== undefined;
 
     const tsxPath = `src/design/${componentName}.tsx`;
     designFiles.push({ path: tsxPath, text: tsx });
@@ -303,9 +291,6 @@ export function buildReactExportProject(
   if (fonts.size > 0) {
     designFiles.push({ path: "src/design/fonts.css", text: `${buildFontFaceCss([...fonts.values()])}\n` });
   }
-  if (usesDocumentAttributes) {
-    designFiles.push({ path: "src/design/useDocumentAttributes.ts", text: emitUseDocumentAttributesTs() });
-  }
   if (usesScriptNode) {
     designFiles.push({ path: "src/design/ScriptNode.tsx", text: emitScriptNodeTsx() });
   }
@@ -328,14 +313,7 @@ export function buildReactExportProject(
     ...(fonts.size > 0
       ? { fonts: { families: [...fonts.values()].map((font) => font.name), file: "fonts.css" as const } }
       : {}),
-    ...(usesScriptNode || usesDocumentAttributes
-      ? {
-          runtimeHelpers: [
-            ...(usesScriptNode ? ["ScriptNode.tsx"] : []),
-            ...(usesDocumentAttributes ? ["useDocumentAttributes.ts"] : []),
-          ],
-        }
-      : {}),
+    ...(usesScriptNode ? { runtimeHelpers: ["ScriptNode.tsx"] } : {}),
     notes,
   };
   designFiles.push({
@@ -356,6 +334,7 @@ export function buildReactExportProject(
     })),
     documentMeta: firstExportDoc?.documentMeta ?? {},
     head: scaffoldHead,
+    usesScriptNode,
     notes,
   };
 

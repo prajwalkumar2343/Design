@@ -93,13 +93,26 @@ describe("scopeStylesheet at-rules", () => {
     );
   });
 
-  it("hoists @import above scoped rules", () => {
-    const { cssText } = scope(
+  it("drops @import rules; the external sheet would load global unscoped CSS", () => {
+    const { cssText, notes } = scope(
       '.x { color: red } @import "https://example.com/a.css"; .y { top: 0 }',
     );
-    expect(cssText).toBe(
-      '@import "https://example.com/a.css";\n\n.dc-page .x{color:red}\n.dc-page .y{top:0}\n',
+    expect(cssText).toBe(".dc-page .x{color:red}\n.dc-page .y{top:0}\n");
+    expect(notes).toEqual([
+      expect.objectContaining({
+        code: "stylesheet-dropped",
+        severity: "warning",
+        detail: '"https://example.com/a.css"',
+      }),
+    ]);
+  });
+
+  it("drops @import nested inside a conditional at-rule", () => {
+    const { cssText, notes } = scope(
+      '@media screen { @import "a.css"; .x { color: red } }',
     );
+    expect(cssText).toBe("@media screen{.dc-page .x{color:red}}\n");
+    expect(notes).toEqual([expect.objectContaining({ code: "stylesheet-dropped" })]);
   });
 
   it("passes @font-face and @property through unscoped", () => {
@@ -170,7 +183,7 @@ describe("scopeStylesheet assets and extraction", () => {
       componentName: "P",
     });
     expect(cssText).toBe(
-      ".dc-p .x{color:red}\n\n/* !important declarations extracted from inline styles */\n.dc-p .dc-i0 {margin-top: 4px !important;color: red !important;}\n",
+      ".dc-p .x{color:red}\n\n/* !important declarations extracted from inline styles */\n.dc-p.dc-i0,.dc-p .dc-i0 {margin-top: 4px !important;color: red !important;}\n",
     );
   });
 

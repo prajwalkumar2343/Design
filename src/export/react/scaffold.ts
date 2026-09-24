@@ -23,6 +23,8 @@ export interface ScaffoldInput {
   documentMeta: { charset?: string; viewport?: string; lang?: string };
   /** First document's head items, serialized as HTML into index.html. */
   head: ScaffoldHeadItem[];
+  /** True when design/ScriptNode.tsx was emitted; App opts pages into it. */
+  usesScriptNode: boolean;
   notes: ExportNote[];
 }
 
@@ -159,17 +161,22 @@ createRoot(document.getElementById("root")!).render(
 }
 
 /** One page renders directly; many pages get a hash switcher that mounts a
- *  single page at a time so page styles never overlap. */
+ *  single page at a time so page styles never overlap. Preserved scripts are
+ *  opted in here; design/ alone leaves them inert (see ScriptNode.tsx). */
 export function emitAppTsx(input: ScaffoldInput): string {
   const imports = input.pages
     .map((page) => `import ${page.componentName} from "./design/${page.componentName}";`)
     .join("\n");
+  const scriptsImport = input.usesScriptNode
+    ? `\nimport { EnableScripts } from "./design/ScriptNode";`
+    : "";
   if (input.pages.length === 1) {
     const page = input.pages[0]!;
-    return `${imports}
+    const pageElement = `<${page.componentName} />`;
+    return `${imports}${scriptsImport}
 
 export default function App() {
-  return <${page.componentName} />;
+  return ${input.usesScriptNode ? `<EnableScripts>${pageElement}</EnableScripts>` : pageElement};
 }
 `;
   }
@@ -180,7 +187,7 @@ export default function App() {
     )
     .join("\n");
   return `import { useEffect, useState } from "react";
-${imports}
+${imports}${scriptsImport}
 
 const pages = [
 ${table}
@@ -203,7 +210,7 @@ export default function App() {
   const ActivePage = active.Component;
 
   return (
-    <>
+    ${input.usesScriptNode ? "<EnableScripts>" : "<>"}
       <ActivePage />
       <nav className="app-switcher" aria-label="Exported pages">
         {pages.map((page) => (
@@ -216,7 +223,7 @@ export default function App() {
           </a>
         ))}
       </nav>
-    </>
+    ${input.usesScriptNode ? "</EnableScripts>" : "</>"}
   );
 }
 `;
@@ -277,7 +284,20 @@ body {
 
 /** design/ScriptNode.tsx — emitted only when a document has <script>. */
 export function emitScriptNodeTsx(): string {
-  return `import { useEffect, useRef } from "react";
+  return `import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+
+/**
+ * Authored scripts ran inside the canvas's sandboxed iframe. Re-running them
+ * in a consuming app would hand that app's origin and privileges to authored
+ * or remote code, so ScriptNode stays inert unless the host opts in by
+ * wrapping the tree in <EnableScripts>. The generated App does this; a copy
+ * of src/design/ dropped into another app does not.
+ */
+const ScriptsEnabled = createContext(false);
+
+export function EnableScripts({ children }: { children: ReactNode }) {
+  return <ScriptsEnabled.Provider value={true}>{children}</ScriptsEnabled.Provider>;
+}
 
 export interface ScriptNodeProps {
   /** Attributes copied onto the created <script> (src, type, async, defer…). */
@@ -287,19 +307,22 @@ export interface ScriptNodeProps {
 }
 
 /**
- * Marks the DOM position where a <script> lived in the source document. On
- * mount a real script element is created next to the marker so authored
- * scripts still execute. The script is removed on unmount, which keeps
- * StrictMode remounts honest. Props are read on every effect run keyed by
- * their serialized value.
+ * Marks the DOM position where a <script> lived in the source document. When
+ * scripts are enabled, a real script element is created next to the marker
+ * on mount. The mount is keyed so StrictMode's effect replay cannot run a
+ * script twice. Removing the element would not undo requests or listeners it
+ * already made. A true remount gets a fresh key and runs once again.
  */
 export function ScriptNode({ attributes = {}, code }: ScriptNodeProps) {
   const markerRef = useRef<HTMLSpanElement | null>(null);
+  const enabled = useContext(ScriptsEnabled);
   const propsKey = JSON.stringify([attributes, code]);
+  const mountedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const marker = markerRef.current;
-    if (marker === null) return;
+    if (!enabled || marker === null || mountedKeyRef.current === propsKey) return;
+    mountedKeyRef.current = propsKey;
     const script = document.createElement("script");
     for (const [name, value] of Object.entries(attributes)) {
       script.setAttribute(name, value);
@@ -310,53 +333,13 @@ export function ScriptNode({ attributes = {}, code }: ScriptNodeProps) {
       script.remove();
     };
     // propsKey captures the props; they are fixed at export time.
-  }, [propsKey]);
+  }, [enabled, propsKey]);
 
   return <span ref={markerRef} data-script-node="" style={{ display: "contents" }} />;
 }
 `;
 }
 
-/** design/useDocumentAttributes.ts — emitted when any document carries
- *  <html>/<body> attributes so scoped selectors like html[lang] and
- *  body.dark keep working for real. */
-export function emitUseDocumentAttributesTs(): string {
-  return `import { useEffect } from "react";
-
-/**
- * Copies the source document's <html> and <body> attributes onto the real
- * documentElement and body while the component is mounted. Previous values
- * are restored on unmount. A scoped wrapper div cannot make selectors like
- * html[lang] or document-level behavior (dir, scroll-behavior) work — this
- * hook does.
- */
-export function useDocumentAttributes(
-  htmlAttributes: Record<string, string>,
-  bodyAttributes: Record<string, string>,
-): void {
-  const key = JSON.stringify([htmlAttributes, bodyAttributes]);
-
-  useEffect(() => {
-    const applied: Array<[Element, string, string | null]> = [];
-    const apply = (target: Element, attributes: Record<string, string>) => {
-      for (const [name, value] of Object.entries(attributes)) {
-        applied.push([target, name, target.getAttribute(name)]);
-        target.setAttribute(name, value);
-      }
-    };
-    apply(document.documentElement, htmlAttributes);
-    apply(document.body, bodyAttributes);
-    return () => {
-      for (const [target, name, previous] of applied.reverse()) {
-        if (previous === null) target.removeAttribute(name);
-        else target.setAttribute(name, previous);
-      }
-    };
-    // key captures the attribute records; they are fixed at export time.
-  }, [key]);
-}
-`;
-}
 
 function formatNoteLine(note: ExportNote): string {
   const scope = note.componentName ? `\`${note.componentName}\`: ` : "";
@@ -384,14 +367,14 @@ Open the printed URL.${input.pages.length > 1 ? " A switcher at the bottom right
 
 ## The design folder
 
-Everything under \`src/design/\` is the deliverable. Each canvas document became one component plus a stylesheet scoped under a \`dc-*\` class, so a page cannot restyle its host app. Copy the whole \`src/design/\` folder into any React 19 app and render the component you need. Nothing inside \`src/design/\` imports from outside \`src/design/\` except \`react\`.
+Everything under \`src/design/\` is the deliverable. Each canvas document became one component plus a stylesheet scoped under a \`dc-*\` class, so a page cannot restyle its host app. External stylesheets are the exception: \`<link rel="stylesheet">\` elements and CSS \`@import\` rules are dropped because their rules would load globally. Copy the whole \`src/design/\` folder into any React 19 app and render the component you need. Nothing inside \`src/design/\` imports from outside \`src/design/\` except \`react\`.
 
 Components in this export: ${names.map((name) => `\`${name}\``).join(", ")}.
 
 - \`tokens.css\` and \`tokens.json\` record the active theme for tooling. Components do not import them; the same variables are already materialized into each scoped stylesheet.
 - \`fonts.css\`, when present, carries the bundled font faces the documents named, as data URIs.
-- \`ScriptNode.tsx\`, when present, re-creates authored \`<script>\` elements at their original DOM position.
-- \`useDocumentAttributes.ts\`, when present, applies the source \`<html>\` and \`<body>\` attributes to the real document while a page is mounted.
+- \`ScriptNode.tsx\`, when present, re-creates authored \`<script>\` elements at their original DOM position. They stay inert unless the tree is wrapped in \`<EnableScripts>\` (exported from \`ScriptNode.tsx\`). The generated \`App\` opts in; a dropped-in copy of \`src/design/\` does not. Enabling runs authored or remote code with the hosting app's privileges.
+- Source \`<html>\` and \`<body>\` attributes are merged onto each page's scope root, so selectors like \`html[lang]\` or \`body.dark\` keep working without touching the real document.
 - \`export-manifest.json\` lists pages and adaptations for tooling.
 
 ## Fidelity notes

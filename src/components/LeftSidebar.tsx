@@ -19,6 +19,7 @@ import {
   Plus,
   Search,
   Shapes,
+  Sparkles,
   SquareStack,
   TextCursorInput,
   Type,
@@ -26,9 +27,11 @@ import {
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { BridgeHierarchySnapshot } from "../bridge/protocol";
 import type { FrameRenderModel, NodeEntity, PageEntity, SelectionState } from "../editor/model";
+import type { CanvasShaderElement, ShaderParams } from "../shaders";
 import { buildLayerTree, countLayerNodes, type LayerIconKind, type LayerTreeNode } from "./panel-model";
+import { ShadersPanel } from "./ShadersPanel";
 
-type SidebarTab = "pages" | "layers" | "tokens" | "assets";
+type SidebarTab = "pages" | "layers" | "shaders" | "tokens" | "assets";
 
 const LAYER_ICONS: Record<LayerIconKind, ReactNode> = {
   frame: <Frame size={11} />,
@@ -58,6 +61,11 @@ export interface LeftSidebarProps {
   onHoverNodeEnd?: () => void;
   hoveredLayerNode?: { frameId: string; nodeId: string } | null;
   tokensPanel?: ReactNode;
+  shaderElements?: CanvasShaderElement[];
+  selectedShaderElementId?: string | null;
+  onSelectShaderElement?: (elementId: string | null) => void;
+  onUpdateShaderParams?: (elementId: string, params: ShaderParams) => void;
+  onDeleteShaderElement?: (elementId: string) => void;
 }
 
 function PageRenameInput({
@@ -313,6 +321,19 @@ function AssetsPanel() {
 export function LeftSidebar(props: LeftSidebarProps) {
   const [tab, setTab] = useState<SidebarTab>("layers");
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 900);
+  // Selecting a shader element on the canvas surfaces its editor here —
+  // fired only on selection transitions so param edits can't yank the user
+  // back onto the tab after they've navigated away.
+  const lastShaderSelectionRef = useRef<string | null>(null);
+  useEffect(() => {
+    const selected = props.selectedShaderElementId ?? null;
+    if (selected === lastShaderSelectionRef.current) return;
+    lastShaderSelectionRef.current = selected;
+    if (selected && props.shaderElements?.some((entry) => entry.id === selected)) {
+      setTab("shaders");
+      setCollapsed(false);
+    }
+  }, [props.selectedShaderElementId, props.shaderElements]);
   const [width, setWidth] = useState(264);
   const [dragStart, setDragStart] = useState<{ x: number; width: number } | null>(null);
   const onResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -328,6 +349,7 @@ export function LeftSidebar(props: LeftSidebarProps) {
   const tabs: Array<{ id: SidebarTab; label: string; icon: typeof FolderOpen }> = [
     { id: "pages", label: "Pages", icon: FolderOpen },
     { id: "layers", label: "Layers", icon: Layers3 },
+    ...(props.shaderElements ? [{ id: "shaders" as SidebarTab, label: "Shaders", icon: Sparkles }] : []),
     ...(props.tokensPanel ? [{ id: "tokens" as SidebarTab, label: "Tokens", icon: Palette }] : []),
     { id: "assets", label: "Assets", icon: SquareStack },
   ];
@@ -351,12 +373,21 @@ export function LeftSidebar(props: LeftSidebarProps) {
         </nav>
       </> : <div className="left-sidebar-panel">
         <div className="sidebar-tabbar">
-          <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label }, index) => <button key={id} id={`sidebar-view-${id}`} data-testid={`sidebar-tab-${id}`} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} aria-controls="sidebar-active-panel" tabIndex={tab === id ? 0 : -1} onClick={() => setTab(id)} onKeyDown={(event) => handleTabKey(event, index)} type="button">{label}</button>)}</div>
+          <div className="sidebar-tabs" role="tablist" aria-label="Sidebar views">{tabs.map(({ id, label, icon: Icon }, index) => <button key={id} id={`sidebar-view-${id}`} data-testid={`sidebar-tab-${id}`} className={`sidebar-tab${tab === id ? " is-active" : ""}`} role="tab" aria-selected={tab === id} aria-controls="sidebar-active-panel" aria-label={label} title={label} tabIndex={tab === id ? 0 : -1} onClick={() => setTab(id)} onKeyDown={(event) => handleTabKey(event, index)} type="button"><Icon size={14} strokeWidth={1.8} aria-hidden="true" /></button>)}</div>
           <button className="sidebar-collapse-button" data-testid="left-sidebar-toggle" aria-label="Collapse left sidebar" onClick={() => setCollapsed(true)} type="button"><PanelLeftClose size={16} /></button>
         </div>
         <div className="sidebar-active-panel" id="sidebar-active-panel" role="tabpanel" aria-labelledby={`sidebar-view-${tab}`}>
           {tab === "pages" ? <PagesPanel {...props} /> : null}
           {tab === "layers" ? <LayersPanel {...props} /> : null}
+          {tab === "shaders" && props.shaderElements ? (
+            <ShadersPanel
+              shaderElements={props.shaderElements}
+              selectedShaderElementId={props.selectedShaderElementId}
+              onSelectShaderElement={props.onSelectShaderElement}
+              onUpdateShaderParams={props.onUpdateShaderParams}
+              onDeleteShaderElement={props.onDeleteShaderElement}
+            />
+          ) : null}
           {tab === "tokens" && props.tokensPanel ? props.tokensPanel : null}
           {tab === "assets" ? <AssetsPanel /> : null}
         </div>

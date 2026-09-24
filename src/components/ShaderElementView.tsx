@@ -1,10 +1,12 @@
 import { Trash2 } from "lucide-react";
-import { memo, useEffect, useRef, useState, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { SafeShaderMount } from "./SafeShaderMount";
 import {
   clampShaderElementSize,
   detectPaperShaderSupport,
+  getShaderMountProps,
   loadPaperShader,
+  SHADER_ELEMENT_RADIUS_INSET,
   type CanvasShaderElement,
 } from "../shaders";
 import type { Camera, Point } from "../canvas/types";
@@ -82,11 +84,14 @@ export const ShaderElementView = memo(function ShaderElementView({
     };
   }, [element.shaderId]);
 
-  // Clicking anywhere outside a selected shader element deselects it.
+  // Clicking anywhere outside a selected shader element deselects it —
+  // except clicks on canvas chrome (sidebars, inspector), which are edits,
+  // not canvas gestures.
   useEffect(() => {
     if (!isSelected) return;
     const handlePointerDown = (event: PointerEvent) => {
       if (event.target instanceof Node && rootRef.current?.contains(event.target)) return;
+      if (event.target instanceof Element && event.target.closest("[data-canvas-control]")) return;
       onSelect(null);
     };
     window.addEventListener("pointerdown", handlePointerDown);
@@ -145,6 +150,17 @@ export const ShaderElementView = memo(function ShaderElementView({
     height: element.height,
     transform: `translate3d(${element.x}px, ${element.y}px, 0)`,
   };
+  if (element.radius !== undefined) style.borderRadius = element.radius;
+  const stageStyle: CSSProperties | undefined =
+    element.radius === undefined
+      ? undefined
+      : { borderRadius: Math.max(0, element.radius - SHADER_ELEMENT_RADIUS_INSET) };
+  // SafeShaderMount is memoized — keep componentProps referentially stable
+  // so unrelated canvas updates don't remount the WebGL stage.
+  const mountProps = useMemo(
+    () => ({ ...getShaderMountProps(element.shaderId), ...element.params }),
+    [element.shaderId, element.params],
+  );
 
   return (
     <section
@@ -159,11 +175,11 @@ export const ShaderElementView = memo(function ShaderElementView({
       ref={rootRef}
       style={style}
     >
-      <div aria-hidden="true" className="shader-element-stage">
+      <div aria-hidden="true" className="shader-element-stage" style={stageStyle}>
         {failed ? (
           <div className="shader-element-unsupported">WebGL2 unavailable</div>
         ) : Component ? (
-          <SafeShaderMount className="shader-element-mount" component={Component} />
+          <SafeShaderMount className="shader-element-mount" component={Component} componentProps={mountProps} />
         ) : (
           <div className="shader-element-loading" />
         )}

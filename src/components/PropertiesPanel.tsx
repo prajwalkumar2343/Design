@@ -13,6 +13,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Square,
+  Trash2,
   Type,
   Unlink,
 } from "lucide-react";
@@ -21,9 +22,9 @@ import { createPortal } from "react-dom";
 import type { SafeInlineStyleProperty } from "../bridge/protocol";
 import {
   MAX_GLASS_LEVEL,
+  MAX_SHAPE_RADIUS,
   clampGlassLevel,
   glassLevelFromAttribute,
-  parseCssColor,
 } from "../editor/effects";
 import type { FrameEntity, NodeEntity, SelectionState } from "../editor/model";
 import {
@@ -45,6 +46,16 @@ import {
 import { summarizeTokenValue, TokenPreview } from "./token-preview";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
 import { elementProfile, mixedValue } from "./panel-model";
+import { ColorField } from "./ColorField";
+import { ShaderParamsEditor } from "./ShaderEditor";
+import {
+  clampShaderElementSize,
+  getShaderDefinition,
+  maxShaderElementRadius,
+  SHADER_ELEMENT_DEFAULT_RADIUS,
+  type CanvasShaderElement,
+  type ShaderParams,
+} from "../shaders";
 
 export interface PropertiesPanelProps {
   frames: Record<string, FrameEntity>;
@@ -63,6 +74,11 @@ export interface PropertiesPanelProps {
   shapeRadiusVisible: boolean;
   onShapeRadiusChange: (radius: number) => void;
   onShapeRadiusCommit: () => void;
+  shaderElements?: CanvasShaderElement[];
+  selectedShaderElementId?: string | null;
+  onUpdateShaderElement?: (elementId: string, patch: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height" | "radius">>) => void;
+  onUpdateShaderParams?: (elementId: string, params: ShaderParams) => void;
+  onDeleteShaderElement?: (elementId: string) => void;
 }
 
 function formatNumber(value: number): string {
@@ -129,111 +145,6 @@ function PropertyField({
 
 function PropertySection({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return <section className="property-section"><div className="property-section-title"><span>{icon}{title}</span><ChevronDown size={13} /></div>{children}</section>;
-}
-
-/** A curated, gesture-friendly palette — no color wheel required. First swatch is transparent for pure glass. */
-const COLOR_SWATCHES = [
-  "transparent", "#ffffff", "#ebebe8", "#d9d9d9", "#a8a8a1", "#666661", "#161615",
-  "#f6b1a4", "#e5484d", "#ffab6b", "#e8792e",
-  "#ffe9a8", "#f2ce4b", "#d9a514",
-  "#b5e0a5", "#6cbf5d", "#2f9e57", "#1d6b40",
-  "#bcd9f5", "#6faee0", "#3b74c2", "#24488f",
-  "#e3cdf6", "#b98ae4", "#7a4fb0",
-];
-
-function ColorField({
-  label,
-  value,
-  onCommit,
-  token,
-}: {
-  label: string;
-  value: string | null;
-  onCommit: (value: string) => void;
-  token?: ReactNode;
-}) {
-  const isMixed = value === "mixed";
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(isMixed || value === null ? "" : value);
-  const wrapRef = useRef<HTMLSpanElement>(null);
-  useEffect(() => setDraft(isMixed || value === null ? "" : value), [isMixed, value]);
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!(event.target instanceof Node) || !wrapRef.current?.contains(event.target)) setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
-  const commit = (next: string) => {
-    onCommit(next);
-    setOpen(false);
-  };
-  return (
-    <span className="color-field" ref={wrapRef}>
-      <span className="color-field-label">{label}</span>
-      <button
-        type="button"
-        className="color-swatch-button"
-        data-testid={`color-swatch-${label}`}
-        aria-label={`${label} color`}
-        aria-expanded={open}
-        style={{ background: isMixed || !value ? "transparent" : value }}
-        onClick={() => setOpen((current) => !current)}
-      />
-      <input
-        aria-label={label}
-        value={draft}
-        placeholder={isMixed ? "Mixed" : "—"}
-        onChange={(event) => setDraft(event.target.value)}
-        onBlur={(event) => {
-          // Focus moving inside this field (e.g. a palette swatch) is not a
-          // commit — the click handler owns that gesture.
-          if (event.relatedTarget instanceof Node && wrapRef.current?.contains(event.relatedTarget)) return;
-          const next = draft.trim();
-          if (!next || next === value) return;
-          commit(next);
-        }}
-        onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
-      />
-      {open ? (
-        <span className="color-popover" data-testid={`color-popover-${label}`}>
-          <span className="color-swatch-grid">
-            {COLOR_SWATCHES.map((color) => {
-              const isTransparentSwatch = color === "transparent";
-              const isTransparentValue = typeof value === "string" && value.trim().toLowerCase() === "transparent";
-              const current = parseCssColor(value ?? undefined);
-              const option = parseCssColor(color);
-              const isActive = isTransparentSwatch ? isTransparentValue : current !== null && option !== null &&
-                current.r === option.r && current.g === option.g && current.b === option.b;
-              const swatchStyle: React.CSSProperties = isTransparentSwatch
-                ? {
-                    backgroundColor: "transparent",
-                    backgroundImage:
-                      "linear-gradient(45deg, rgba(22,22,21,.08) 25%, transparent 25%, transparent 75%, rgba(22,22,21,.08) 75%), linear-gradient(45deg, rgba(22,22,21,.08) 25%, transparent 25%, transparent 75%, rgba(22,22,21,.08) 75%)",
-                    backgroundSize: "8px 8px",
-                    backgroundPosition: "0 0, 4px 4px",
-                  }
-                : { background: color };
-              return (
-                <button
-                  key={color}
-                  type="button"
-                  className={`color-swatch${isActive ? " is-active" : ""}`}
-                  data-testid={`color-option-${color}`}
-                  style={swatchStyle}
-                  aria-label={color === "transparent" ? "transparent" : color}
-                  title={color === "transparent" ? "Transparent (pure glass)" : color}
-                  onClick={() => commit(color)}
-                />
-              );
-            })}
-          </span>
-        </span>
-      ) : null}
-      {token}
-    </span>
-  );
 }
 
 /**
@@ -834,14 +745,16 @@ function GlassSection({
 
 function CornerRadiusSection({
   radius,
+  max = MAX_SHAPE_RADIUS,
   onChange,
   onCommit,
 }: {
   radius: number;
+  max?: number;
   onChange: (radius: number) => void;
   onCommit: () => void;
 }) {
-  const progress = Math.max(0, Math.min(100, (radius / 48) * 100));
+  const progress = Math.max(0, Math.min(100, (radius / max) * 100));
   const decrement = () => {
     const next = Math.max(0, radius - 1);
     if (next !== radius) {
@@ -851,7 +764,7 @@ function CornerRadiusSection({
     }
   };
   const increment = () => {
-    const next = Math.min(48, radius + 1);
+    const next = Math.min(max, radius + 1);
     if (next !== radius) {
       onChange(next);
       queueMicrotask(() => onCommit());
@@ -884,7 +797,7 @@ function CornerRadiusSection({
             <input
               aria-label="Corner radius"
               data-testid="shape-radius-slider"
-              max={48}
+              max={max}
               min={0}
               onBlur={onCommit}
               onChange={(event) => onChange(Number(event.target.value))}
@@ -983,19 +896,82 @@ function NodeDesignPanel({
   );
 }
 
+/**
+ * Inspector for a placed canvas shader element: geometry (position, size,
+ * corner rounding) plus the live param editor shared with the Shaders panel.
+ */
+function ShaderDesignPanel({
+  element,
+  onUpdateShaderElement,
+  onUpdateShaderParams,
+  onDeleteShaderElement,
+}: Pick<PropertiesPanelProps, "onUpdateShaderElement" | "onUpdateShaderParams" | "onDeleteShaderElement"> & { element: CanvasShaderElement }) {
+  const label = getShaderDefinition(element.shaderId).label;
+  const radius = Math.min(element.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS, maxShaderElementRadius(element));
+  const commitGeometry = (patch: (next: number) => Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height">>, raw: string) => {
+    const next = numericValue(raw);
+    if (next === null) return;
+    const update: Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height" | "radius">> = patch(next);
+    // A size edit can shrink the pill cap below the stored radius; clamp it
+    // so the canvas renders what this inspector shows.
+    if (update.width !== undefined || update.height !== undefined) {
+      const maxRadius = maxShaderElementRadius({ width: update.width ?? element.width, height: update.height ?? element.height });
+      const stored = element.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS;
+      if (stored > maxRadius) update.radius = maxRadius;
+    }
+    onUpdateShaderElement?.(element.id, update);
+  };
+  return (
+    <>
+      <div className="selection-summary">
+        <span className="selection-summary-mark"><Sparkles size={15} /></span>
+        <span><strong>{label}</strong><small>Shader · {element.width}×{element.height}</small></span>
+        <button
+          className="shader-inspector-delete"
+          type="button"
+          aria-label={`Delete ${label} shader`}
+          data-testid="shader-panel-delete"
+          title="Delete shader"
+          onClick={() => onDeleteShaderElement?.(element.id)}
+        >
+          <Trash2 size={13} strokeWidth={1.8} />
+        </button>
+      </div>
+      <PropertySection title="Position & size" icon={<BoxSelect size={13} />}>
+        <div className="property-grid">
+          <PropertyField label="X" value={formatNumber(element.x)} type="number" suffix="px" testId="property-shader-x" onCommit={(value) => commitGeometry((next) => ({ x: Math.round(next) }), value)} />
+          <PropertyField label="Y" value={formatNumber(element.y)} type="number" suffix="px" testId="property-shader-y" onCommit={(value) => commitGeometry((next) => ({ y: Math.round(next) }), value)} />
+          <PropertyField label="W" value={formatNumber(element.width)} type="number" suffix="px" testId="property-shader-width" onCommit={(value) => commitGeometry((next) => ({ width: clampShaderElementSize(next, element.height).width }), value)} />
+          <PropertyField label="H" value={formatNumber(element.height)} type="number" suffix="px" testId="property-shader-height" onCommit={(value) => commitGeometry((next) => ({ height: clampShaderElementSize(element.width, next).height }), value)} />
+        </div>
+      </PropertySection>
+      <CornerRadiusSection
+        radius={radius}
+        max={maxShaderElementRadius(element)}
+        onChange={(next) => onUpdateShaderElement?.(element.id, { radius: next })}
+        onCommit={() => undefined}
+      />
+      <PropertySection title="Shader" icon={<Sparkles size={13} />}>
+        <ShaderParamsEditor element={element} onUpdateParams={onUpdateShaderParams} />
+      </PropertySection>
+    </>
+  );
+}
+
 function FrameDesignPanel({ frame, selection, onUpdateFrame, onMoveFrame }: Pick<PropertiesPanelProps, "selection" | "onUpdateFrame" | "onMoveFrame"> & { frame: FrameEntity }) {
   const multiple = selection.frameIds.length > 1;
   return <><div className="selection-summary"><span className="selection-summary-mark"><BoxSelect size={15} /></span><span><strong>{multiple ? `${selection.frameIds.length} frames` : frame.name}</strong>{multiple ? <small>Mixed selection</small> : null}</span></div><PropertySection title="Position & size" icon={<BoxSelect size={13} />}><div className="property-grid"><PropertyField label="X" value={multiple ? "mixed" : formatNumber(frame.x)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: next, y: frame.y }); }} /><PropertyField label="Y" value={multiple ? "mixed" : formatNumber(frame.y)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onMoveFrame(frame.id, { x: frame.x, y: next }); }} /><PropertyField label="W" value={multiple ? "mixed" : formatNumber(frame.width)} type="number" suffix="px" testId="property-frame-width" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { width: Math.max(24, next) }); }} /><PropertyField label="H" value={multiple ? "mixed" : formatNumber(frame.height)} type="number" suffix="px" onCommit={(value) => { const next = numericValue(value); if (next !== null) onUpdateFrame(frame.id, { height: Math.max(24, next) }); }} /></div></PropertySection><PropertySection title="Fill" icon={<Palette size={13} />}><PropertyField label="Background" value={multiple ? "mixed" : frame.background} onCommit={(value) => onUpdateFrame(frame.id, { background: value })} /></PropertySection></>;
 }
 
-export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, onApplyGlassEffect, onPreviewGlassEffect, tokens, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit }: PropertiesPanelProps) {
+export function PropertiesPanel({ frames, nodes, selection, bridgeTargets, onUpdateFrame, onMoveFrame, onEditNodeStyle, onEditNodePosition, onApplyGlassEffect, onPreviewGlassEffect, tokens, shapeRadius, shapeRadiusVisible, onShapeRadiusChange, onShapeRadiusCommit, shaderElements, selectedShaderElementId, onUpdateShaderElement, onUpdateShaderParams, onDeleteShaderElement }: PropertiesPanelProps) {
   const [collapsed, setCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 900);
   const [width, setWidth] = useState(304);
   const [dragging, setDragging] = useState<{ x: number; width: number } | null>(null);
   const selectedFrame = selection.primaryFrameId ? frames[selection.primaryFrameId] : null;
+  const selectedShader = shaderElements?.find((entry) => entry.id === selectedShaderElementId) ?? null;
   const entries = useMemo(() => Object.values(bridgeTargets).filter((entry) => selection.nodeIds.includes(entry.target.elementId) && (selection.frameIds.length === 0 || selection.frameIds.includes(entry.frameId))), [bridgeTargets, selection.frameIds, selection.nodeIds]);
   const onPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); setDragging({ x: event.clientX, width }); };
   const onPointerMove = (event: React.PointerEvent<HTMLButtonElement>) => { if (dragging) setWidth(Math.min(420, Math.max(260, dragging.width - (event.clientX - dragging.x)))); };
   const stopResizing = () => setDragging(null);
-  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="inspector-heading"><strong>Design</strong></div><div className="properties-scroll">{shapeRadiusVisible ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}      {selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} onApplyGlassEffect={onApplyGlassEffect} onPreviewGlassEffect={onPreviewGlassEffect} tokens={tokens} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopResizing} onPointerCancel={stopResizing} onLostPointerCapture={stopResizing} type="button" /></div> : null}</aside>;
+  return <aside className={`right-properties-panel${collapsed ? " is-collapsed" : ""}`} data-canvas-control data-testid="properties-panel" onWheel={(event) => event.stopPropagation()} style={{ width: collapsed ? 48 : width }}><button className="properties-collapse-button" data-testid="right-sidebar-toggle" aria-label={collapsed ? "Expand properties panel" : "Collapse properties panel"} onClick={() => setCollapsed((current) => !current)} type="button">{collapsed ? <PanelRightOpen size={16} /> : <PanelRightClose size={16} />}</button>{!collapsed ? <div className="properties-panel-inner"><div className="inspector-heading"><strong>{selectedShader ? "Shader" : "Design"}</strong></div><div className="properties-scroll">{shapeRadiusVisible && !selectedShader ? <CornerRadiusSection radius={shapeRadius} onChange={onShapeRadiusChange} onCommit={onShapeRadiusCommit} /> : null}      {selection.nodeIds.length > 0 ? <NodeDesignPanel entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onEditNodePosition={onEditNodePosition} onApplyGlassEffect={onApplyGlassEffect} onPreviewGlassEffect={onPreviewGlassEffect} tokens={tokens} /> : selectedShader ? <ShaderDesignPanel element={selectedShader} onUpdateShaderElement={onUpdateShaderElement} onUpdateShaderParams={onUpdateShaderParams} onDeleteShaderElement={onDeleteShaderElement} /> : selectedFrame ? <FrameDesignPanel frame={selectedFrame} selection={selection} onUpdateFrame={onUpdateFrame} onMoveFrame={onMoveFrame} /> : <div className="properties-empty"><span className="properties-empty-icon"><Layers3 size={18} /></span><strong>Nothing selected</strong><span>Select a frame or layer.</span></div>}</div><button className="properties-resize-handle" aria-label="Resize properties panel" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={stopResizing} onPointerCancel={stopResizing} onLostPointerCapture={stopResizing} type="button" /></div> : null}</aside>;
 }

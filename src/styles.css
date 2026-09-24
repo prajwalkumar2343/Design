@@ -154,6 +154,33 @@ button:focus-visible,
   border-color: var(--selection);
 }
 
+/* ── Freeform frames — chromeless containers for canvas-drawn elements ── */
+.canvas-frame[data-freeform="true"] {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.canvas-frame[data-freeform="true"] .device-screen::before {
+  display: none;
+}
+
+.canvas-frame[data-freeform="true"] .frame-document,
+.canvas-frame[data-freeform="true"] .frame-creation-layer,
+.canvas-frame[data-freeform="true"] .frame-activation-layer,
+.canvas-frame[data-freeform="true"] .device-screen,
+.canvas-frame[data-freeform="true"] .device-screen-wrap {
+  border-radius: 0;
+}
+
+/* Ghost outline while dragging a text/image element on empty canvas */
+.canvas-creation-outline {
+  position: absolute;
+  border: 1px dashed var(--selection);
+  background: var(--selection-soft);
+  pointer-events: none;
+}
+
 /* ── Placed shader elements on the canvas ── */
 .canvas-shader-element {
   position: absolute;
@@ -686,11 +713,11 @@ button:focus-visible,
   justify-content: center;
   width: 28px;
   height: 28px;
-  padding: 0;
+  padding: 0 3px 5px 0;
   border: 0;
   border-radius: 50% 50% 50% 5px;
   color: #fff;
-  background: #e36b42;
+  background: linear-gradient(145deg, #f68a5f 0%, #e05a2b 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.28),
     0 0 0 2px rgba(255, 255, 255, 0.92),
@@ -727,11 +754,14 @@ button:focus-visible,
 }
 
 .canvas-comment-marker[data-comment-status="resolved"] {
-  background: #3f9166;
+  background: linear-gradient(145deg, #70c096 0%, #3f9166 100%);
 }
 
 .canvas-comment-marker[aria-expanded="true"] {
-  box-shadow: 0 0 0 2px #fff, 0 0 0 5px rgba(227, 107, 66, 0.25), 0 6px 16px rgba(20, 20, 18, 0.18);
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 5px rgba(227, 107, 66, 0.25),
+    0 6px 16px rgba(20, 20, 18, 0.18);
 }
 
 .canvas-comment-marker:focus-visible {
@@ -753,29 +783,36 @@ button:focus-visible,
 .canvas-comment-popover {
   position: absolute;
   z-index: 42;
-  width: 360px;
+  width: 384px;
   max-width: calc(100% - 24px);
   max-height: calc(100% - 24px);
   overflow: auto;
-  padding: 0;
-  border: 1px solid rgba(23, 22, 26, 0.12);
-  border-radius: 14px;
+  padding: 10px;
+  border: 0;
+  border-radius: 12px;
   color: var(--ink);
-  background: var(--paper);
-  box-shadow: 0 16px 48px -12px rgba(20, 20, 18, 0.24), 0 4px 12px rgba(20, 20, 18, 0.08);
+  background: rgba(253, 253, 252, 0.78);
+  box-shadow:
+    0 0 0 1px rgba(23, 22, 26, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(20, 20, 18, 0.06),
+    0 4px 12px rgba(20, 20, 18, 0.06),
+    0 16px 32px rgba(20, 20, 18, 0.1);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   pointer-events: auto;
   user-select: text;
   touch-action: auto;
   overscroll-behavior: contain;
   transform-origin: 0 0;
-  animation: comment-popover-in 180ms var(--ease-out);
+  animation: comment-popover-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .comment-header {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 12px 12px 12px 16px;
+  padding: 2px 2px 10px 6px;
 }
 
 .comment-heading-icon {
@@ -793,7 +830,7 @@ button:focus-visible,
   padding: 3px 7px;
   border-radius: 5px;
   color: var(--ink-soft);
-  background: #f1f1ef;
+  background: rgba(23, 22, 26, 0.06);
   font-size: 10px;
   font-weight: 500;
   line-height: 1.4;
@@ -820,21 +857,7 @@ button:focus-visible,
 
 .comment-icon-button:hover {
   color: var(--ink);
-  background: #f1f1ef;
-}
-
-.comment-composer {
-  margin: 0 12px;
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: 9px;
-  background: var(--paper);
-  transition: border-color var(--duration-fast), box-shadow var(--duration-fast);
-}
-
-.comment-composer:focus-within {
-  border-color: var(--selection);
-  box-shadow: 0 0 0 3px rgba(93, 92, 226, 0.09);
+  background: rgba(23, 22, 26, 0.06);
 }
 
 .comment-composer-actions {
@@ -843,14 +866,14 @@ button:focus-visible,
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 0 9px 9px;
+  padding: 8px 2px 0;
 }
 
 .comment-shortcut {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  color: var(--ink-soft);
+  color: var(--ink-faint);
   font-size: 10px;
 }
 
@@ -863,9 +886,12 @@ button:focus-visible,
   place-items: center;
   min-width: 18px;
   height: 18px;
-  padding: 0 3px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
+  padding: 0 4px;
+  border: 1px solid rgba(18, 18, 17, 0.12);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink-soft);
   font: inherit;
 }
 
@@ -892,7 +918,7 @@ button:focus-visible,
 
 .comment-save-button:disabled {
   color: #83837d;
-  background: #eeeeeb;
+  background: rgba(23, 22, 26, 0.07);
   cursor: default;
 }
 
@@ -902,8 +928,12 @@ button:focus-visible,
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 8px;
-  min-height: 44px;
-  padding: 8px 14px;
+  padding-top: 8px;
+}
+
+.comment-footer .comment-hint {
+  margin-top: 0;
+  padding: 0;
 }
 
 .comment-resolve-button {
@@ -987,45 +1017,63 @@ button:focus-visible,
 .comment-text-field {
   display: block;
   width: 100%;
-  min-height: 112px;
-  max-height: 240px;
-  resize: none;
+  min-height: 120px;
+  max-height: 60vh;
+  resize: vertical;
   field-sizing: content;
-  padding: 12px;
-  border: 0;
-  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgba(18, 18, 17, 0.08);
+  border-radius: 10px;
   outline: none;
   color: var(--ink);
-  background: transparent;
+  background: rgba(255, 255, 255, 0.9);
   font-family: inherit;
-  font-size: 13px;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0;
   caret-color: var(--selection);
+  box-shadow: inset 0 1px 2px rgba(20, 20, 18, 0.03);
   scrollbar-width: thin;
+  scrollbar-color: rgba(18, 18, 17, 0.18) transparent;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out),
+    background var(--duration-fast) var(--ease-out);
   user-select: text;
 }
 
+.comment-text-field:hover {
+  border-color: rgba(18, 18, 17, 0.16);
+  background: #ffffff;
+}
+
+.comment-text-field:focus {
+  border-color: rgba(93, 92, 226, 0.45);
+  background: #ffffff;
+  box-shadow:
+    0 0 0 3px rgba(93, 92, 226, 0.12),
+    inset 0 1px 2px rgba(20, 20, 18, 0.02);
+}
+
 .comment-text-field::placeholder {
-  color: var(--ink-soft);
+  color: var(--ink-faint);
 }
 
 .comment-text-field::selection {
-  background: var(--selection-soft);
+  background: rgba(93, 92, 226, 0.18);
 }
 
 .comment-hint {
-  color: var(--ink-soft);
-  font-size: 10px;
-  line-height: 1.5;
+  color: var(--ink-faint);
+  font-size: 11px;
+  line-height: 1.4;
+  user-select: none;
 }
 
 .comment-feedback {
-  margin: 0 12px 12px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  margin-top: 6px;
+  padding: 0 4px;
   color: var(--selection);
-  background: var(--selection-soft);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -1243,6 +1291,79 @@ button:focus-visible,
 .layer-action-button:hover { color: var(--ink); background: rgba(23,23,21,.08); }
 .layer-action-button:disabled { opacity: .35; cursor: default; }
 .layer-filter-empty { padding: 8px 10px; color: var(--ink-faint); font-size: 10px; }
+
+/* Shader elements panel: one expandable editor per placed shader. */
+.shader-element-list { display: grid; gap: 6px; margin-top: 13px; }
+.shader-element-item { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.42); overflow: hidden; }
+.shader-element-item.is-selected { border-color: rgba(93,92,226,.35); box-shadow: 0 0 0 2px var(--selection-soft); }
+.shader-element-head { display: flex; align-items: center; gap: 2px; padding: 3px 5px 3px 3px; }
+.shader-element-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; height: 26px; padding: 0 5px 0 2px; border: 0; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
+.shader-element-toggle .shader-element-mark { flex: 0 0 auto; color: var(--selection); opacity: .75; }
+.shader-element-name { flex: 1; min-width: 0; overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.shader-element-toggle small { flex: 0 0 auto; color: var(--ink-faint); font-size: 9.5px; }
+.shader-element-head .layer-action-button { opacity: 1; }
+.shader-element-editor { display: grid; gap: 7px; padding: 9px 9px 10px; border-top: 1px solid var(--line); }
+.shader-element-editor.is-loading { min-height: 42px; background: linear-gradient(100deg, rgba(23,23,21,.03) 40%, rgba(23,23,21,.07) 50%, rgba(23,23,21,.03) 60%); background-size: 200% 100%; animation: shader-shimmer 1.4s ease-in-out infinite; }
+.shader-editor-hint { color: var(--ink-faint); font-size: 10px; }
+/* min-width:0 lets the row shrink below the range input's min-content width
+   in narrow sidebars. */
+.shader-param { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; min-height: 27px; color: var(--ink-soft); font-size: 10px; }
+.shader-param-label { flex: 0 0 78px; min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.shader-param-controls { display: flex; flex: 1; align-items: center; gap: 7px; min-width: 0; }
+
+/* Filled-track slider, same visual language as the corner-radius card. */
+.shader-slider { -webkit-appearance: none; appearance: none; flex: 1; min-width: 0; height: 20px; margin: 0; background: transparent; cursor: ew-resize; }
+.shader-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--selection) 0 var(--p, 0%), rgba(23,23,21,.13) var(--p, 0%)); }
+.shader-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; margin-top: -4.5px; border: 1px solid rgba(23,23,21,.2); border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(20,20,18,.22); transition: transform var(--duration-fast) var(--ease-out); }
+.shader-slider:hover::-webkit-slider-thumb { transform: scale(1.15); }
+.shader-slider::-moz-range-track { height: 4px; border-radius: 2px; background: rgba(23,23,21,.13); }
+.shader-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--selection); }
+.shader-slider::-moz-range-thumb { width: 12px; height: 12px; border: 1px solid rgba(23,23,21,.2); border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(20,20,18,.22); }
+.shader-slider:focus-visible { outline: none; }
+.shader-slider:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--selection-soft); }
+
+/* Inputs share the property-field look: 26px, 7px radius, soft fill. */
+.shader-param-number { width: 46px; flex: 0 0 46px; height: 26px; padding: 0 5px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: rgba(255,255,255,.65); font-size: 10px; }
+.shader-param-text { flex: 1; min-width: 0; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: rgba(255,255,255,.65); font-size: 10px; }
+.shader-param-number:focus-visible,.shader-param-text:focus-visible,.shader-select-wrap select:focus-visible { outline: none; border-color: rgba(93,92,226,.65); box-shadow: 0 0 0 2px var(--selection-soft); }
+
+/* Toggle switch (a checkbox dressed as a switch keeps label/checked semantics). */
+.shader-switch { -webkit-appearance: none; appearance: none; position: relative; width: 30px; height: 18px; margin: 0; border: 0; border-radius: 9px; background: rgba(23,23,21,.16); cursor: pointer; transition: background-color .16s ease; }
+.shader-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(20,20,18,.3); transition: transform .16s var(--ease-out); }
+.shader-switch:checked { background: var(--selection); }
+.shader-switch:checked::after { transform: translateX(12px); }
+.shader-switch:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--selection-soft); }
+
+/* Select with custom chevron. */
+.shader-select-wrap { position: relative; display: flex; flex: 1; min-width: 0; }
+.shader-select-wrap select { -webkit-appearance: none; appearance: none; width: 100%; height: 26px; padding: 0 20px 0 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: rgba(255,255,255,.65); font-size: 10px; cursor: pointer; }
+.shader-select-wrap svg { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); color: var(--ink-faint); pointer-events: none; }
+
+/* Grouped sections inside the editor (Colors / params / Motion / Sizing). */
+.shader-param-section { display: grid; gap: 7px; min-width: 0; }
+.shader-param-section + .shader-param-section { margin-top: 3px; padding-top: 10px; border-top: 1px solid var(--line); }
+.shader-param-group { margin-bottom: 1px; color: var(--ink-faint); font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+
+/* Color fields reuse the inspector's swatch+popover; label column aligns. */
+.shader-param.shader-param-color { display: block; }
+.shader-param-color .color-field { width: 100%; }
+.shader-param-color .color-field-label { flex: 0 0 78px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shader-param.is-colors { align-items: flex-start; }
+.shader-param.is-colors .shader-param-label { padding-top: 7px; }
+.shader-colors-row { position: relative; display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.shader-color-stop { position: relative; display: inline-flex; }
+.shader-colors-row .shader-color-popover { left: auto; right: 0; }
+.shader-color-remove { position: absolute; top: -5px; right: -5px; display: grid; place-items: center; width: 13px; height: 13px; padding: 0; border: 0; border-radius: 50%; color: var(--paper); background: var(--ink); opacity: 0; cursor: pointer; transition: opacity var(--duration-fast) var(--ease-out); }
+.shader-color-stop:hover .shader-color-remove,.shader-color-remove:focus-visible { opacity: 1; }
+.shader-color-add { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 1px dashed var(--line-strong); border-radius: 6px; color: var(--ink-faint); background: transparent; cursor: pointer; }
+.shader-color-add:hover { color: var(--ink); border-color: var(--ink-soft); }
+.shader-reset-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; margin-top: 5px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink-soft); background: rgba(23,23,21,.04); font-size: 10px; cursor: pointer; }
+.shader-reset-button:hover { color: var(--ink); background: rgba(23,23,21,.07); }
+
+/* The editor nested inside an inspector section needs no card padding. */
+.property-section .shader-element-editor { padding: 0; border-top: 0; }
+.shader-inspector-delete { margin-left: auto; display: grid; flex: 0 0 auto; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; color: var(--ink-faint); background: transparent; cursor: pointer; }
+.shader-inspector-delete:hover { color: #b3261e; background: rgba(179,38,30,.08); }
 
 /* Gesture-friendly color field: swatch + hex, with a curated palette popover. */
 .color-field { position: relative; display: flex; align-items: center; gap: 7px; min-height: 27px; }
@@ -1992,6 +2113,11 @@ button:focus-visible,
   object-fit: cover;
 }
 
+.shader-thumb-stage {
+  position: absolute;
+  inset: 0;
+}
+
 /* The live preview fades in over the static thumbnail on hover/focus. */
 .shader-preview-mount {
   animation: shader-live-in 200ms ease;
@@ -2528,27 +2654,16 @@ kbd {
   text-transform: uppercase;
 }
 
-.zoom-control {
-  display: flex;
-  align-items: center;
-}
-
-.zoom-control button,
 .canvas-dock .dock-icon {
   width: 34px;
 }
 
-.zoom-control .zoom-value {
-  width: 52px;
-  color: var(--ink);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
 .canvas-help {
   position: absolute;
-  left: 18px;
-  bottom: 20px;
+  /* The left/right chrome overlays the canvas edge-to-edge, so the strip lives
+     centered above the dock — the only spot that is never covered. */
+  left: 50%;
+  bottom: 78px;
   z-index: 50;
   display: flex;
   align-items: center;
@@ -2556,6 +2671,8 @@ kbd {
   color: rgba(23, 23, 21, 0.48);
   font-size: 10px;
   pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .canvas-help span {
@@ -3501,14 +3618,6 @@ kbd {
   color: #FFFFFF;
   border-color: #161615;
   transform: rotate(90deg);
-}
-.blank-chooser-accent {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  border-radius: 12px 0 0 12px;
 }
 .blank-chooser-foot {
   display: flex;
@@ -5452,8 +5561,11 @@ button:focus-visible {
 .sidebar-tabbar { display: flex; align-items: center; gap: 4px; flex-shrink: 0; height: 48px; padding: 0 8px 0 10px; border-bottom: 1px solid var(--line); }
 .sidebar-collapse-button { width: 28px; height: 28px; flex: none; border-radius: 5px; }
 .sidebar-tabs { flex: 1; min-width: 0; height: 32px; gap: 2px; padding: 0; border: 0; }
-.sidebar-tabs .sidebar-tab { flex: 0 1 auto; height: 28px; }
-.sidebar-tab { height: 30px; padding: 0 7px; border-radius: 5px; font-size: 11px; font-weight: 500; }
+/* Icon tabs: five views no longer fit as text in a 226–264px strip — the rail
+   already speaks in icons, so the expanded bar matches it (names live in
+   aria-label + title tooltips). */
+.sidebar-tabs .sidebar-tab { flex: 0 0 auto; width: 32px; height: 28px; }
+.sidebar-tab { display: inline-flex; align-items: center; justify-content: center; height: 30px; padding: 0; border-radius: 5px; font-size: 11px; font-weight: 500; color: var(--ink-soft); }
 .sidebar-tab.is-active { background: var(--ui-hover); font-weight: 600; color: var(--ink); }
 .sidebar-active-panel { flex: 1; min-height: 0; overflow: hidden; }
 .sidebar-active-panel > .sidebar-panel-content { height: 100%; padding: 10px; }
@@ -5526,9 +5638,6 @@ button:focus-visible {
 .canvas-dock .tool-button.is-active, .canvas-dock .dock-icon.is-active { color: var(--paper); background: var(--selection); }
 .canvas-dock .tool-button.is-active:hover, .canvas-dock .dock-icon.is-active:hover { color: var(--paper); background: #514fcd; }
 .canvas-dock .dock-divider { margin: 0 3px; height: 20px; }
-.canvas-dock .zoom-control { gap: 0; }
-.canvas-dock .zoom-control button { height: 32px; font-size: 11px; }
-.canvas-dock .zoom-value { min-width: 44px; font-variant-numeric: tabular-nums; }
 .frame-menu, .shape-menu, .shader-menu { border-radius: 10px; background: var(--paper); box-shadow: var(--shadow-control); }
 .canvas-dock .frame-menu-category, .canvas-dock .frame-preset { border-radius: 6px; }
 .canvas-dock .shader-chip { border-radius: 5px; }
@@ -5603,13 +5712,25 @@ button:focus-visible {
 .figma-lake-footnote { border-top: 1px solid var(--line); padding-top: 20px; font-size: 10px; line-height: 1.6; }
 .figma-new-file { height: 34px; border-radius: 6px; }
 .figma-more-menu { border-radius: 8px; padding: 5px; background: var(--paper); box-shadow: var(--shadow-control); }
-.blank-chooser-card { border-radius: 12px; }
-.blank-chooser-options { background: var(--surface); padding: 20px; gap: 10px; }
-.blank-chooser-header { padding: 24px; }
-.blank-chooser-header h3 { font-size: 22px; font-weight: 550; }
-.blank-chooser-option { border-radius: 8px; padding: 16px 12px; }
-.blank-chooser-option-copy { gap: 5px; }
-.blank-chooser-foot { padding: 16px 20px; }
+.blank-chooser-backdrop { background: rgba(18, 18, 17, 0.4); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.blank-chooser-card { max-width: 400px; border-color: var(--line); border-radius: 12px; background: var(--paper); box-shadow: 0 24px 64px rgba(20, 20, 18, 0.16), 0 4px 16px rgba(20, 20, 18, 0.07); }
+.blank-chooser-close { top: 14px; right: 14px; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-soft); }
+.blank-chooser-close:hover { background: var(--ui-fill); color: var(--ink); }
+.blank-chooser-header { padding: 22px 24px 0; border-bottom: 0; }
+.blank-chooser-header h3 { font-size: 20px; font-weight: 550; }
+.blank-chooser-header p { margin-top: 5px; color: var(--ink-soft); font-size: 12px; }
+.blank-chooser-options { gap: 8px; padding: 18px 24px 20px; background: transparent; }
+.blank-chooser-option { grid-template-columns: 36px 1fr 20px; min-height: 58px; padding: 10px 14px 10px 12px; border-color: var(--line); border-radius: 8px; background: var(--paper); }
+.blank-chooser-option:hover { border-color: var(--line-strong); background: var(--ui-fill); }
+.blank-chooser-option-icon { width: 36px; height: 36px; border: 0; border-radius: 7px; }
+.blank-chooser-option-copy { gap: 4px; }
+.blank-chooser-option-copy strong { font-size: 13px; font-weight: 550; }
+.blank-chooser-option-copy small { color: var(--ink-soft); }
+.blank-chooser-option-arrow { width: 20px; height: 20px; border: 0; background: transparent; color: var(--ink-faint); }
+.blank-chooser-option:hover .blank-chooser-option-arrow { transform: none; background: transparent; color: var(--option-accent, var(--ink)); }
+.blank-chooser-foot { justify-content: flex-end; padding: 0 20px 18px; border-top: 0; background: transparent; }
+.blank-chooser-cancel { height: 28px; padding: 0 12px; border-color: var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); font-weight: 600; }
+.blank-chooser-cancel:hover { border-color: var(--line-strong); background: var(--ui-fill); }
 .template-preview { width: 100%; height: 100%; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--preview-accent) 4%, var(--ui-fill)); overflow: hidden; }
 .template-mini-page { position: relative; width: 196px; max-width: 100%; height: 116px; flex-shrink: 0; overflow: hidden; border: 1px solid rgba(18,18,17,.08); border-radius: 5px; background: var(--paper); box-shadow: 0 6px 16px rgba(18,18,17,.06); text-align: left; }
 .template-mini-nav { display: flex; align-items: center; gap: 4px; height: 19px; padding: 0 10px; border-bottom: 1px solid var(--ui-fill); }
@@ -5710,6 +5831,15 @@ button:focus-visible {
   .figma-file-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   .figma-template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* 901–1180px is too narrow for two expanded panels plus the full dock — wrap
+   the dock instead of letting its ends slide under the chrome. */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .canvas-surface:has(.left-sidebar:not(.is-collapsed)):has(.right-properties-panel:not(.is-collapsed)) .canvas-dock {
+    flex-wrap: wrap;
+    max-width: calc(100vw - 640px);
+    justify-content: center;
+  }
+}
 @media (max-width: 640px) {
   .workspace-header { height: 56px; gap: 8px; }
   .workspace-brand { gap: 6px; font-size: 15px; }
@@ -5747,8 +5877,6 @@ button:focus-visible {
   .canvas-dock .tool-button, .canvas-dock .dock-icon { min-width: 30px; width: 30px; }
   .canvas-dock .shape-menu-button, .canvas-dock .shader-tool-button, .canvas-dock .add-frame-control > button { width: 34px; }
   .canvas-dock .dock-divider { margin: 0 2px; }
-  .canvas-dock .zoom-control button { width: 28px; min-width: 28px; }
-  .canvas-dock .zoom-control .zoom-value { width: 38px; min-width: 38px; }
   .canvas-dock .shader-menu { left: auto; right: -60px; animation: none; transform: none; }
   .canvas-dock .frame-menu { left: auto; right: -32px; max-width: calc(100vw - 32px); }
   .template-blank-art { max-width: 100%; }

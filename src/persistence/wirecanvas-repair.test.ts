@@ -152,6 +152,149 @@ describe("repairWireCanvasProjectJson", () => {
     expect(state.nodes["b"]).toBeDefined();
   });
 
+  it("breaks child cycles that run through a root node", () => {
+    const parsed = parsedJson(validProjectText());
+    // Root a lists b; b lists a back but a has no parent — the parent-chain
+    // walk cannot see this cycle, only the childIds graph can.
+    parsed.state.nodes = [
+      { id: "a", documentId: "document-1", parentId: null, kind: "element", name: "A", attributes: {}, childIds: ["b"] },
+      { id: "b", documentId: "document-1", parentId: "a", kind: "element", name: "B", attributes: {}, childIds: ["a"] },
+    ];
+    parsed.state.documents[0].rootNodeIds = ["a"];
+    const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.nodes["a"]).toBeDefined();
+    expect(state.nodes["a"]!.parentId).toBeNull();
+    expect(state.nodes["b"]).toBeDefined();
+    expect(state.nodes["b"]!.childIds).toEqual([]);
+  });
+
+  it("detaches a listed child that does not claim the parent", () => {
+    const parsed = parsedJson(validProjectText());
+    // a lists b as a child, but b.parentId is null — a one-sided link the
+    // strict codec rejects as inconsistent.
+    parsed.state.nodes = [
+      { id: "a", documentId: "document-1", parentId: null, kind: "element", name: "A", attributes: {}, childIds: ["b"] },
+      { id: "b", documentId: "document-1", parentId: null, kind: "element", name: "B", attributes: {}, childIds: [] },
+    ];
+    parsed.state.documents[0].rootNodeIds = ["a"];
+    const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.nodes["a"]!.childIds).toEqual([]);
+    // b survives as a root of its document.
+    expect(state.nodes["b"]).toBeDefined();
+    expect(state.documents["document-1"]!.rootNodeIds).toEqual(["a", "b"]);
+  });
+
+  it("drops frame fields this schema does not support (freeform)", () => {
+    const parsed = parsedJson(validProjectText());
+    // A stored freeform flag must not poison the whole file — this branch's
+    // strict codec rejects it as an unknown field.
+    parsed.state.frames[0].freeform = true;
+    const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.frames["frame-1"]).toBeDefined();
+    expect("freeform" in state.frames["frame-1"]!).toBe(false);
+  });
+
+  it("drops only invalid tokens and keeps valid sets and themes", () => {
+    const parsed = parsedJson(validProjectText());
+    parsed.state.tokens = {
+      sets: {
+        "set-1": {
+          id: "set-1",
+          name: "Core",
+          tokens: {
+            "tok-1": { id: "tok-1", name: "color.accent", type: "color", value: "#ff0000" },
+            "tok-2": { id: "tok-2", name: "color.broken", type: "color", value: "!!not-a-color!!" },
+          },
+        },
+        "set-2": { id: "bad set!", name: "Broken", tokens: {} },
+      },
+      themes: {
+        "theme-1": { id: "theme-1", name: "Main", setIds: ["set-1"] },
+        "theme-2": { id: "theme-2", name: "Gone", setIds: ["set-2"] },
+      },
+      activeThemeId: "theme-1",
+      revision: 4,
+    };
+    const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.tokens.sets["set-1"]).toBeDefined();
+    expect(state.tokens.sets["set-1"]!.tokens["tok-1"]).toBeDefined();
+    expect(state.tokens.sets["set-1"]!.tokens["tok-2"]).toBeUndefined();
+    expect(state.tokens.sets["set-2"]).toBeUndefined();
+    expect(state.tokens.themes["theme-1"]).toBeDefined();
+    expect(state.tokens.themes["theme-2"]).toBeUndefined();
+    expect(state.tokens.activeThemeId).toBe("theme-1");
+    expect(state.tokens.revision).toBe(4);
+  });
+
+  it("salvages the intact members of a truncated payload", () => {
+    const text = validProjectText();
+    // Cut inside the frames array: the complete leading members (session,
+    // documents, pages) still repair into a project that parses.
+    const cut = text.indexOf('"frames"') + 12;
+    const repaired = repairWireCanvasProjectJson(text.slice(0, cut));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.documents["document-1"]).toBeDefined();
+    expect(state.pages["page-1"]).toBeDefined();
+  });
+
+  it("salvages a payload truncated inside a string value", () => {
+    const text = validProjectText();
+    const cut = text.indexOf("<main>Hi</main>") + 4;
+    const repaired = repairWireCanvasProjectJson(text.slice(0, cut));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.documents["document-1"]).toBeDefined();
+  });
+
+  it("keeps the generated session id within the id length limit", () => {
+    const parsed = parsedJson(validProjectText());
+    const briefId = "b".repeat(256);
+    parsed.state.session = {
+      kind: "brainstorm-session",
+      schemaVersion: 1,
+      lifecycle: "briefing",
+      sessionId: null,
+      revision: 1,
+      briefFrame: {
+        id: briefId,
+        kind: "brief",
+        name: "Brief",
+        x: 0,
+        y: 0,
+        width: 520,
+        height: 720,
+        revision: 1,
+        content: {},
+      },
+      selection: { type: "none" },
+    };
+    const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    const sessionId = state.session.sessionId;
+    expect(sessionId).not.toBeNull();
+    expect(sessionId!.length).toBeLessThanOrEqual(256);
+    expect(sessionId).not.toBe(briefId);
+  });
+
+  it("replaces finite but unsafe revision numbers with the fallback", () => {
+    const parsed = parsedJson(validProjectText());
+    parsed.state.documents[0].revision = 1e300;
+    const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
+    expect(repaired).not.toBeNull();
+    const state = parseWireCanvasProject(repaired!);
+    expect(state.documents["document-1"]!.revision).toBe(1);
+  });
+
   it("repairs a session missing required brief invariants", () => {
     const parsed = parsedJson(validProjectText());
     parsed.state.session = {

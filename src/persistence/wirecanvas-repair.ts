@@ -27,8 +27,13 @@ import {
 import type { DocumentMode } from "../editor/model";
 import {
   createEmptyTokenStore,
-  validateTokenStore,
+  validateToken,
+  validateTokenSet,
+  validateTokenTheme,
+  type DesignToken,
+  type TokenSet,
   type TokenStoreState,
+  type TokenTheme,
 } from "../tokens";
 import {
   WIRECANVAS_FILE_KIND,
@@ -78,6 +83,15 @@ function idStr(value: unknown, fallback: string): string {
   return s.length > 0 && s.length <= MAX_ID ? s : fallback;
 }
 
+/** Short deterministic fragment for generated ids that would exceed the id cap. */
+function shortHash(text: string): string {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash + text.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 function nullableIdStr(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const s = str(value);
@@ -95,7 +109,10 @@ function positive(value: unknown, fallback: number): number {
 
 function intAtLeast(value: unknown, minimum: number, fallback: number): number {
   const n = typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
-  return n >= minimum ? n : Math.max(minimum, fallback);
+  // Math.trunc leaves huge floats like 1e300 unchanged; the codec demands a
+  // safe integer, so anything else collapses to the fallback.
+  const safe = Number.isSafeInteger(n) ? n : fallback;
+  return safe >= minimum ? safe : Math.max(minimum, fallback);
 }
 
 function stringList(value: unknown): string[] {
@@ -221,7 +238,8 @@ function repairFrame(value: unknown, index: number): JsonRecord | null {
   if (FRAME_CATEGORIES.has(value.category as string)) frame.category = value.category;
   const chrome = repairChrome(value.chrome);
   if (chrome) frame.chrome = chrome;
-  if (value.freeform === true) frame.freeform = true;
+  // Whitelist: only fields this branch's codec accepts may be emitted. A
+  // stored `freeform` flag is dropped until the strict parser learns it.
   return frame;
 }
 
@@ -342,6 +360,10 @@ function repairSession(value: unknown): JsonRecord {
   if (lifecycle === "not-started") lifecycle = "briefing";
   let sessionId = nullableIdStr(input.sessionId);
   if (!sessionId || sessionId === briefId) sessionId = `session-${briefId}`;
+  // The codec's id cap and its sessionId ≠ briefFrame.id rule apply to
+  // generated ids too; a deterministic hash stays inside both.
+  if (sessionId.length > MAX_ID) sessionId = `session-${shortHash(briefId)}`;
+  if (sessionId === briefId) sessionId = `${sessionId}-x`;
   const selectionInput = isRecord(input.selection) ? input.selection : {};
   const selection =
     selectionInput.type === "brief-frame" && selectionInput.briefFrameId === briefId
@@ -358,13 +380,79 @@ function repairSession(value: unknown): JsonRecord {
   };
 }
 
-function repairTokens(value: unknown): TokenStoreState {
-  if (value === undefined) return createEmptyTokenStore();
-  try {
-    return validateTokenStore(value, "state.tokens");
-  } catch {
-    return createEmptyTokenStore();
+/** A set survives bad members: invalid tokens are dropped one by one. */
+function repairTokenSet(value: unknown, key: string): TokenSet | null {
+  if (!isRecord(value)) return null;
+  const tokens: Record<string, DesignToken> = {};
+  const names = new Set<string>();
+  if (isRecord(value.tokens)) {
+    for (const [tokenKey, item] of Object.entries(value.tokens)) {
+      try {
+        const token = validateToken(item, `state.tokens.sets.${key}.tokens.${tokenKey}`);
+        if (token.id !== tokenKey || names.has(token.name)) continue;
+        names.add(token.name);
+        tokens[tokenKey] = token;
+      } catch {
+        // Invalid token: drop it, keep the rest of the set.
+      }
+    }
   }
+  try {
+    const set = validateTokenSet({ ...value, tokens }, `state.tokens.sets.${key}`);
+    return set.id === key ? set : null;
+  } catch {
+    return null;
+  }
+}
+
+function repairTokenTheme(
+  value: unknown,
+  key: string,
+  knownSetIds: ReadonlySet<string>,
+): TokenTheme | null {
+  if (!isRecord(value)) return null;
+  // Keep only memberships in sets that survived repair; a theme left with
+  // none fails validation and is dropped.
+  const setIds = Array.isArray(value.setIds)
+    ? [...new Set(value.setIds.filter((id): id is string => typeof id === "string" && knownSetIds.has(id)))]
+    : value.setIds;
+  try {
+    const theme = validateTokenTheme({ ...value, setIds }, `state.tokens.themes.${key}`, knownSetIds);
+    return theme.id === key ? theme : null;
+  } catch {
+    return null;
+  }
+}
+
+function repairTokens(value: unknown): TokenStoreState {
+  if (!isRecord(value)) return createEmptyTokenStore();
+  const sets: Record<string, TokenSet> = {};
+  if (isRecord(value.sets)) {
+    for (const [key, item] of Object.entries(value.sets)) {
+      const set = repairTokenSet(item, key);
+      if (set) sets[key] = set;
+    }
+  }
+  const knownSetIds = new Set(Object.keys(sets));
+  const themes: Record<string, TokenTheme> = {};
+  if (isRecord(value.themes)) {
+    for (const [key, item] of Object.entries(value.themes)) {
+      const theme = repairTokenTheme(item, key, knownSetIds);
+      if (theme) themes[key] = theme;
+    }
+  }
+  const activeThemeId =
+    typeof value.activeThemeId === "string" &&
+    Object.prototype.hasOwnProperty.call(themes, value.activeThemeId)
+      ? value.activeThemeId
+      : null;
+  const revision =
+    typeof value.revision === "number" &&
+    Number.isSafeInteger(value.revision) &&
+    value.revision >= 0
+      ? value.revision
+      : 0;
+  return { sets, themes, activeThemeId, revision };
 }
 
 /* ------------------------------------------------------------------ */
@@ -449,6 +537,20 @@ function repairRelations(state: {
     }
   }
 
+  // childIds: keep only children that point back at this node. A listed
+  // child whose parentId is null (or elsewhere) is a codec-level
+  // inconsistency — and it is how cycles through a root appear: root A
+  // lists B, B lists A, but A's null parentId means the parent-chain walk
+  // below can never see the loop. Filtering the childIds side first makes
+  // the graph two-sided consistent, so every remaining cycle is a parentId
+  // cycle the walk can break.
+  for (const node of nodes.values()) {
+    node.childIds = (node.childIds as string[]).filter((childId) => {
+      const child = nodes.get(childId);
+      return child !== undefined && child.parentId === node.id;
+    });
+  }
+
   // Break cycles: walk the parent chain; on a repeat, detach the start node.
   for (const node of nodes.values()) {
     if (node.parentId === null) continue;
@@ -509,6 +611,62 @@ function repairRelations(state: {
 /* ------------------------------------------------------------------ */
 
 /**
+ * A storage write cut short (quota, crash mid-flush) leaves the payload
+ * truncated at an arbitrary byte. Recover by cutting the tail back to the
+ * last complete member boundary inside the innermost open container, then
+ * closing every container still open. Returns null when no parseable
+ * document remains.
+ */
+function salvageTruncatedJson(text: string): unknown | null {
+  const stack: { closer: string; lastMemberEnd: number }[] = [];
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      stack.push({ closer: "}", lastMemberEnd: i + 1 });
+    } else if (ch === "[") {
+      stack.push({ closer: "]", lastMemberEnd: i + 1 });
+    } else if (ch === ",") {
+      if (stack.length === 0) return null;
+      stack[stack.length - 1]!.lastMemberEnd = i;
+    } else if (ch === "}" || ch === "]") {
+      const open = stack.pop();
+      if (!open || open.closer !== ch) return null;
+      if (stack.length === 0) {
+        // A complete document followed by trailing garbage — keep the document.
+        try {
+          return JSON.parse(text.slice(0, i + 1));
+        } catch {
+          return null;
+        }
+      }
+      // A nested container close also completes its parent's member value.
+      stack[stack.length - 1]!.lastMemberEnd = i + 1;
+    }
+  }
+  if (stack.length === 0) return null;
+  const cut = stack[stack.length - 1]!.lastMemberEnd;
+  const closers = stack
+    .map((open) => open.closer)
+    .reverse()
+    .join("");
+  try {
+    return JSON.parse(text.slice(0, cut) + closers);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Returns a repaired JSON string for a damaged project payload, or null when
  * nothing salvageable remains (not JSON, not this file kind, or a future
  * schema we cannot safely interpret).
@@ -519,7 +677,8 @@ export function repairWireCanvasProjectJson(text: string): string | null {
   try {
     parsed = JSON.parse(text);
   } catch {
-    return null;
+    parsed = salvageTruncatedJson(text);
+    if (parsed === null) return null;
   }
   if (!isRecord(parsed)) return null;
   if (parsed.kind !== WIRECANVAS_FILE_KIND) return null;

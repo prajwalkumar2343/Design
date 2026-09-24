@@ -83,4 +83,25 @@ describe("ShaderElementView", () => {
     fireEvent.pointerDown(document.body);
     expect(props.onSelect).not.toHaveBeenCalled();
   });
+
+  it("stays selected when the pointerdown lands on canvas chrome", () => {
+    const { props } = renderElement({ isSelected: true });
+    const control = document.createElement("div");
+    control.setAttribute("data-canvas-control", "");
+    document.body.appendChild(control);
+    try {
+      fireEvent.pointerDown(control);
+      expect(props.onSelect).not.toHaveBeenCalled();
+    } finally {
+      control.remove();
+    }
+  });
+
+  it("applies corner radius to the frame and the clipped stage", () => {
+    renderElement({ element: { ...element, radius: 40 } });
+    const el = screen.getByTestId("shader-element") as HTMLElement;
+    expect(el.style.borderRadius).toBe("40px");
+    const stage = el.querySelector<HTMLElement>(".shader-element-stage");
+    expect(stage?.style.borderRadius).toBe("37px");
+  });
 });

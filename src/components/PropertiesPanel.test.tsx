@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { BridgeInspection } from "../bridge/protocol";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
+import type { CanvasShaderElement } from "../shaders";
 import { PropertiesPanel } from "./PropertiesPanel";
 
 const inspection: BridgeInspection = {
@@ -321,5 +322,87 @@ describe("PropertiesPanel profile coverage", () => {
     unmount();
     renderTarget("div-1", { elementId: "div-1", tagName: "div", name: "Group" });
     expect(screen.getByTestId("glass-level-slider")).toBeTruthy();
+  });
+});
+
+const shaderElement: CanvasShaderElement = {
+  id: "shader-el-1",
+  shaderId: "mesh-gradient",
+  x: 120,
+  y: 80,
+  width: 340,
+  height: 240,
+};
+
+const shaderProps = {
+  ...baseProps,
+  selection: { frameIds: [], nodeIds: [], primaryFrameId: null, primaryNodeId: null },
+  bridgeTargets: {},
+  shaderElements: [shaderElement],
+  selectedShaderElementId: "shader-el-1",
+  onUpdateShaderElement: vi.fn(),
+  onUpdateShaderParams: vi.fn(),
+  onDeleteShaderElement: vi.fn(),
+};
+
+describe("PropertiesPanel shader inspector", () => {
+  it("shows geometry, corner radius, and the live param editor for a selected shader", async () => {
+    render(<PropertiesPanel {...shaderProps} />);
+    expect(screen.getByTestId("property-shader-x")).toBeTruthy();
+    expect(screen.getByTestId("property-shader-width")).toBeTruthy();
+    expect(screen.getByTestId("shape-radius-slider")).toBeTruthy();
+    // The shared param editor loads the shader's preset table async.
+    expect(await screen.findByTestId("shader-editor-shader-el-1")).toBeTruthy();
+    expect(await screen.findByTestId("shader-param-colors")).toBeTruthy();
+  });
+
+  it("commits geometry edits through onUpdateShaderElement", () => {
+    const onUpdateShaderElement = vi.fn();
+    render(<PropertiesPanel {...shaderProps} onUpdateShaderElement={onUpdateShaderElement} />);
+    const x = screen.getByTestId("property-shader-x");
+    fireEvent.change(x, { target: { value: "200" } });
+    fireEvent.blur(x);
+    expect(onUpdateShaderElement).toHaveBeenCalledWith("shader-el-1", { x: 200 });
+  });
+
+  it("clamps width edits at the shader element minimum", () => {
+    const onUpdateShaderElement = vi.fn();
+    render(<PropertiesPanel {...shaderProps} onUpdateShaderElement={onUpdateShaderElement} />);
+    const w = screen.getByTestId("property-shader-width");
+    fireEvent.change(w, { target: { value: "10" } });
+    fireEvent.blur(w);
+    expect(onUpdateShaderElement).toHaveBeenCalledWith("shader-el-1", { width: 96 });
+  });
+
+  it("rounds corners through the radius slider", () => {
+    const onUpdateShaderElement = vi.fn();
+    render(<PropertiesPanel {...shaderProps} onUpdateShaderElement={onUpdateShaderElement} />);
+    fireEvent.change(screen.getByTestId("shape-radius-slider"), { target: { value: "60" } });
+    expect(onUpdateShaderElement).toHaveBeenCalledWith("shader-el-1", { radius: 60 });
+  });
+
+  it("routes param edits to onUpdateShaderParams and deletes via the header button", async () => {
+    const onUpdateShaderParams = vi.fn();
+    const onDeleteShaderElement = vi.fn();
+    render(
+      <PropertiesPanel
+        {...shaderProps}
+        onUpdateShaderParams={onUpdateShaderParams}
+        onDeleteShaderElement={onDeleteShaderElement}
+      />,
+    );
+    fireEvent.change(await screen.findByLabelText("Distortion slider"), { target: { value: "0.4" } });
+    expect(onUpdateShaderParams).toHaveBeenCalledWith(
+      "shader-el-1",
+      expect.objectContaining({ distortion: 0.4 }),
+    );
+    fireEvent.click(screen.getByTestId("shader-panel-delete"));
+    expect(onDeleteShaderElement).toHaveBeenCalledWith("shader-el-1");
+  });
+
+  it("falls back to the empty state when no shader is selected", () => {
+    render(<PropertiesPanel {...shaderProps} selectedShaderElementId={null} />);
+    expect(screen.getByText("Nothing selected")).toBeTruthy();
+    expect(screen.queryByTestId("shader-panel-delete")).toBeNull();
   });
 });

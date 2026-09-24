@@ -72,6 +72,31 @@ describe("LeftSidebar layer rename", () => {
     expect(getByRole("region", { name: "Pages panel" })).toBeTruthy();
   });
 
+  it("shows a Shaders tab listing placed shader elements", () => {
+    const { getByRole, getByTestId } = render(
+      <LeftSidebar
+        pages={[{ id: "page-1", documentId: "doc-1", name: "Page 1", frameIds: [] }]}
+        activePageId="page-1"
+        frames={[]}
+        hierarchies={{}}
+        nodes={{}}
+        selection={createEmptySelection()}
+        onCreatePage={() => {}}
+        onRenamePage={() => {}}
+        onSwitchPage={() => {}}
+        onSelectNode={() => {}}
+        onRenameNode={() => {}}
+        onToggleNodeLock={() => {}}
+        onToggleNodeHidden={() => {}}
+        shaderElements={[
+          { id: "shader-el-1", shaderId: "mesh-gradient", x: 0, y: 0, width: 340, height: 240 },
+        ]}
+      />,
+    );
+    fireEvent.click(getByRole("tab", { name: "Shaders" }));
+    expect(getByTestId("shader-element-row-shader-el-1")).toBeTruthy();
+  });
+
   it("does not resurrect an abandoned rename draft on the next edit", () => {
     const { container, getByRole, onRenameNode } = renderSidebar();
 

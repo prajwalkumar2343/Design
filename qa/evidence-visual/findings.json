@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "generatedBy": "qa/visual-qa.mjs",
+    "coverage": "Results from the visual-qa.mjs lake and canvas sweep only (screenshots 01-32, lake-controls.json, canvas-controls.json). The other drivers in qa/ print diagnostics to stdout and save screenshots but write nothing here. See qa/evidence-visual/README.md."
+  },
+  "findings": [],
+  "hygiene": {
+    "errors": [],
+    "warnings": [],
+    "pageErrors": [],
+    "failedReqs": []
+  }
+}

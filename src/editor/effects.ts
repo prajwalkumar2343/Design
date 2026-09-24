@@ -21,6 +21,12 @@
 
 export const MAX_GLASS_LEVEL = 100;
 
+/** Corner radius ceiling for created shapes — high enough to fully round any practical shape into a pill/circle. */
+export const MAX_SHAPE_RADIUS = 360;
+
+export const clampShapeRadius = (radius: number): number =>
+  Math.max(0, Math.min(MAX_SHAPE_RADIUS, Math.round(radius)));
+
 /** Specular top edge, hairline light border, and a floating drop shadow — legacy flat fallback. */
 export const GLASS_SURFACE_SHADOW =
   "inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.35), 0 10px 26px rgba(20, 20, 18, 0.14)";

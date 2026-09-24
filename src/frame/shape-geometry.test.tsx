@@ -80,6 +80,12 @@ describe("ShapePreview", () => {
     expect(rect).not.toBeNull();
     expect(rect?.getAttribute("stroke")).toBe("#222222");
     expect(rect?.getAttribute("stroke-width")).toBe("2");
+    expect(rect?.getAttribute("fill")).toBe("#d9d9d9");
+  });
+
+  it("clamps the preview to the same 16px minimum the created shape gets", () => {
+    render(<ShapePreview shape="rectangle" start={{ x: 10, y: 10 }} end={{ x: 18, y: 22 }} />);
+    expect(screen.getByTestId("shape-preview").getAttribute("viewBox")).toBe("0 0 16 16");
   });
 
   it("renders a stroke-only preview for lines and arrows with an arrowhead marker", () => {
@@ -94,11 +100,14 @@ describe("ShapePreview", () => {
     expect(arrow?.getAttribute("marker-end")).toMatch(/^url\(#shape-preview-arrow-/);
   });
 
-  it("renders polygon and star previews with round joins for crisp edges", () => {
+  it("renders polygon and star previews with the same outline the placed shape gets", () => {
     const { rerender } = render(<ShapePreview shape="polygon" start={{ x: 0, y: 0 }} end={{ x: 100, y: 80 }} />);
     const polygon = screen.getByTestId("shape-preview").querySelector("polygon");
     expect(polygon).not.toBeNull();
+    expect(polygon?.getAttribute("stroke")).toBe("#222222");
+    expect(polygon?.getAttribute("stroke-width")).toBe("2");
     expect(polygon?.getAttribute("stroke-linejoin")).toBe("round");
+    expect(polygon?.getAttribute("fill")).toBe("#d9d9d9");
 
     rerender(<ShapePreview shape="star" start={{ x: 0, y: 0 }} end={{ x: 100, y: 80 }} />);
     expect(screen.getByTestId("shape-preview").querySelector("polygon")).not.toBeNull();

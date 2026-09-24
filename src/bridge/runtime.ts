@@ -326,7 +326,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       child.setAttribute("x2", String(last.x));
       child.setAttribute("y2", String(last.y));
       child.setAttribute("stroke-linecap", "round");
-      if (kind === "arrow") {
+      // A zero-width line is invisible; an arrowhead would float detached.
+      if (kind === "arrow" && strokeWidth > 0) {
         child.setAttribute("marker-end", "url(#design-tool-arrowhead)");
       }
     } else if (kind === "path") {
@@ -345,7 +346,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       ? (fill || "#d9d9d9")
       : "none");
     child.setAttribute("stroke", stroke || "#222222");
-    child.setAttribute("stroke-width", String(strokeWidth || 2));
+    child.setAttribute("stroke-width", String(Math.max(0, strokeWidth || 0)));
     // Outline scales with the shape (Apple-like). Previously non-scaling-stroke kept
     // the border hairline on resize, which felt disconnected when the shape grew.
     svg.appendChild(child);
@@ -389,7 +390,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       const oldW = vb ? Number(vb[1]) : 0;
       const oldH = vb ? Number(vb[2]) : 0;
       const viewBoxMatches = oldW === W && oldH === H;
-      const strokeWidth = Number(element.getAttribute("data-design-tool-stroke-width") || 2) || 2;
+      const strokeWidthAttr = element.getAttribute("data-design-tool-stroke-width");
+      const strokeWidth = strokeWidthAttr === null ? 2 : Math.max(0, Number(strokeWidthAttr) || 0);
       const radiusRaw = Number(element.getAttribute("data-design-tool-radius") || 0) || 0;
       const inset = Math.max(0, strokeWidth / 2);
       const child = element.querySelector("rect,ellipse,line,polyline,polygon,path");
@@ -1016,7 +1018,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const w = (bounds && bounds.width) ? bounds.width : (element.getBoundingClientRect ? element.getBoundingClientRect().width : 120) || 120;
     const h = (bounds && bounds.height) ? bounds.height : (element.getBoundingClientRect ? element.getBoundingClientRect().height : 80) || 80;
     const radiusAttr = Number(element.getAttribute("data-design-tool-radius") || 0);
-    const radius = Math.max(0, Math.min(64, radiusAttr));
+    const radius = Math.max(0, Math.min(360, radiusAttr));
 
     // Build liquid visual — backdrop blur + tinted sheen + rim + refraction.
     // Without url() support the pane falls back to the frosted recipe so it
@@ -1114,7 +1116,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     try {
       const csRadius = computed.getPropertyValue("border-radius") || "";
       const m = /(\\d+)/.exec(csRadius);
-      if (m) radius = Math.max(0, Math.min(48, Number(m[1])));
+      if (m) radius = Math.max(0, Math.min(360, Number(m[1])));
       const rect = element.getBoundingClientRect();
       if (rect && rect.width > 0) w = rect.width;
       if (rect && rect.height > 0) h = rect.height;
@@ -1145,7 +1147,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     const fill = safeColor(spec.fill, "#d9d9d9");
     const stroke = safeColor(spec.stroke, "#222222");
     const strokeWidth = isFiniteNumber(spec.strokeWidth) && spec.strokeWidth >= 0 && spec.strokeWidth <= 100 ? spec.strokeWidth : 2;
-    const radius = isFiniteNumber(spec.radius) && spec.radius >= 0 && spec.radius <= 256 ? spec.radius : 0;
+    const radius = isFiniteNumber(spec.radius) && spec.radius >= 0 && spec.radius <= 360 ? spec.radius : 0;
     const parent = spec.parentId ? findElement(spec.parentId) : document.body;
     if (!parent || !(parent instanceof Element)) throw { code: "parent-not-found", message: "The requested parent does not exist" };
     let element;
@@ -1261,7 +1263,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       fill: element.getAttribute("data-design-tool-fill") || "#d9d9d9",
       stroke: element.getAttribute("data-design-tool-stroke") || "#222222",
       strokeWidth: Number(element.getAttribute("data-design-tool-stroke-width") || 2),
-      radius: Math.max(0, Math.min(256, Number(element.getAttribute("data-design-tool-radius") || 0))),
+      radius: Math.max(0, Math.min(360, Number(element.getAttribute("data-design-tool-radius") || 0))),
       editable: element.getAttribute("data-design-tool-editable") !== "false",
       glass: (() => {
         const raw = element.getAttribute("data-design-tool-glass");
@@ -1721,14 +1723,14 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       };
     }
     if (command.command === "set-shape-radius") {
-      if (!isFiniteNumber(command.radius) || command.radius < 0 || command.radius > 256) {
-        throw { code: "invalid-radius", message: "The shape radius must be between 0 and 256" };
+      if (!isFiniteNumber(command.radius) || command.radius < 0 || command.radius > 360) {
+        throw { code: "invalid-radius", message: "The shape radius must be between 0 and 360" };
       }
       const element = findElement(command.targetId);
       if (!element || element.getAttribute("data-design-tool-created") !== "true") {
         throw { code: "target-not-found", message: "The requested shape no longer exists" };
       }
-      const previousRadius = Math.max(0, Math.min(256, Number(element.getAttribute("data-design-tool-radius") || 0)));
+      const previousRadius = Math.max(0, Math.min(360, Number(element.getAttribute("data-design-tool-radius") || 0)));
       if (!applyShapeRadius(element, command.radius)) {
         throw { code: "shape-radius-not-supported", message: "Only created rectangles support a corner radius" };
       }

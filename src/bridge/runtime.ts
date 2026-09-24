@@ -326,7 +326,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       child.setAttribute("x2", String(last.x));
       child.setAttribute("y2", String(last.y));
       child.setAttribute("stroke-linecap", "round");
-      if (kind === "arrow") {
+      // A zero-width line is invisible; an arrowhead would float detached.
+      if (kind === "arrow" && strokeWidth > 0) {
         child.setAttribute("marker-end", "url(#design-tool-arrowhead)");
       }
     } else if (kind === "path") {

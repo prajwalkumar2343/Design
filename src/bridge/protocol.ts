@@ -542,7 +542,7 @@ function isCreationKind(value: unknown): value is BridgeCreationKind {
 }
 
 function isShapeRadius(value: unknown): value is number {
-  return isFiniteNumber(value) && value >= 0 && value <= 256;
+  return isFiniteNumber(value) && value >= 0 && value <= 360;
 }
 
 /** Concrete paint colors only; gradients, urls, and statements stay out. Transparent is allowed for pure glass. */

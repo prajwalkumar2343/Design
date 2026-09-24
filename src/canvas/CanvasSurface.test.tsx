@@ -323,4 +323,40 @@ describe("CanvasSurface creation threshold", () => {
     drag(layer, 0, 0.001);
     expect(createCommands(postSpy)).toHaveLength(1);
   });
+
+  it("remaps the drag against the frame's moved rect when the canvas pans mid-gesture", async () => {
+    render(<CanvasSurface frames={[seed()]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    const layer = await waitFor(() => screen.getByTestId("frame-creation-layer"));
+    const iframe = document.querySelector("iframe") as HTMLIFrameElement;
+    const postSpy = vi.spyOn(iframe.contentWindow as Window, "postMessage");
+
+    // jsdom rects are all-zero; pin the iframe's viewport rect so client pixels
+    // map 1:1 to world units, then move it the way a wheel pan would.
+    let frameLeft = 0;
+    let frameTop = 0;
+    vi.spyOn(iframe, "getBoundingClientRect").mockImplementation(
+      () => ({ left: frameLeft, top: frameTop, width: 400, height: 300 }) as DOMRect,
+    );
+
+    fireEvent.pointerDown(layer, { button: 0, isPrimary: true, pointerId: 3, clientX: 10, clientY: 10 });
+
+    // A wheel pan mid-drag rewrites the canvas world's transform imperatively,
+    // which is what shifts the iframe's viewport rect under the cursor.
+    fireEvent.wheel(screen.getByTestId("canvas-surface"), { deltaX: 40, deltaY: 40 });
+    await Promise.resolve();
+    frameLeft = -40;
+    frameTop = -40;
+
+    fireEvent.pointerMove(layer, { isPrimary: true, pointerId: 3, clientX: 70, clientY: 70 });
+    fireEvent.pointerUp(layer, { isPrimary: true, pointerId: 3, clientX: 70, clientY: 70 });
+
+    const commands = createCommands(postSpy);
+    expect(commands).toHaveLength(1);
+    const { bounds } = (commands[0] as { command: { bounds: { width: number; height: number } } }).command;
+    // The pan moved the frame 40px up-left, so clientX/Y 70 lands 110 world
+    // units into the frame. A stale rect would mint a 60-wide shape behind the cursor.
+    expect(bounds.width).toBeCloseTo(100);
+    expect(bounds.height).toBeCloseTo(100);
+  });
 });

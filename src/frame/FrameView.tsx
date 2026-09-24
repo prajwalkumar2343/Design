@@ -31,7 +31,7 @@ interface FrameViewProps {
   creationRadius?: number;
   onCreationPointerDown?: (frameId: string, point: Point, pointerId: number) => void;
   onCreationPointerMove?: (frameId: string, point: Point, pointerId: number) => void;
-  onCreationPointerUp?: (frameId: string, point: Point, pointerId: number) => void;
+  onCreationPointerUp?: (frameId: string, point: Point, pointerId: number) => Promise<unknown> | void;
   onCreationPointerCancel?: (frameId: string, pointerId: number) => void;
   /**
    * Active theme CSS variables for design-mode frames. Wireframe frames ignore
@@ -127,6 +127,14 @@ export const FrameView = memo(function FrameView({
 }: FrameViewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [creationPreview, setCreationPreview] = useState<{ start: Point; end: Point } | null>(null);
+  // Bumps once per drag so a slow create-ack can't clear a newer preview.
+  const creationGestureRef = useRef(0);
+  // The iframe rect only pays for one layout read per drag — but it goes stale
+  // if the camera pans/zooms mid-drag, which CanvasSurface applies as imperative
+  // ancestor style writes React never re-renders for. Watch those writes and
+  // drop the cache; the next pointermove re-reads it once.
+  const creationRectRef = useRef<DOMRect | null>(null);
+  const creationRectObserverRef = useRef<MutationObserver | null>(null);
   const [initialBridgeSession] = useState(() => createBridgeSession(frame.id));
   const bridgeSessionRef = useRef(initialBridgeSession);
   if (bridgeSessionRef.current.frameId !== frame.id) {
@@ -274,9 +282,18 @@ export const FrameView = memo(function FrameView({
     [frame.srcDoc, frame.mode, bridgeSession],
   );
 
+  const endCreationRectWatch = () => {
+    creationRectRef.current = null;
+    creationRectObserverRef.current?.disconnect();
+    creationRectObserverRef.current = null;
+  };
+
+  useEffect(() => () => creationRectObserverRef.current?.disconnect(), []);
+
   const getCreationPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
-    const iframe = iframeRef.current;
-    const bounds = iframe?.getBoundingClientRect();
+    const bounds =
+      creationRectRef.current ??
+      (creationRectRef.current = iframeRef.current?.getBoundingClientRect() ?? null);
     if (!bounds) return { x: event.clientX, y: event.clientY };
     const scaleX = frame.width / Math.max(bounds.width, 1);
     const scaleY = frame.height / Math.max(bounds.height, 1);
@@ -291,6 +308,16 @@ export const FrameView = memo(function FrameView({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    creationGestureRef.current += 1;
+    creationRectRef.current = iframeRef.current?.getBoundingClientRect() ?? null;
+    creationRectObserverRef.current?.disconnect();
+    const observer = new MutationObserver(() => {
+      creationRectRef.current = null;
+    });
+    for (let el: HTMLElement | null = event.currentTarget; el; el = el.parentElement) {
+      observer.observe(el, { attributes: true, attributeFilter: ["style"] });
+    }
+    creationRectObserverRef.current = observer;
     const point = getCreationPoint(event);
     setCreationPreview({ start: point, end: point });
     onCreationPointerDown?.(frame.id, point, event.pointerId);
@@ -309,8 +336,21 @@ export const FrameView = memo(function FrameView({
     if (!event.isPrimary) return;
     event.preventDefault();
     event.stopPropagation();
-    onCreationPointerUp?.(frame.id, getCreationPoint(event), event.pointerId);
-    setCreationPreview(null);
+    const gesture = creationGestureRef.current;
+    const result = onCreationPointerUp?.(frame.id, getCreationPoint(event), event.pointerId);
+    endCreationRectWatch();
+    const clearPreview = () => {
+      if (gesture === creationGestureRef.current) setCreationPreview(null);
+    };
+    if (result) {
+      // The ack resolves after the element is already in the iframe DOM, so the
+      // preview can swap for it pixel-identically — one rAF lets the iframe
+      // paint the new node first instead of flashing empty space.
+      void Promise.resolve(result).then(() => requestAnimationFrame(clearPreview));
+      window.setTimeout(clearPreview, 800);
+    } else {
+      clearPreview();
+    }
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -320,6 +360,7 @@ export const FrameView = memo(function FrameView({
     event.preventDefault();
     event.stopPropagation();
     onCreationPointerCancel?.(frame.id, event.pointerId);
+    endCreationRectWatch();
     setCreationPreview(null);
   };
 
@@ -370,6 +411,7 @@ export const FrameView = memo(function FrameView({
       data-bridge-inspected-tag-name={bridgeState.inspectedTagName ?? undefined}
       data-bridge-hierarchy-node-count={bridgeState.hierarchyNodeCount}
       data-bridge-error={bridgeState.error ?? undefined}
+      data-freeform={frame.freeform ? "true" : undefined}
       aria-label={frame.name}
       style={{
         width: frame.width,
@@ -410,7 +452,7 @@ export const FrameView = memo(function FrameView({
           {showDeviceChrome ? <DeviceChrome chrome={chrome!} width={frame.width} /> : null}
           {showHomeIndicator ? <div className="device-home-indicator" aria-hidden="true" /> : null}
 
-          {isCreationMode && isLive ? (
+          {isCreationMode && isLive && !isPanTool ? (
             <div
               aria-label={`Create inside ${frame.name}`}
               className="frame-creation-layer"
@@ -432,7 +474,10 @@ export const FrameView = memo(function FrameView({
             </div>
           ) : null}
 
-          {!isSelected || isPanTool ? (
+          {/* The activation layer must cover any frame the creation layer
+              isn't — otherwise a space-pan press during creation mode would
+              fall through to the iframe. */}
+          {!(isCreationMode && isLive && !isPanTool) && (!isSelected || isPanTool) ? (
             <button
               className="frame-activation-layer"
               aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}

@@ -58,11 +58,11 @@ export function shapePoints(shape: ShapeVariantId, bounds: Rect): Point[] {
  * preserve the drag direction exactly; boxed shapes normalize the drag into
  * their bounds first.
  */
-export function shapeDragPoints(shape: ShapeVariantId, start: Point, end: Point, minimum = 16): Point[] {
+export function shapeDragPoints(shape: ShapeVariantId, start: Point, end: Point): Point[] {
   if (shape === "line" || shape === "arrow") {
     return [start, end];
   }
-  return shapePoints(shape, normalizedBounds(start, end, minimum));
+  return shapePoints(shape, normalizedBounds(start, end));
 }
 
 interface ShapePreviewProps {
@@ -79,11 +79,12 @@ interface ShapePreviewProps {
  */
 export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProps) {
   const markerId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const bounds = normalizedBounds(start, end, 1);
-  const points = shapeDragPoints(shape, start, end, 1).map((point) => ({
+  const bounds = normalizedBounds(start, end);
+  const points = shapeDragPoints(shape, start, end).map((point) => ({
     x: point.x - bounds.x,
     y: point.y - bounds.y,
   }));
+  const inset = SHAPE_STROKE_WIDTH / 2;
   const cornerRadius = Math.min(radius, bounds.width / 2, bounds.height / 2);
 
   return (
@@ -103,18 +104,24 @@ export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProp
       {shape === "rectangle" ? (
         <rect
           fill={SHAPE_FILL}
-          height={Math.max(1, bounds.height)}
+          height={Math.max(1, bounds.height - SHAPE_STROKE_WIDTH)}
           rx={cornerRadius > 0 ? cornerRadius : undefined}
           ry={cornerRadius > 0 ? cornerRadius : undefined}
-          width={Math.max(1, bounds.width)}
+          stroke={SHAPE_STROKE}
+          strokeWidth={SHAPE_STROKE_WIDTH}
+          width={Math.max(1, bounds.width - SHAPE_STROKE_WIDTH)}
+          x={inset}
+          y={inset}
         />
       ) : shape === "ellipse" ? (
         <ellipse
           cx={bounds.width / 2}
           cy={bounds.height / 2}
           fill={SHAPE_FILL}
-          rx={Math.max(0.5, bounds.width / 2)}
-          ry={Math.max(0.5, bounds.height / 2)}
+          rx={Math.max(0.5, bounds.width / 2 - inset)}
+          ry={Math.max(0.5, bounds.height / 2 - inset)}
+          stroke={SHAPE_STROKE}
+          strokeWidth={SHAPE_STROKE_WIDTH}
         />
       ) : shape === "line" || shape === "arrow" ? (
         <>
@@ -148,6 +155,10 @@ export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProp
         <polygon
           fill={SHAPE_FILL}
           points={points.map((point) => `${point.x},${point.y}`).join(" ")}
+          stroke={SHAPE_STROKE}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={SHAPE_STROKE_WIDTH}
         />
       )}
     </svg>

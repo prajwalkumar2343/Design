@@ -1,0 +1,17 @@
+{
+  "name": "canvas-design",
+  "version": "0.1.0",
+  "description": "Run and visually iterate on the Canvas HTML design workspace from Claude Code.",
+  "author": {
+    "name": "Canvas"
+  },
+  "keywords": [
+    "canvas",
+    "design",
+    "html",
+    "css",
+    "browser-preview",
+    "visual-qa",
+    "wireframe"
+  ]
+}

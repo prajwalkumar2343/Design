@@ -179,7 +179,14 @@ const browser = await chromium.launch({ headless: true });
   await ctx.close();
 }
 
-fs.writeFileSync(path.join(OUT, "findings.json"), JSON.stringify({ findings, hygiene }, null, 2));
+fs.writeFileSync(path.join(OUT, "findings.json"), JSON.stringify({
+  _meta: {
+    generatedBy: "qa/visual-qa.mjs",
+    coverage: "Results from the visual-qa.mjs lake and canvas sweep only (screenshots 01-32, lake-controls.json, canvas-controls.json). The other drivers in qa/ print diagnostics to stdout and save screenshots but write nothing here. See qa/evidence-visual/README.md.",
+  },
+  findings,
+  hygiene,
+}, null, 2));
 console.log("\n═══ FINDINGS ═══");
 for (const f of findings) console.log(`[${f.sev}] ${f.area}: ${f.text}`);
 console.log("\n═══ HYGIENE ═══");

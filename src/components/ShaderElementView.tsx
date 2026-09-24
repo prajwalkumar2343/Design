@@ -1,5 +1,5 @@
 import { Trash2 } from "lucide-react";
-import { memo, useEffect, useRef, useState, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { SafeShaderMount } from "./SafeShaderMount";
 import {
   clampShaderElementSize,
@@ -155,6 +155,12 @@ export const ShaderElementView = memo(function ShaderElementView({
     element.radius === undefined
       ? undefined
       : { borderRadius: Math.max(0, element.radius - SHADER_ELEMENT_RADIUS_INSET) };
+  // SafeShaderMount is memoized — keep componentProps referentially stable
+  // so unrelated canvas updates don't remount the WebGL stage.
+  const mountProps = useMemo(
+    () => ({ ...getShaderMountProps(element.shaderId), ...element.params }),
+    [element.shaderId, element.params],
+  );
 
   return (
     <section
@@ -173,7 +179,7 @@ export const ShaderElementView = memo(function ShaderElementView({
         {failed ? (
           <div className="shader-element-unsupported">WebGL2 unavailable</div>
         ) : Component ? (
-          <SafeShaderMount className="shader-element-mount" component={Component} componentProps={{ ...getShaderMountProps(element.shaderId), ...element.params }} />
+          <SafeShaderMount className="shader-element-mount" component={Component} componentProps={mountProps} />
         ) : (
           <div className="shader-element-loading" />
         )}

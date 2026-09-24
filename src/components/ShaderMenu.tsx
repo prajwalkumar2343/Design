@@ -5,6 +5,7 @@ import {
   CUSTOM_SHADER_DEFINITIONS,
   PAPER_SHADER_DEFINITIONS,
   detectPaperShaderSupport,
+  getShaderMountProps,
   loadPaperShader,
   type ShaderId,
 } from "../shaders";
@@ -59,10 +60,23 @@ interface ShaderSectionModel {
 const ENTRY_BY_ID = new Map<string, ShaderEntry>(SHADER_ENTRIES.map((entry) => [entry[0], entry]));
 
 /**
- * Zero-GPU thumbnails for the gallery — a full menu of live previews can
- * exhaust the browser's WebGL context budget. Each is a CSS stand-in in the
- * shader's palette; hovering or focusing a card mounts the real preview.
+ * Real shader renders captured by scripts/capture-shader-thumbs.mjs into
+ * src/assets/shader-thumbs — a full menu of live previews would exhaust the
+ * browser's WebGL context budget, so cards show snapshots at rest and mount
+ * the live shader only on hover/focus. CSS gradients stay underneath as the
+ * loading/missing-image fallback.
  */
+const SHADER_THUMB_URLS: Partial<Record<ShaderId, string>> = Object.fromEntries(
+  Object.entries(
+    import.meta.glob("../assets/shader-thumbs/*.webp", {
+      eager: true,
+      import: "default",
+      query: "?url",
+    }) as Record<string, string>,
+  ).map(([path, url]) => [path.split("/").pop()!.replace(/\.webp$/, "") as ShaderId, url]),
+);
+
+/** Zero-GPU fallbacks, one CSS gradient in each shader's palette. */
 const SHADER_THUMBS: Record<ShaderId, string> = {
   "mesh-gradient": "radial-gradient(at 18% 25%, #6f6cf5 0%, transparent 55%), radial-gradient(at 82% 18%, #f06a9b 0%, transparent 50%), radial-gradient(at 55% 88%, #f5b86c 0%, transparent 55%), linear-gradient(140deg, #2a2740, #1c1a30)",
   "grain-gradient": "radial-gradient(at 25% 30%, #f5a86c 0%, transparent 60%), radial-gradient(at 75% 75%, #e05a7a 0%, transparent 55%), linear-gradient(135deg, #3a2430, #241a26)",
@@ -143,19 +157,23 @@ function LiveShaderPreview({ shaderId }: { shaderId: ShaderId }) {
   if (!ShaderComponent) return <span className="shader-preview-loading" aria-hidden="true" />;
   return (
     <ShaderPreviewBoundary>
-      <SafeShaderMount className="shader-preview-mount" component={ShaderComponent} />
+      <SafeShaderMount className="shader-preview-mount" component={ShaderComponent} componentProps={getShaderMountProps(shaderId)} />
     </ShaderPreviewBoundary>
   );
 }
 
 /**
- * Static thumbnail by default; the live WebGL preview mounts only while the
+ * Captured snapshot by default; the live WebGL preview mounts only while the
  * card is hovered or focused, keeping at most one extra GL context alive.
  */
 function ShaderCardPreview({ shaderId, live }: { shaderId: ShaderId; live: boolean }) {
+  const snapshot = SHADER_THUMB_URLS[shaderId];
   return (
     <div className="shader-card-preview" aria-hidden="true">
       <span className="shader-card-thumb" style={{ background: SHADER_THUMBS[shaderId] }} />
+      {snapshot ? (
+        <img className="shader-card-img" src={snapshot} alt="" draggable={false} loading="lazy" />
+      ) : null}
       {live ? <LiveShaderPreview shaderId={shaderId} /> : null}
     </div>
   );

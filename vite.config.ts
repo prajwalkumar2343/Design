@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { dirname } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -36,6 +38,15 @@ export default defineConfig({
   },
   server: {
     host: true,
+    watch: {
+      // Tests rewrite fixture files under tmp/; reloading on them would
+      // interrupt anyone with the dev server open.
+      ignored: ["**/tmp/**"],
+    },
+    fs: {
+      // Worktrees commonly symlink node_modules; allow the resolved path too.
+      allow: [".", dirname(realpathSync("node_modules"))],
+    },
     proxy: {
       // Browser-only LLM clients call these in dev (see .env.development) so
       // provider keys stay out of the network path and CORS is avoided.

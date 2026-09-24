@@ -80,6 +80,7 @@ import {
 } from "../editor/store";
 import { prependTranslationTransform } from "../editor/position";
 import { buildCodeExportPayload } from "../export/code-export";
+import { buildReactExportPayload } from "../export/react/react-export";
 import { buildDTCGExportFile, buildTokenCssExportFile } from "../export/tokens-export";
 import { fontFacesCssForFamilyValue } from "../fonts";
 import { BriefFrameView } from "../frame/BriefFrameView";
@@ -979,6 +980,46 @@ export function CanvasSurface({
     }
   }, [editorStore, shouldUseLocalMemory]);
 
+  const exportReactProject = useCallback(() => {
+    if (editorStore.getState().session.lifecycle === "not-started") {
+      showPersistenceFeedback({ kind: "error", message: "Start a brainstorming session before exporting." });
+      return;
+    }
+    try {
+      const state = editorStore.getState();
+      const activeId = getActiveProjectId();
+      const record = shouldUseLocalMemory && activeId
+        ? loadProjectIndex().find((p) => p.id === activeId)
+        : undefined;
+      const projectName = deriveProjectName(state, record?.kind ?? pendingKindRef.current ?? "blank");
+      const payload = buildReactExportPayload(state, projectName);
+      if (!payload) {
+        showPersistenceFeedback({
+          kind: "error",
+          message: "There is no page code to export yet — design a frame first.",
+        });
+        return;
+      }
+      downloadAdapterRef.current?.downloadProjectFile({
+        text: payload.text,
+        filename: payload.filename,
+        mimeType: payload.mimeType,
+      });
+      const warnings = payload.notes.filter((note) => note.severity === "warning").length;
+      showPersistenceFeedback({
+        kind: "success",
+        message: warnings === 0
+          ? `Exported a runnable React project as ${payload.filename} — unzip and run npm install && npm run dev.`
+          : `Exported ${payload.filename} — ${warnings} fidelity note${warnings === 1 ? "" : "s"} listed in the bundled README.`,
+      });
+    } catch (error) {
+      showPersistenceFeedback({
+        kind: "error",
+        message: `Could not export React project: ${error instanceof Error ? error.message : "download failed"}`,
+      });
+    }
+  }, [editorStore, shouldUseLocalMemory]);
+
   const importProject = useCallback(async (file: File) => {
     try {
       const text = await persistenceAdapterRef.current!.readProjectFile(file);
@@ -1055,7 +1096,7 @@ export function CanvasSurface({
     if (!shouldUseLocalMemory) return;
     const schedule = () => {
       if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
-      autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = setTimeout(() => {
         try {
           const state = editorStore.getState();
           const isEmpty =
@@ -3989,6 +4030,7 @@ export function CanvasSurface({
         onExport={exportProject}
         onExportFigma={exportFigmaProject}
         onExportCode={exportCodeProject}
+        onExportReact={exportReactProject}
         persistenceFeedback={persistenceFeedback}
         onShowLake={
           shouldUseLocalMemory

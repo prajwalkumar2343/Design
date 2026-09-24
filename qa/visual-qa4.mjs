@@ -41,9 +41,10 @@ await page.waitForTimeout(500);
 await shot(page, "blank-chooser");
 const chooser = page.locator('[role="dialog"], .blank-chooser, [data-testid*="chooser"]').first();
 log("chooser visible:", await chooser.count());
-// pick website canvas if buttons exist
-const pick = page.locator('[data-testid*="blank-canvas-"], [data-testid*="chooser"] button').first();
+// pick website canvas (chooser options are testid blank-choose-<canvasId>)
+const pick = page.getByTestId("blank-choose-website");
 if (await pick.count()) { await pick.click(); await page.waitForTimeout(1500); log("URL after blank create:", page.url()); }
+else log("blank-choose-website option not found in chooser");
 await shot(page, "blank-created");
 
 // ── tokens: theme switch on a real frame ──

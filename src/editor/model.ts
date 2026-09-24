@@ -46,6 +46,8 @@ export interface FrameEntity {
   /** Device class the frame was created from; drives desktop-only affordances. */
   category?: DeviceCategory;
   chrome?: DeviceChrome;
+  /** Chromeless canvas-drawn frame — no border/chrome visuals, just content. */
+  freeform?: boolean;
 }
 
 export interface NodeEntity {
@@ -97,6 +99,8 @@ export interface FrameSeed {
   /** Device class the seed frame belongs to; drives desktop-only affordances. */
   category?: DeviceCategory;
   chrome?: DeviceChrome;
+  /** Chromeless canvas-drawn frame — no border/chrome visuals, just content. */
+  freeform?: boolean;
   x: number;
   y: number;
   width: number;
@@ -201,6 +205,7 @@ export function createEditorStateFromFrameSeeds(
       background: seed.background,
       category: seed.category,
       chrome: seed.chrome,
+      freeform: seed.freeform,
     };
     state.pages[pageId].frameIds.push(seed.id);
   }

@@ -391,7 +391,7 @@ function readDeviceChrome(value: unknown, path: string): import("../frame/preset
 
 function readFrame(value: unknown, path: string): FrameEntity {
   const input = record(value, path);
-  expectKeys(input, ["id", "pageId", "documentId", "name", "x", "y", "width", "height", "background", "category", "chrome"], path);
+  expectKeys(input, ["id", "pageId", "documentId", "name", "x", "y", "width", "height", "background", "category", "chrome", "freeform"], path);
   const frame: FrameEntity = {
     id: idValue(input.id, `${path}.id`),
     pageId: idValue(input.pageId, `${path}.pageId`),
@@ -411,6 +411,12 @@ function readFrame(value: unknown, path: string): FrameEntity {
   }
   if (input.chrome !== undefined && input.chrome !== null) {
     frame.chrome = readDeviceChrome(input.chrome, `${path}.chrome`);
+  }
+  if (input.freeform !== undefined) {
+    if (typeof input.freeform !== "boolean") {
+      fail("invalid-field", `${path}.freeform`, "must be a boolean");
+    }
+    frame.freeform = input.freeform;
   }
   return frame;
 }
@@ -747,6 +753,15 @@ export function exportWireCanvasProject(state: EditorState): WireCanvasProjectV1
 
 export function serializeWireCanvasProject(state: EditorState): string {
   return `${JSON.stringify(exportWireCanvasProject(state), null, 2)}\n`;
+}
+
+/**
+ * Compact serialization for browser storage. Pretty-printing costs ~15–30%
+ * extra bytes per project against the localStorage quota and buys nothing —
+ * stored payloads are only ever read back through the parser.
+ */
+export function serializeWireCanvasProjectCompact(state: EditorState): string {
+  return JSON.stringify(exportWireCanvasProject(state));
 }
 
 export function parseWireCanvasProject(text: string): EditorState {

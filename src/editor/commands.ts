@@ -132,6 +132,7 @@ function applyCreateFrameCommand(state: EditorState, frame: FrameSeed): EditorSt
       background: frame.background,
       category: frame.category,
       chrome: frame.chrome,
+      freeform: frame.freeform,
     },
   });
 }

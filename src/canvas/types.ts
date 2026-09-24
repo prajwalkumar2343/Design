@@ -28,6 +28,8 @@ export interface CanvasFrame extends Rect {
   /** Device class the frame was created from; drives desktop-only affordances. */
   category?: DeviceCategory;
   chrome?: DeviceChrome;
+  /** Chromeless canvas-drawn frame — no border/chrome visuals, just content. */
+  freeform?: boolean;
   /** Optional normalized editor metadata used when a frame seeds another page. */
   pageId?: string;
   pageName?: string;

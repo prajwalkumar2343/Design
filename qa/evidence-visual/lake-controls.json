@@ -1,0 +1,210 @@
+[
+  {
+    "i": 0,
+    "tag": "BUTTON",
+    "testid": "",
+    "label": "Sort files, currently Last modified",
+    "disabled": false,
+    "cls": "figma-sort-button"
+  },
+  {
+    "i": 1,
+    "tag": "BUTTON",
+    "testid": "",
+    "label": "Grid view",
+    "disabled": false,
+    "cls": "is-active"
+  },
+  {
+    "i": 2,
+    "tag": "BUTTON",
+    "testid": "",
+    "label": "List view",
+    "disabled": false,
+    "cls": ""
+  },
+  {
+    "i": 3,
+    "tag": "BUTTON",
+    "testid": "new-file-button",
+    "label": "New",
+    "disabled": false,
+    "cls": "figma-new-file"
+  },
+  {
+    "i": 4,
+    "tag": "BUTTON",
+    "testid": "",
+    "label": "All files 0",
+    "disabled": false,
+    "cls": "figma-tab is-active"
+  },
+  {
+    "i": 5,
+    "tag": "BUTTON",
+    "testid": "lake-filter-blank",
+    "label": "Blank brief",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 6,
+    "tag": "BUTTON",
+    "testid": "lake-filter-landing",
+    "label": "Landing page",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 7,
+    "tag": "BUTTON",
+    "testid": "lake-filter-dashboard",
+    "label": "Dashboard",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 8,
+    "tag": "BUTTON",
+    "testid": "lake-filter-portfolio",
+    "label": "Portfolio",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 9,
+    "tag": "BUTTON",
+    "testid": "lake-filter-wireframe",
+    "label": "Wireframe system",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 10,
+    "tag": "BUTTON",
+    "testid": "lake-filter-commerce",
+    "label": "Storefront",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 11,
+    "tag": "BUTTON",
+    "testid": "lake-filter-mobile-blank",
+    "label": "Blank app",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 12,
+    "tag": "BUTTON",
+    "testid": "lake-filter-mobile-app",
+    "label": "Mobile App",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 13,
+    "tag": "BUTTON",
+    "testid": "lake-filter-app-wireframe",
+    "label": "App Wireframe",
+    "disabled": false,
+    "cls": "figma-tab"
+  },
+  {
+    "i": 14,
+    "tag": "BUTTON",
+    "testid": "start-brainstorming",
+    "label": "New design file",
+    "disabled": false,
+    "cls": "figma-primary"
+  },
+  {
+    "i": 15,
+    "tag": "BUTTON",
+    "testid": "create-kind-blank",
+    "label": "A fresh startBlank brief",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 16,
+    "tag": "BUTTON",
+    "testid": "create-kind-landing",
+    "label": "Made for what's nextIdeas intoimpact.Explore the possibiliti",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 17,
+    "tag": "BUTTON",
+    "testid": "create-kind-dashboard",
+    "label": "Overview24,680 +18.6%Dashboard",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 18,
+    "tag": "BUTTON",
+    "testid": "create-kind-portfolio",
+    "label": "Independent designerSelected works.Portfolio",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 19,
+    "tag": "BUTTON",
+    "testid": "create-kind-wireframe",
+    "label": "Wireframe system",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 20,
+    "tag": "BUTTON",
+    "testid": "create-kind-commerce",
+    "label": "The everyday edit.Objects for a slower lifeStorefront",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 21,
+    "tag": "BUTTON",
+    "testid": "create-kind-mobile-app",
+    "label": "Monday, 24Your day,in focus.Mobile App",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 22,
+    "tag": "BUTTON",
+    "testid": "create-kind-app-wireframe",
+    "label": "App Wireframe",
+    "disabled": false,
+    "cls": "figma-template-card"
+  },
+  {
+    "i": 23,
+    "tag": "BUTTON",
+    "testid": "lake-toggle-button",
+    "label": "Open project lake",
+    "disabled": false,
+    "cls": "workspace-home-button is-active"
+  },
+  {
+    "i": 24,
+    "tag": "BUTTON",
+    "testid": "import-project-button",
+    "label": "Import",
+    "disabled": false,
+    "cls": "workspace-file-button"
+  },
+  {
+    "i": 25,
+    "tag": "BUTTON",
+    "testid": "import-html-button",
+    "label": "Import HTML",
+    "disabled": false,
+    "cls": "workspace-file-button"
+  }
+]

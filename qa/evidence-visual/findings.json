@@ -1,0 +1,9 @@
+{
+  "findings": [],
+  "hygiene": {
+    "errors": [],
+    "warnings": [],
+    "pageErrors": [],
+    "failedReqs": []
+  }
+}

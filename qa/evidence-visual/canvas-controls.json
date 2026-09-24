@@ -1,0 +1,2006 @@
+[
+  {
+    "testid": "",
+    "label": "Move Desktop · 1440 × 900",
+    "disabled": false,
+    "cls": "frame-label"
+  },
+  {
+    "testid": "",
+    "label": "Open Desktop · 1440 × 900 as a full website in a new tab",
+    "disabled": false,
+    "cls": "frame-preview-site"
+  },
+  {
+    "testid": "",
+    "label": "Move Tablet · 820 × 1180",
+    "disabled": false,
+    "cls": "frame-label"
+  },
+  {
+    "testid": "",
+    "label": "Select Tablet · 820 × 1180",
+    "disabled": false,
+    "cls": "frame-activation-layer"
+  },
+  {
+    "testid": "",
+    "label": "Move Mobile · 390 × 844",
+    "disabled": false,
+    "cls": "frame-label"
+  },
+  {
+    "testid": "",
+    "label": "Select Mobile · 390 × 844",
+    "disabled": false,
+    "cls": "frame-activation-layer"
+  },
+  {
+    "testid": "",
+    "label": "Move Mobile · 430 × 932",
+    "disabled": false,
+    "cls": "frame-label"
+  },
+  {
+    "testid": "",
+    "label": "Select Mobile · 430 × 932",
+    "disabled": false,
+    "cls": "frame-activation-layer"
+  },
+  {
+    "testid": "import-project-button",
+    "label": "Import",
+    "disabled": false,
+    "cls": "workspace-file-button"
+  },
+  {
+    "testid": "import-html-button",
+    "label": "Import HTML",
+    "disabled": false,
+    "cls": "workspace-file-button"
+  },
+  {
+    "testid": "tool-button-select",
+    "label": "Select",
+    "disabled": false,
+    "cls": "tool-button is-active"
+  },
+  {
+    "testid": "tool-button-hand",
+    "label": "Hand",
+    "disabled": false,
+    "cls": "tool-button"
+  },
+  {
+    "testid": "tool-button-rectangle",
+    "label": "Rectangle",
+    "disabled": false,
+    "cls": "tool-button"
+  },
+  {
+    "testid": "tool-button-text",
+    "label": "Text",
+    "disabled": false,
+    "cls": "tool-button"
+  },
+  {
+    "testid": "tool-button-image",
+    "label": "Image",
+    "disabled": false,
+    "cls": "tool-button"
+  },
+  {
+    "testid": "tool-button-comment",
+    "label": "Comment",
+    "disabled": false,
+    "cls": "tool-button"
+  },
+  {
+    "testid": "shape-menu-button",
+    "label": "Shape tools",
+    "disabled": false,
+    "cls": "tool-button shape-menu-button"
+  },
+  {
+    "testid": "tool-button-shader",
+    "label": "Add shader",
+    "disabled": false,
+    "cls": "tool-button shader-tool-button"
+  },
+  {
+    "testid": "add-frame-button",
+    "label": "Add frame",
+    "disabled": false,
+    "cls": "dock-icon"
+  },
+  {
+    "testid": "undo-button",
+    "label": "Undo",
+    "disabled": true,
+    "cls": "dock-icon"
+  },
+  {
+    "testid": "redo-button",
+    "label": "Redo",
+    "disabled": true,
+    "cls": "dock-icon"
+  },
+  {
+    "testid": "",
+    "label": "Zoom out",
+    "disabled": false,
+    "cls": ""
+  },
+  {
+    "testid": "",
+    "label": "Fit all frames",
+    "disabled": false,
+    "cls": "zoom-value"
+  },
+  {
+    "testid": "",
+    "label": "Zoom in",
+    "disabled": false,
+    "cls": ""
+  },
+  {
+    "testid": "",
+    "label": "Fit all frames",
+    "disabled": false,
+    "cls": "dock-icon"
+  },
+  {
+    "testid": "sidebar-tab-pages",
+    "label": "Pages",
+    "disabled": false,
+    "cls": "sidebar-tab"
+  },
+  {
+    "testid": "sidebar-tab-layers",
+    "label": "Layers",
+    "disabled": false,
+    "cls": "sidebar-tab is-active"
+  },
+  {
+    "testid": "sidebar-tab-shaders",
+    "label": "Shaders",
+    "disabled": false,
+    "cls": "sidebar-tab"
+  },
+  {
+    "testid": "sidebar-tab-tokens",
+    "label": "Tokens",
+    "disabled": false,
+    "cls": "sidebar-tab"
+  },
+  {
+    "testid": "sidebar-tab-assets",
+    "label": "Assets",
+    "disabled": false,
+    "cls": "sidebar-tab"
+  },
+  {
+    "testid": "left-sidebar-toggle",
+    "label": "Collapse left sidebar",
+    "disabled": false,
+    "cls": "sidebar-collapse-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document Independent th",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document Independent thinking · ",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document Independent thin",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand span",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "span",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A responsive HTML document",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas. A qu",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Independent thinking · 2026",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Make room for better ideas.",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse A quiet place for teams and agents to shape interfa",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A quiet place for teams and agents to shape interface",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse HTML / CSSOne document, many viewportsScroll to exp",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSSOne document, many viewportsScroll to explo",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand HTML / CSS",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSS",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand One document, many viewports",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "One document, many viewports",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Scroll to explore",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Scroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document Independent th",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document Independent thinking · ",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document Independent thin",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand span",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "span",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A responsive HTML document",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas. A qu",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Independent thinking · 2026",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Make room for better ideas.",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse A quiet place for teams and agents to shape interfa",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A quiet place for teams and agents to shape interface",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse HTML / CSSOne document, many viewportsScroll to exp",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSSOne document, many viewportsScroll to explo",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand HTML / CSS",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSS",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand One document, many viewports",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "One document, many viewports",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Scroll to explore",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Scroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document Independent th",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document Independent thinking · ",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document Independent thin",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand span",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "span",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A responsive HTML document",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas. A qu",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Independent thinking · 2026",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Make room for better ideas.",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse A quiet place for teams and agents to shape interfa",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A quiet place for teams and agents to shape interface",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse HTML / CSSOne document, many viewportsScroll to exp",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSSOne document, many viewportsScroll to explo",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand HTML / CSS",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSS",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand One document, many viewports",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "One document, many viewports",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Scroll to explore",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Scroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document Independent th",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document Independent thinking · ",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document Independent thinki",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document Independent thin",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Fieldwork",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Fieldwork",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Fieldwork",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand span",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "span",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename span",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A responsive HTML document",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A responsive HTML document",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas. A qu",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse Independent thinking · 2026 Make room for better id",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026 Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026 Make room for better idea",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Independent thinking · 2026",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Independent thinking · 2026",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Make room for better ideas.",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Make room for better ideas.",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse A quiet place for teams and agents to shape interfa",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand A quiet place for teams and agents to shape interface",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "A quiet place for teams and agents to shape interfaces toget",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide A quiet place for teams and agents to shape interfaces ",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename A quiet place for teams and agents to shape interface",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Collapse HTML / CSSOne document, many viewportsScroll to exp",
+    "disabled": false,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSSOne document, many viewportsScroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSSOne document, many viewportsScroll to explo",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand HTML / CSS",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "HTML / CSS",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename HTML / CSS",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand One document, many viewports",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "One document, many viewports",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename One document, many viewports",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Expand Scroll to explore",
+    "disabled": true,
+    "cls": "layer-expand-button"
+  },
+  {
+    "testid": "",
+    "label": "Scroll to explore",
+    "disabled": false,
+    "cls": "layer-select-button"
+  },
+  {
+    "testid": "",
+    "label": "Lock Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Hide Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Rename Scroll to explore",
+    "disabled": false,
+    "cls": "layer-action-button"
+  },
+  {
+    "testid": "",
+    "label": "Resize left sidebar",
+    "disabled": false,
+    "cls": "sidebar-resize-handle"
+  },
+  {
+    "testid": "right-sidebar-toggle",
+    "label": "Collapse properties panel",
+    "disabled": false,
+    "cls": "properties-collapse-button"
+  },
+  {
+    "testid": "",
+    "label": "Resize properties panel",
+    "disabled": false,
+    "cls": "properties-resize-handle"
+  }
+]

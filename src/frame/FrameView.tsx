@@ -129,9 +129,12 @@ export const FrameView = memo(function FrameView({
   const [creationPreview, setCreationPreview] = useState<{ start: Point; end: Point } | null>(null);
   // Bumps once per drag so a slow create-ack can't clear a newer preview.
   const creationGestureRef = useRef(0);
-  // The iframe rect is constant for a whole drag — reading it per pointermove
-  // would force a layout flush on every event.
+  // The iframe rect only pays for one layout read per drag — but it goes stale
+  // if the camera pans/zooms mid-drag, which CanvasSurface applies as imperative
+  // ancestor style writes React never re-renders for. Watch those writes and
+  // drop the cache; the next pointermove re-reads it once.
   const creationRectRef = useRef<DOMRect | null>(null);
+  const creationRectObserverRef = useRef<MutationObserver | null>(null);
   const [initialBridgeSession] = useState(() => createBridgeSession(frame.id));
   const bridgeSessionRef = useRef(initialBridgeSession);
   if (bridgeSessionRef.current.frameId !== frame.id) {
@@ -279,8 +282,18 @@ export const FrameView = memo(function FrameView({
     [frame.srcDoc, frame.mode, bridgeSession],
   );
 
+  const endCreationRectWatch = () => {
+    creationRectRef.current = null;
+    creationRectObserverRef.current?.disconnect();
+    creationRectObserverRef.current = null;
+  };
+
+  useEffect(() => () => creationRectObserverRef.current?.disconnect(), []);
+
   const getCreationPoint = (event: ReactPointerEvent<HTMLDivElement>): Point => {
-    const bounds = creationRectRef.current ?? iframeRef.current?.getBoundingClientRect();
+    const bounds =
+      creationRectRef.current ??
+      (creationRectRef.current = iframeRef.current?.getBoundingClientRect() ?? null);
     if (!bounds) return { x: event.clientX, y: event.clientY };
     const scaleX = frame.width / Math.max(bounds.width, 1);
     const scaleY = frame.height / Math.max(bounds.height, 1);
@@ -297,6 +310,14 @@ export const FrameView = memo(function FrameView({
     event.currentTarget.setPointerCapture(event.pointerId);
     creationGestureRef.current += 1;
     creationRectRef.current = iframeRef.current?.getBoundingClientRect() ?? null;
+    creationRectObserverRef.current?.disconnect();
+    const observer = new MutationObserver(() => {
+      creationRectRef.current = null;
+    });
+    for (let el: HTMLElement | null = event.currentTarget; el; el = el.parentElement) {
+      observer.observe(el, { attributes: true, attributeFilter: ["style"] });
+    }
+    creationRectObserverRef.current = observer;
     const point = getCreationPoint(event);
     setCreationPreview({ start: point, end: point });
     onCreationPointerDown?.(frame.id, point, event.pointerId);
@@ -317,7 +338,7 @@ export const FrameView = memo(function FrameView({
     event.stopPropagation();
     const gesture = creationGestureRef.current;
     const result = onCreationPointerUp?.(frame.id, getCreationPoint(event), event.pointerId);
-    creationRectRef.current = null;
+    endCreationRectWatch();
     const clearPreview = () => {
       if (gesture === creationGestureRef.current) setCreationPreview(null);
     };
@@ -339,7 +360,7 @@ export const FrameView = memo(function FrameView({
     event.preventDefault();
     event.stopPropagation();
     onCreationPointerCancel?.(frame.id, event.pointerId);
-    creationRectRef.current = null;
+    endCreationRectWatch();
     setCreationPreview(null);
   };
 

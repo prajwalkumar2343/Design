@@ -162,6 +162,6 @@ Every feature in the project, one line each. Grouped by area.
 - **Shader experiments** — standalone studies `experiments/dot-attraction` and `experiments/ferro-tide` (the latter became the shipped custom shader).
 - **Canvas-design skill plugin** — Codex-side skill for driving/QA-ing the workspace (`plugins/canvas-design/`).
 - **Per-canvas agent specs** — `agents/agent.md` / `agent-mobile.md` hardness placeholders keyed by canvas category.
-- **QA harness** — `qa/driver.mjs` exploratory browser driver, probe scripts, evidence capture, `QA_REPORT.md`.
+- **QA harness** — `qa/driver.mjs` exploratory browser driver, probe scripts, evidence capture.
 - **Figma tooling scripts** — `scripts/dump-fig.mjs` and `verify-figma-export.mjs` for inspecting/validating .fig output.
 - **Test suites** — ~800 Vitest unit tests + ~80 Playwright e2e specs covering every feature area (`tests/`, `vitest.config.ts`, `playwright.config.ts`).

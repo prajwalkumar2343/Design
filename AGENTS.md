@@ -15,7 +15,7 @@ Use `playwright.comments.config.ts` (or create a similar config on a
 free port) to run e2e tests against this checkout:
 
 ```
-npm run test:e2e -- --config playwright.comments.config.ts <spec>
+npm run build && npm run test:e2e -- --config playwright.comments.config.ts <spec>
 ```
 
 ## Concurrent editing
@@ -31,13 +31,14 @@ dangling stash commits before hand-repairing.
 - `src/shaders/canvas-model.ts` — `CanvasShaderElement` (x/y/w/h in world
   coords, `params`, `radius`), size/radius clamps.
 - `src/shaders/params.ts` — `ShaderParamField` + `deriveShaderParamFields`;
-  fields carry a `group` ("colors" | "motion" | "sizing" | "other") used to
+  fields carry a `group` ("color" | "param" | "motion" | "sizing") used to
   render grouped inspector sections.
 - `src/components/ShaderEditor.tsx` — `ShaderParamsEditor`, the shared modern
   param editor (sliders, switch, palette popovers, preset select). Used by
   both `ShadersPanel` (left list) and `PropertiesPanel`'s `ShaderDesignPanel`.
+  `applyPickedHex` lives here too.
 - `src/components/ColorField.tsx` — shared `ColorField`, `SwatchGrid`,
-  `COLOR_SWATCHES`, `applyPickedHex`.
+  `COLOR_SWATCHES`.
 - Shader selection lives in `CanvasSurface` (`selectedShaderElementId`);
   `ShaderElementView` ignores outside pointerdowns inside
   `[data-canvas-control]` so inspector edits don't deselect.

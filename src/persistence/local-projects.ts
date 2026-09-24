@@ -382,10 +382,24 @@ function enumerateDataIds(storage: Storage): Set<string> {
 
 function readIndexSummaries(storage: Storage): LocalProjectSummary[] {
   const primary = parseIndexRaw(storage.getItem(LS_KEY_INDEX));
+  const backup = parseIndexRaw(storage.getItem(LS_KEY_INDEX_BACKUP));
+  // A primary that parses but lists fewer files than the backup was truncated
+  // by an interrupted write — trusting it would let the next save shrink the
+  // backup too and vanish those files. Union both copies (the primary wins
+  // per id) and heal the primary, same as the corrupt-index path below.
+  if (primary !== null && backup !== null && backup.length > primary.length) {
+    const byId = new Map<string, LocalProjectSummary>();
+    for (const meta of backup) byId.set(meta.id, meta);
+    for (const meta of primary) byId.set(meta.id, meta);
+    const merged = sortIndex([...byId.values()]).slice(0, MAX_PROJECTS);
+    try {
+      storage.setItem(LS_KEY_INDEX, JSON.stringify(merged));
+    } catch {}
+    return merged;
+  }
   if (primary !== null) return sortIndex(primary).slice(0, MAX_PROJECTS);
   // The primary index is corrupt — restore from the last-good copy instead of
   // presenting an empty lake while every payload is still on disk.
-  const backup = parseIndexRaw(storage.getItem(LS_KEY_INDEX_BACKUP));
   if (backup !== null) {
     try {
       storage.setItem(LS_KEY_INDEX, JSON.stringify(sortIndex(backup)));
@@ -552,21 +566,45 @@ export function saveProjectIndex(
     }
     const sorted = sortIndex(merged);
     const kept = sorted.slice(0, MAX_PROJECTS);
-    for (const { id, text } of pendingData) {
-      storage.setItem(LS_PREFIX_DATA + id, text);
-      // Seed the last-good copy for files that have never been opened; the
-      // read path advances it to the newest payload that parses.
-      if (storage.getItem(LS_PREFIX_BACKUP + id) === null) {
+    // Payload keys land before the index so the index never points at a
+    // missing file. If the index write then fails, the payloads are rolled
+    // back — otherwise a new file is stranded under a key the lake can't
+    // list. Prior payloads are restored rather than deleted so a failed
+    // update doesn't erase the last good copy.
+    const writtenData: { id: string; prev: string | null }[] = [];
+    const seededBackups: string[] = [];
+    try {
+      for (const { id, text } of pendingData) {
+        writtenData.push({ id, prev: storage.getItem(LS_PREFIX_DATA + id) });
+        storage.setItem(LS_PREFIX_DATA + id, text);
+        // Seed the last-good copy for files that have never been opened; the
+        // read path advances it to the newest payload that parses.
+        if (storage.getItem(LS_PREFIX_BACKUP + id) === null) {
+          try {
+            storage.setItem(LS_PREFIX_BACKUP + id, text);
+            seededBackups.push(id);
+          } catch {}
+        }
+      }
+      const json = JSON.stringify(kept);
+      storage.setItem(LS_KEY_INDEX, json);
+      try {
+        storage.setItem(LS_KEY_INDEX_BACKUP, json);
+      } catch {}
+    } catch (error) {
+      for (const { id, prev } of writtenData) {
         try {
-          storage.setItem(LS_PREFIX_BACKUP + id, text);
+          if (prev === null) storage.removeItem(LS_PREFIX_DATA + id);
+          else storage.setItem(LS_PREFIX_DATA + id, prev);
         } catch {}
       }
+      for (const id of seededBackups) {
+        try {
+          storage.removeItem(LS_PREFIX_BACKUP + id);
+        } catch {}
+      }
+      throw error;
     }
-    const json = JSON.stringify(kept);
-    storage.setItem(LS_KEY_INDEX, json);
-    try {
-      storage.setItem(LS_KEY_INDEX_BACKUP, json);
-    } catch {}
     // Index write succeeded — payloads of over-cap entries can go now.
     for (const dropped of sorted.slice(MAX_PROJECTS)) {
       try {
@@ -825,6 +863,16 @@ export function loadEditorStateForProjectDetailed(id: string): ProjectLoadResult
       }
     } catch {}
   };
+  const backupParses = () => {
+    const existing = storage.getItem(LS_PREFIX_BACKUP + id);
+    if (existing === null) return false;
+    try {
+      parseWireCanvasProject(existing);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const relistIfMissing = (state: EditorState) => {
     try {
       if (readIndexSummaries(storage).some((s) => s.id === id)) return;
@@ -845,7 +893,11 @@ export function loadEditorStateForProjectDetailed(id: string): ProjectLoadResult
   const finish = (result: { state: EditorState; repairedText: string | null }, source: ProjectLoadSource, raw: string): ProjectLoadResult => {
     if (result.repairedText !== null) persistHealed(result.repairedText);
     else if (source !== "primary") persistHealed(raw);
-    refreshBackup(result.repairedText ?? raw);
+    // A repair can be a lossy salvage — it replaces the last-good backup only
+    // when the backup is missing or no longer parses on its own.
+    if (result.repairedText === null || !backupParses()) {
+      refreshBackup(result.repairedText ?? raw);
+    }
     relistIfMissing(result.state);
     return { state: result.state, source };
   };

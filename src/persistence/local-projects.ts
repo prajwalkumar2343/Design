@@ -1,5 +1,9 @@
 import { createEmptyEditorState, type EditorState } from "../editor/model";
-import { parseWireCanvasProject, serializeWireCanvasProject } from "./wirecanvas";
+import {
+  parseWireCanvasProject,
+  serializeWireCanvasProjectCompact,
+} from "./wirecanvas";
+import { repairWireCanvasProjectJson } from "./wirecanvas-repair";
 import type { BrainstormSessionLifecycle } from "../session/model";
 import { getProjectIdFromUrl } from "../routing";
 
@@ -148,14 +152,45 @@ export interface LocalProjectRecord {
   updatedAt: number;
   frameCount: number;
   lifecycle: BrainstormSessionLifecycle;
+  /**
+   * Serialized project payload. Records returned by `loadProjectIndex` carry
+   * `""` here — payloads live under their own storage keys; read them through
+   * `readProjectData` / `loadEditorStateForProject`. Assigning a non-empty
+   * string marks the payload for writing on the next `saveProjectIndex`.
+   */
   data: string;
 }
 
 export type LocalProjectSummary = Omit<LocalProjectRecord, "data">;
 
-const LS_KEY_PROJECTS = "wirecanvas:projects:v1";
+/**
+ * Storage layout (v2):
+ * - `wirecanvas:projects:v2`          metadata-only index (LocalProjectSummary[])
+ * - `wirecanvas:projects:v2:backup`   last-good copy of the index
+ * - `wirecanvas:project-data:<id>`    serialized project payload
+ * - `wirecanvas:project-backup:<id>`  last payload that parsed successfully
+ * - `wirecanvas:projects:v1`          legacy single-blob index, migrated lazily
+ *
+ * The v1 layout stored every payload inside one JSON blob: an index-parse
+ * failure wiped out every file at once, quota overflow silently evicted the
+ * oldest projects, and two tabs could clobber each other on read-modify-write.
+ * Per-project keys isolate corruption to a single file, backups keep a
+ * last-good copy, and the index stays small enough to merge on write.
+ */
+const LS_KEY_INDEX = "wirecanvas:projects:v2";
+const LS_KEY_INDEX_BACKUP = "wirecanvas:projects:v2:backup";
+const LS_KEY_LEGACY_INDEX = "wirecanvas:projects:v1";
 const LS_KEY_ACTIVE = "wirecanvas:activeProjectId:v1";
-const MAX_PROJECTS = 24;
+const LS_PREFIX_DATA = "wirecanvas:project-data:";
+const LS_PREFIX_BACKUP = "wirecanvas:project-backup:";
+const MAX_PROJECTS = 100;
+
+const KNOWN_LIFECYCLES: readonly BrainstormSessionLifecycle[] = [
+  "not-started",
+  "briefing",
+  "wireframing",
+  "completed",
+];
 
 function safeStorage(): Storage | null {
   try {
@@ -291,55 +326,257 @@ export function getBriefPresetForKind(kind: ProjectKind): Partial<import("../ses
   }
 }
 
-export function loadProjectIndex(): LocalProjectRecord[] {
-  const storage = safeStorage();
-  if (!storage) return [];
+/**
+ * Tolerant index-entry read. A record is only dropped when it has no usable
+ * id — unknown kinds (written by a different build), missing names, or absent
+ * timestamps must never make a file vanish from the lake.
+ */
+function readIndexEntry(item: unknown): LocalProjectSummary | null {
+  if (!item || typeof item !== "object") return null;
+  const rec = item as Record<string, unknown>;
+  if (typeof rec.id !== "string" || rec.id.length === 0) return null;
+  return {
+    id: rec.id,
+    name: typeof rec.name === "string" && rec.name.trim().length > 0 ? rec.name.slice(0, 120) : "Untitled project",
+    kind: isProjectKind(rec.kind) ? rec.kind : "blank",
+    createdAt: typeof rec.createdAt === "number" && Number.isFinite(rec.createdAt) ? rec.createdAt : nowMs(),
+    updatedAt: typeof rec.updatedAt === "number" && Number.isFinite(rec.updatedAt) ? rec.updatedAt : nowMs(),
+    frameCount: typeof rec.frameCount === "number" && Number.isFinite(rec.frameCount) && rec.frameCount >= 0 ? rec.frameCount : 0,
+    lifecycle: KNOWN_LIFECYCLES.includes(rec.lifecycle as BrainstormSessionLifecycle)
+      ? (rec.lifecycle as BrainstormSessionLifecycle)
+      : "not-started",
+  };
+}
+
+function parseIndexRaw(raw: string | null): LocalProjectSummary[] | null {
+  if (!raw) return null;
   try {
-    const raw = storage.getItem(LS_KEY_PROJECTS);
-    if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    const out: LocalProjectRecord[] = [];
+    if (!Array.isArray(parsed)) return null;
+    const out: LocalProjectSummary[] = [];
     for (const item of parsed) {
-      if (!item || typeof item !== "object") continue;
-      const rec = item as Record<string, unknown>;
-      if (typeof rec.id !== "string" || typeof rec.name !== "string" || typeof rec.data !== "string") continue;
-      if (!isProjectKind(rec.kind)) continue;
-      if (typeof rec.createdAt !== "number" || typeof rec.updatedAt !== "number") continue;
-      out.push({
-        id: rec.id,
-        name: rec.name.slice(0, 120) || "Untitled project",
-        kind: rec.kind,
-        createdAt: rec.createdAt,
-        updatedAt: rec.updatedAt,
-        frameCount: typeof rec.frameCount === "number" ? rec.frameCount : 0,
-        lifecycle: (typeof rec.lifecycle === "string" ? rec.lifecycle : "not-started") as BrainstormSessionLifecycle,
-        data: rec.data,
-      });
+      const entry = readIndexEntry(item);
+      if (entry) out.push(entry);
     }
-    out.sort((a, b) => b.updatedAt - a.updatedAt);
-    return out.slice(0, MAX_PROJECTS);
+    return out;
   } catch {
-    return [];
+    return null;
   }
 }
 
-export function saveProjectIndex(records: LocalProjectRecord[]): boolean {
+function sortIndex(list: LocalProjectSummary[]): LocalProjectSummary[] {
+  return [...list].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Ids that currently have a payload or backup payload key. */
+function enumerateDataIds(storage: Storage): Set<string> {
+  const ids = new Set<string>();
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (!key) continue;
+    if (key.startsWith(LS_PREFIX_DATA)) ids.add(key.slice(LS_PREFIX_DATA.length));
+    else if (key.startsWith(LS_PREFIX_BACKUP)) ids.add(key.slice(LS_PREFIX_BACKUP.length));
+  }
+  return ids;
+}
+
+function readIndexSummaries(storage: Storage): LocalProjectSummary[] {
+  const primary = parseIndexRaw(storage.getItem(LS_KEY_INDEX));
+  if (primary !== null) return sortIndex(primary).slice(0, MAX_PROJECTS);
+  // The primary index is corrupt — restore from the last-good copy instead of
+  // presenting an empty lake while every payload is still on disk.
+  const backup = parseIndexRaw(storage.getItem(LS_KEY_INDEX_BACKUP));
+  if (backup !== null) {
+    try {
+      storage.setItem(LS_KEY_INDEX, JSON.stringify(sortIndex(backup)));
+    } catch {}
+    return sortIndex(backup).slice(0, MAX_PROJECTS);
+  }
+  return [];
+}
+
+/** Reads a project payload from the legacy single-blob index, if still present. */
+function readLegacyProjectData(storage: Storage, id: string): string | null {
+  const raw = storage.getItem(LS_KEY_LEGACY_INDEX);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    for (const item of parsed) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Record<string, unknown>;
+      if (rec.id === id && typeof rec.data === "string" && rec.data.length > 0) return rec.data;
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * One-time migration from the v1 single-blob layout. Each record's payload is
+ * moved to its own key; the legacy blob is only removed once every payload
+ * landed safely — a mid-migration quota failure leaves it in place so the
+ * remaining entries migrate on the next load (and stay readable via the
+ * legacy fallback in `readProjectData`).
+ */
+function migrateLegacyIndex(storage: Storage): void {
+  const raw = storage.getItem(LS_KEY_LEGACY_INDEX);
+  if (raw === null) return;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    // Corrupt blob — keep it; the raw text may still hold recoverable data.
+    return;
+  }
+  if (!Array.isArray(parsed)) {
+    try {
+      storage.removeItem(LS_KEY_LEGACY_INDEX);
+    } catch {}
+    return;
+  }
+  const metas: LocalProjectSummary[] = [];
+  let fullyMigrated = true;
+  for (const item of parsed) {
+    const meta = readIndexEntry(item);
+    if (!meta) continue;
+    const data =
+      item && typeof item === "object" && typeof (item as Record<string, unknown>).data === "string"
+        ? ((item as Record<string, unknown>).data as string)
+        : "";
+    const hasKey = storage.getItem(LS_PREFIX_DATA + meta.id) !== null;
+    if (data.length > 0 && !hasKey) {
+      try {
+        storage.setItem(LS_PREFIX_DATA + meta.id, data);
+      } catch {
+        fullyMigrated = false;
+        continue;
+      }
+    } else if (data.length === 0 && !hasKey) {
+      // No payload anywhere — nothing worth listing.
+      continue;
+    }
+    metas.push(meta);
+  }
+  const existing = readIndexSummaries(storage);
+  const byId = new Map<string, LocalProjectSummary>();
+  for (const meta of metas) byId.set(meta.id, meta);
+  for (const meta of existing) byId.set(meta.id, meta); // v2 entries win
+  try {
+    const json = JSON.stringify(sortIndex([...byId.values()]).slice(0, MAX_PROJECTS));
+    storage.setItem(LS_KEY_INDEX, json);
+    try {
+      storage.setItem(LS_KEY_INDEX_BACKUP, json);
+    } catch {}
+  } catch {
+    fullyMigrated = false;
+  }
+  if (fullyMigrated) {
+    try {
+      storage.removeItem(LS_KEY_LEGACY_INDEX);
+    } catch {}
+  }
+}
+
+export function loadProjectIndex(): LocalProjectRecord[] {
+  const storage = safeStorage();
+  if (!storage) return [];
+  migrateLegacyIndex(storage);
+  const metas = readIndexSummaries(storage);
+  // Prune ghost entries — index rows whose payload is gone from every location
+  // would list as files that can never open. `loadEditorStateForProjectDetailed`
+  // re-lists an orphaned payload when it is opened directly, so recovery is
+  // still possible via URL.
+  const dataIds = enumerateDataIds(storage);
+  const legacyRaw = storage.getItem(LS_KEY_LEGACY_INDEX);
+  let legacyIds: Set<string> | null = null;
+  if (legacyRaw !== null) {
+    try {
+      const parsed = JSON.parse(legacyRaw) as unknown;
+      if (Array.isArray(parsed)) {
+        legacyIds = new Set(
+          parsed
+            .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+            .filter((item) => typeof item.id === "string" && typeof item.data === "string" && item.data.length > 0)
+            .map((item) => item.id as string),
+        );
+      }
+    } catch {}
+  }
+  return metas
+    .filter((meta) => dataIds.has(meta.id) || legacyIds?.has(meta.id))
+    .map((meta) => ({ ...meta, data: "" }));
+}
+
+/**
+ * Writes the index and any pending payloads.
+ *
+ * - `rec.data` is persisted to the record's own key only when it is a
+ *   non-empty string — index-only records carry `data: ""` and never touch
+ *   their payload.
+ * - The incoming list is merged over the stored index: stored entries absent
+ *   from it survive only while their payload key exists, which keeps files
+ *   created in another tab while letting deletes and cap-drops stay dropped.
+ * - Nothing is silently evicted on quota failure — the write fails honestly
+ *   so callers can surface the existing storage-full toast.
+ */
+export function saveProjectIndex(
+  records: LocalProjectSummary[],
+  options: { dropIds?: readonly string[] } = {},
+): boolean {
   const storage = safeStorage();
   if (!storage) return false;
   try {
-    const sorted = [...records].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, MAX_PROJECTS);
-    storage.setItem(LS_KEY_PROJECTS, JSON.stringify(sorted));
+    migrateLegacyIndex(storage);
+    const dropIds = new Set(options.dropIds ?? []);
+    const incomingIds = new Set(records.map((r) => r.id));
+    const dataIds = enumerateDataIds(storage);
+    const merged: LocalProjectSummary[] = [];
+    const pendingData: { id: string; text: string }[] = [];
+    for (const rec of records) {
+      if (typeof rec.id !== "string" || rec.id.length === 0) continue;
+      merged.push({
+        id: rec.id,
+        name: rec.name,
+        kind: isProjectKind(rec.kind) ? rec.kind : "blank",
+        createdAt: rec.createdAt,
+        updatedAt: rec.updatedAt,
+        frameCount: rec.frameCount,
+        lifecycle: rec.lifecycle,
+      });
+      const data = (rec as LocalProjectRecord).data;
+      if (typeof data === "string" && data.length > 0) pendingData.push({ id: rec.id, text: data });
+    }
+    for (const stored of readIndexSummaries(storage)) {
+      if (incomingIds.has(stored.id) || dropIds.has(stored.id)) continue;
+      if (dataIds.has(stored.id)) merged.push(stored);
+    }
+    const sorted = sortIndex(merged);
+    const kept = sorted.slice(0, MAX_PROJECTS);
+    for (const { id, text } of pendingData) {
+      storage.setItem(LS_PREFIX_DATA + id, text);
+      // Seed the last-good copy for files that have never been opened; the
+      // read path advances it to the newest payload that parses.
+      if (storage.getItem(LS_PREFIX_BACKUP + id) === null) {
+        try {
+          storage.setItem(LS_PREFIX_BACKUP + id, text);
+        } catch {}
+      }
+    }
+    const json = JSON.stringify(kept);
+    storage.setItem(LS_KEY_INDEX, json);
+    try {
+      storage.setItem(LS_KEY_INDEX_BACKUP, json);
+    } catch {}
+    // Index write succeeded — payloads of over-cap entries can go now.
+    for (const dropped of sorted.slice(MAX_PROJECTS)) {
+      try {
+        storage.removeItem(LS_PREFIX_DATA + dropped.id);
+        storage.removeItem(LS_PREFIX_BACKUP + dropped.id);
+      } catch {}
+    }
     return true;
   } catch {
-    // quota exceeded — try to drop oldest and retry once
-    try {
-      const trimmed = [...records].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, Math.max(1, MAX_PROJECTS - 4));
-      storage.setItem(LS_KEY_PROJECTS, JSON.stringify(trimmed));
-      return true;
-    } catch {
-      return false;
-    }
+    return false;
   }
 }
 
@@ -367,8 +604,20 @@ export function clearAllLocalProjects(): void {
   const storage = safeStorage();
   if (!storage) return;
   try {
-    storage.removeItem(LS_KEY_PROJECTS);
-    storage.removeItem(LS_KEY_ACTIVE);
+    for (let i = storage.length - 1; i >= 0; i -= 1) {
+      const key = storage.key(i);
+      if (!key) continue;
+      if (
+        key === LS_KEY_INDEX ||
+        key === LS_KEY_INDEX_BACKUP ||
+        key === LS_KEY_LEGACY_INDEX ||
+        key === LS_KEY_ACTIVE ||
+        key.startsWith(LS_PREFIX_DATA) ||
+        key.startsWith(LS_PREFIX_BACKUP)
+      ) {
+        storage.removeItem(key);
+      }
+    }
   } catch {}
 }
 
@@ -377,12 +626,21 @@ export function upsertLocalProject(record: LocalProjectRecord): boolean {
   const existingIdx = index.findIndex((p) => p.id === record.id);
   if (existingIdx >= 0) index.splice(existingIdx, 1);
   index.unshift(record);
-  return saveProjectIndex(index.slice(0, MAX_PROJECTS));
+  return saveProjectIndex(index);
 }
 
 export function deleteLocalProject(id: string): LocalProjectRecord[] | null {
+  const storage = safeStorage();
+  if (!storage) return null;
   const index = loadProjectIndex().filter((p) => p.id !== id);
-  if (!saveProjectIndex(index)) return null;
+  // The payload keys are only removed after the index write lands — a failed
+  // write must leave the file fully intact, and `dropIds` keeps the merge
+  // from resurrecting the entry while its payload is still present.
+  if (!saveProjectIndex(index, { dropIds: [id] })) return null;
+  try {
+    storage.removeItem(LS_PREFIX_DATA + id);
+    storage.removeItem(LS_PREFIX_BACKUP + id);
+  } catch {}
   if (getActiveProjectId() === id) setActiveProjectId(index[0]?.id ?? null);
   return index;
 }
@@ -391,15 +649,20 @@ export function duplicateLocalProject(id: string): LocalProjectRecord | null {
   const index = loadProjectIndex();
   const src = index.find((p) => p.id === id);
   if (!src) return null;
+  const data = readProjectData(id);
+  if (data === null) return null;
   const dup: LocalProjectRecord = {
-    ...src,
     id: createProjectId(),
     name: `Copy of ${src.name}`.slice(0, 120),
+    kind: src.kind,
     createdAt: nowMs(),
     updatedAt: nowMs(),
+    frameCount: src.frameCount,
+    lifecycle: src.lifecycle,
+    data,
   };
   index.unshift(dup);
-  return saveProjectIndex(index.slice(0, MAX_PROJECTS)) ? dup : null;
+  return saveProjectIndex(index) ? dup : null;
 }
 
 export function renameLocalProject(id: string, name: string): boolean {
@@ -411,6 +674,40 @@ export function renameLocalProject(id: string, name: string): boolean {
   rec.name = trimmed;
   rec.updatedAt = nowMs();
   return saveProjectIndex(index);
+}
+
+/**
+ * Reads a project's serialized payload: primary key first, then the last-good
+ * backup, then the legacy blob if a migration never completed.
+ */
+export function readProjectData(id: string): string | null {
+  const storage = safeStorage();
+  if (!storage) return null;
+  try {
+    const primary = storage.getItem(LS_PREFIX_DATA + id);
+    if (primary !== null) return primary;
+    const backup = storage.getItem(LS_PREFIX_BACKUP + id);
+    if (backup !== null) return backup;
+    return readLegacyProjectData(storage, id);
+  } catch {
+    return null;
+  }
+}
+
+/** True when the project is listed in the index or still has a payload on disk. */
+export function hasLocalProject(id: string): boolean {
+  const storage = safeStorage();
+  if (!storage) return false;
+  if (loadProjectIndex().some((p) => p.id === id)) return true;
+  try {
+    return (
+      storage.getItem(LS_PREFIX_DATA + id) !== null ||
+      storage.getItem(LS_PREFIX_BACKUP + id) !== null ||
+      readLegacyProjectData(storage, id) !== null
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function saveEditorStateToActiveProject(
@@ -425,7 +722,7 @@ export function saveEditorStateToActiveProject(
   if (isEmpty) return null;
   let serialized: string;
   try {
-    serialized = serializeWireCanvasProject(state);
+    serialized = serializeWireCanvasProjectCompact(state);
   } catch {
     return null;
   }
@@ -472,19 +769,107 @@ export function saveEditorStateToActiveProject(
     index.length = 0;
     index.push(...filtered);
   }
-  if (!saveProjectIndex(index.slice(0, MAX_PROJECTS))) return null;
+  if (!saveProjectIndex(index)) return null;
   if (isNew) setActiveProjectId(rec.id);
   return { record: rec, isNew };
 }
 
-export function loadEditorStateForProject(id: string): EditorState | null {
-  const rec = loadProjectIndex().find((p) => p.id === id);
-  if (!rec) return null;
+export type ProjectLoadSource =
+  | "primary"
+  | "repaired"
+  | "backup"
+  | "repaired-backup"
+  | "legacy"
+  | "repaired-legacy";
+
+export interface ProjectLoadResult {
+  state: EditorState;
+  /** Where the returned state came from — anything but "primary" recovered a damaged file. */
+  source: ProjectLoadSource;
+}
+
+function tryParseOrRepair(text: string): { state: EditorState; repairedText: string | null } | null {
   try {
-    return parseWireCanvasProject(rec.data);
-  } catch {
-    return null;
+    return { state: parseWireCanvasProject(text), repairedText: null };
+  } catch {}
+  const repaired = repairWireCanvasProjectJson(text);
+  if (repaired !== null) {
+    try {
+      return { state: parseWireCanvasProject(repaired), repairedText: repaired };
+    } catch {}
   }
+  return null;
+}
+
+/**
+ * Loads a project with the full recovery ladder:
+ *   strict parse → salvage repair → last-good backup → repaired backup →
+ *   legacy blob. Whatever wins is written back to the primary key, so a
+ *   damaged file heals itself on first successful open. A recovered entry
+ *   missing from the index is re-listed so orphaned files reappear in the lake.
+ */
+export function loadEditorStateForProjectDetailed(id: string): ProjectLoadResult | null {
+  const storage = safeStorage();
+  if (!storage) return null;
+  migrateLegacyIndex(storage);
+
+  const persistHealed = (text: string) => {
+    try {
+      storage.setItem(LS_PREFIX_DATA + id, text);
+    } catch {}
+  };
+  const refreshBackup = (text: string) => {
+    try {
+      if (storage.getItem(LS_PREFIX_BACKUP + id) !== text) {
+        storage.setItem(LS_PREFIX_BACKUP + id, text);
+      }
+    } catch {}
+  };
+  const relistIfMissing = (state: EditorState) => {
+    try {
+      if (readIndexSummaries(storage).some((s) => s.id === id)) return;
+      const summaries = readIndexSummaries(storage);
+      summaries.unshift({
+        id,
+        name: deriveProjectName(state, "blank").slice(0, 80) || "Recovered project",
+        kind: "blank",
+        createdAt: nowMs(),
+        updatedAt: nowMs(),
+        frameCount: Object.keys(state.frames).length,
+        lifecycle: state.session.lifecycle,
+      });
+      saveProjectIndex(summaries);
+    } catch {}
+  };
+
+  const finish = (result: { state: EditorState; repairedText: string | null }, source: ProjectLoadSource, raw: string): ProjectLoadResult => {
+    if (result.repairedText !== null) persistHealed(result.repairedText);
+    else if (source !== "primary") persistHealed(raw);
+    refreshBackup(result.repairedText ?? raw);
+    relistIfMissing(result.state);
+    return { state: result.state, source };
+  };
+
+  const primary = storage.getItem(LS_PREFIX_DATA + id);
+  if (primary !== null) {
+    const result = tryParseOrRepair(primary);
+    if (result) return finish(result, result.repairedText !== null ? "repaired" : "primary", primary);
+  }
+  const backup = storage.getItem(LS_PREFIX_BACKUP + id);
+  if (backup !== null && backup !== primary) {
+    const result = tryParseOrRepair(backup);
+    if (result) return finish(result, result.repairedText !== null ? "repaired-backup" : "backup", backup);
+  }
+  const legacy = readLegacyProjectData(storage, id);
+  if (legacy !== null) {
+    const result = tryParseOrRepair(legacy);
+    if (result) return finish(result, result.repairedText !== null ? "repaired-legacy" : "legacy", legacy);
+  }
+  return null;
+}
+
+export function loadEditorStateForProject(id: string): EditorState | null {
+  return loadEditorStateForProjectDetailed(id)?.state ?? null;
 }
 
 export function hydrateInitialState(

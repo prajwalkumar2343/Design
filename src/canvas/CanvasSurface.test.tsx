@@ -408,6 +408,48 @@ describe("CanvasSurface drawing on empty canvas", () => {
     expect(surface.getAttribute("data-interaction")).toBe("idle");
   });
 
+  it("mints the shape at the release point when the last move lags behind", () => {
+    render(<CanvasSurface frames={[]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "r" });
+    const surface = screen.getByTestId("canvas-surface");
+
+    // The last move stays inside the click threshold; the release lands far
+    // away, so the draw must use the release point rather than the stale move.
+    fireEvent.pointerDown(surface, { button: 0, isPrimary: true, pointerId: 5, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(surface, { isPrimary: true, pointerId: 5, clientX: 103, clientY: 102 });
+    fireEvent.pointerUp(surface, { isPrimary: true, pointerId: 5, clientX: 340, clientY: 260 });
+
+    const freeform = document.querySelector("[data-frame-id][data-freeform='true']") as HTMLElement;
+    expect(freeform).toBeTruthy();
+    // 240x160 drag extent plus the 8px freeform pad on each side.
+    expect(freeform.style.width).toBe("256px");
+    expect(freeform.style.height).toBe("176px");
+    expect(freeform.style.transform).toBe("translate3d(92px, 92px, 0)");
+  });
+
+  it("forgets a dragged image placement when the picker is cancelled", async () => {
+    render(<CanvasSurface frames={[]} disableLocalPersistence />);
+    fireEvent.keyDown(window, { key: "i" });
+    const surface = screen.getByTestId("canvas-surface");
+    canvasDrag(surface, 400, 600, 300, 420);
+
+    const input = screen.getByTestId("canvas-image-input");
+    fireEvent(input, new Event("cancel"));
+
+    // The next pick targets the viewport center — jsdom's default 1024x768
+    // viewport centers at (512,384), so the 160x120 rect plus the 8px pad
+    // lands the minted frame at (424,316) — not the cancelled drag's (392,292).
+    fireEvent.click(screen.getByTestId("choose-image-button"));
+    fireEvent.change(input, {
+      target: { files: [new File(["pixels"], "photo.png", { type: "image/png" })] },
+    });
+
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-freeform='true']")).toHaveLength(1));
+    const frame = document.querySelector("[data-freeform='true']") as HTMLElement;
+    expect(frame.style.transform).toBe("translate3d(424px, 316px, 0)");
+  });
+
   it("places text on the canvas with a click and removes it on undo", async () => {
     render(<CanvasSurface frames={[seed("frame-1")]} disableLocalPersistence />);
     fireEvent.keyDown(window, { key: "t" });

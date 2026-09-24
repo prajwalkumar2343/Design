@@ -501,6 +501,10 @@ export function CanvasSurface({
   // frame's bridge reports its first snapshot.
   const pendingFreeformTextRef = useRef<{ frameId: string; targetId: string } | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  // Set while the file picker is open so its dismissal can drop the pending
+  // placement — pendingImageRef can also hold a pre-pick in-frame drag, which
+  // must not be cleared by an unrelated window refocus.
+  const imagePickerOpenRef = useRef(false);
   const clipboardTargetRef = useRef<{ frameId: string; nodeId: string } | null>(null);
   const frameTextEditRef = useRef<Set<string>>(new Set());
   const spacePressedRef = useRef(false);
@@ -1303,6 +1307,7 @@ export function CanvasSurface({
       return;
     }
     setCreationError(null);
+    imagePickerOpenRef.current = true;
     input.click();
   }, [editorStore, viewport]);
 
@@ -2054,6 +2059,7 @@ export function CanvasSurface({
           ? normalizedBounds(start, last, 1)
           : { x: start.x, y: start.y, width: 160, height: 120 };
         setCreationError(null);
+        imagePickerOpenRef.current = true;
         imageInputRef.current?.click();
         return;
       }
@@ -2293,6 +2299,7 @@ export function CanvasSurface({
     const pendingCanvasPlacement = pendingCanvasImageRef.current;
     pendingImageRef.current = null;
     pendingCanvasImageRef.current = null;
+    imagePickerOpenRef.current = false;
     event.target.value = "";
     const fallbackFrameId = editorStore.getState().selection.primaryFrameId;
     const placement = pendingPlacement ?? (fallbackFrameId ? {
@@ -2348,6 +2355,31 @@ export function CanvasSurface({
     };
     reader.readAsDataURL(file);
   }, [editorStore, placeCanvasImage]);
+
+  // Closing the picker without a file abandons the pending placement, so a
+  // later "Choose image" re-derives its target instead of reusing the stale
+  // drag bounds. `cancel` covers modern browsers; the focus fallback covers
+  // the rest — change runs before focus returns, so an empty files list there
+  // means the picker was dismissed.
+  useEffect(() => {
+    const input = imageInputRef.current;
+    if (!input) return;
+    const onPickerDismissed = () => {
+      imagePickerOpenRef.current = false;
+      pendingImageRef.current = null;
+      pendingCanvasImageRef.current = null;
+    };
+    const onWindowFocus = () => {
+      if (!imagePickerOpenRef.current || input.files?.length) return;
+      onPickerDismissed();
+    };
+    input.addEventListener("cancel", onPickerDismissed);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      input.removeEventListener("cancel", onPickerDismissed);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, []);
 
   const duplicateSelectedNode = useCallback(async () => {
     const selection = editorStore.getState().selection;
@@ -3676,6 +3708,13 @@ export function CanvasSurface({
     endNodeGesture(event);
     const operation = pointerRef.current;
     pointerRef.current = null;
+    // The release event carries the pointer's final position — the last
+    // pointermove can lag a fast drag and leave `last` short of it.
+    if (operation) {
+      operation.last = operation.type === "canvas-create"
+        ? screenToWorld(getCachedPointerPosition(event), cameraRef.current)
+        : getCachedPointerPosition(event);
+    }
     if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
       finalizeFrameDrag(operation);
       editorStore.commitTransaction();

@@ -201,11 +201,102 @@ describe("local project persistence", () => {
 
   it("re-lists an orphaned payload in the index when it is opened", () => {
     expect(upsertLocalProject(record())).toBe(true);
-    // Simulate a lost index entry: data key intact, index missing the record.
+    // Simulate a lost index entry: data key intact, both index copies missing
+    // the record (a backup that still lists it legitimately restores it).
     window.localStorage.setItem("wirecanvas:projects:v2", "[]");
+    window.localStorage.setItem("wirecanvas:projects:v2:backup", "[]");
     expect(getLocalProjectSummaries()).toHaveLength(0);
     const result = loadEditorStateForProjectDetailed("p1");
     expect(result).not.toBeNull();
     expect(getLocalProjectSummaries().map((p) => p.id)).toEqual(["p1"]);
+  });
+
+  it("merges the index backup when the primary parses but lists fewer projects", () => {
+    expect(upsertLocalProject(record())).toBe(true);
+    expect(upsertLocalProject(record({ id: "p2", name: "Two" }))).toBe(true);
+    // An interrupted write left a valid-but-incomplete primary; the backup
+    // still lists both files.
+    const backup = JSON.parse(window.localStorage.getItem("wirecanvas:projects:v2:backup")!) as any[];
+    window.localStorage.setItem(
+      "wirecanvas:projects:v2",
+      JSON.stringify(backup.filter((entry) => entry.id === "p1")),
+    );
+    expect(getLocalProjectSummaries().map((p) => p.id).sort()).toEqual(["p1", "p2"]);
+    // The merged read heals the primary, so the next save cannot shrink the
+    // backup and vanish p2.
+    expect(window.localStorage.getItem("wirecanvas:projects:v2")).toContain("p2");
+    expect(renameLocalProject("p1", "Renamed")).toBe(true);
+    expect(getLocalProjectSummaries().map((p) => p.id).sort()).toEqual(["p1", "p2"]);
+  });
+
+  it("rolls back payload writes when the index write fails", () => {
+    expect(upsertLocalProject(record())).toBe(true);
+    const priorPayload = window.localStorage.getItem("wirecanvas:project-data:p1");
+
+    const realSetItem = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation((key: string, value: string) => {
+      if (key === "wirecanvas:projects:v2") throw new Error("quota exceeded");
+      realSetItem.call(window.localStorage, key, value);
+    });
+
+    const updated = record({ data: "updated-payload" });
+    const fresh = record({ id: "p2", name: "Two" });
+    expect(saveProjectIndex([updated, fresh])).toBe(false);
+
+    vi.restoreAllMocks();
+    // Nothing is stranded: the new file's keys are gone and the existing
+    // file's previous payload is restored, not deleted.
+    expect(window.localStorage.getItem("wirecanvas:project-data:p2")).toBeNull();
+    expect(window.localStorage.getItem("wirecanvas:project-backup:p2")).toBeNull();
+    expect(window.localStorage.getItem("wirecanvas:project-data:p1")).toBe(priorPayload);
+    expect(getLocalProjectSummaries().map((p) => p.id)).toEqual(["p1"]);
+  });
+
+  it("keeps the intact backup when a repaired primary would degrade it", () => {
+    const seed = {
+      name: "Frame",
+      documentId: "document-1",
+      pageId: "page-1",
+      pageName: "Page",
+      y: 0,
+      width: 800,
+      height: 600,
+      srcDoc: "<!doctype html><html><body><main>Hi</main></body></html>",
+      mode: "design" as const,
+      background: "#ffffff",
+    };
+    const richState = createEditorStateFromFrameSeeds([
+      { ...seed, id: "frame-1", x: 0 },
+      { ...seed, id: "frame-2", x: 900 },
+    ]);
+    expect(upsertLocalProject(record({ data: serializeWireCanvasProject(richState) }))).toBe(true);
+    const goodBackup = window.localStorage.getItem("wirecanvas:project-backup:p1");
+    // The primary is damaged but repairable; the repair yields a poorer file.
+    const damaged = JSON.parse(record().data) as Record<string, any>;
+    damaged.state.unknownFutureField = { anything: true };
+    delete damaged.state.selection;
+    window.localStorage.setItem("wirecanvas:project-data:p1", JSON.stringify(damaged));
+
+    const result = loadEditorStateForProjectDetailed("p1");
+    expect(result?.source).toBe("repaired");
+    // The repair still heals the primary, but the intact last-good backup is
+    // kept rather than overwritten by the degraded copy.
+    expect(window.localStorage.getItem("wirecanvas:project-data:p1")).not.toBe(goodBackup);
+    expect(window.localStorage.getItem("wirecanvas:project-backup:p1")).toBe(goodBackup);
+  });
+
+  it("refreshes a damaged backup with the repaired payload", () => {
+    expect(upsertLocalProject(record())).toBe(true);
+    const damaged = JSON.parse(record().data) as Record<string, any>;
+    damaged.state.unknownFutureField = { anything: true };
+    delete damaged.state.selection;
+    window.localStorage.setItem("wirecanvas:project-data:p1", JSON.stringify(damaged));
+    window.localStorage.setItem("wirecanvas:project-backup:p1", "{{{corrupt");
+
+    const result = loadEditorStateForProjectDetailed("p1");
+    expect(result?.source).toBe("repaired");
+    const healed = window.localStorage.getItem("wirecanvas:project-data:p1");
+    expect(healed).not.toBeNull();
+    expect(window.localStorage.getItem("wirecanvas:project-backup:p1")).toBe(healed);
   });
 });

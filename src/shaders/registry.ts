@@ -264,6 +264,11 @@ export type LoadedCustomShader<Id extends CustomShaderId = CustomShaderId> = {
   id: Id;
   definition: (typeof CUSTOM_SHADER_DEFINITIONS)[Id];
   Component: ComponentType<{ width?: string; height?: string }>;
+  /**
+   * Named param bundles — Ferro Tide publishes its moods as presets so the
+   * editor can offer them through the same preset picker as Paper shaders.
+   */
+  presets: readonly { name: string; params: { mood: string; interactive: boolean } }[];
 };
 
 /** Loads the shader implementation only when a consumer requests it. */
@@ -280,11 +285,15 @@ export async function loadPaperShader(
   shaderId: ShaderId,
 ): Promise<LoadedPaperShader | LoadedCustomShader> {
   if (isCustomShaderId(shaderId)) {
-    const { FerroTide } = await import("./ferro-tide");
+    const { FerroTide, FERRO_TIDE_MOODS } = await import("./ferro-tide");
     return {
       id: shaderId,
       definition: CUSTOM_SHADER_DEFINITIONS[shaderId],
       Component: FerroTide,
+      presets: FERRO_TIDE_MOODS.map((mood) => ({
+        name: mood.name,
+        params: { mood: mood.name, interactive: true },
+      })),
     };
   }
   const definition = getPaperShaderDefinition(shaderId);

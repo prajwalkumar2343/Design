@@ -158,6 +158,35 @@ describe("PropertiesPanel color field", () => {
     fireEvent.click(screen.getByTestId("color-swatch-Fill"));
     expect((screen.getByTestId("color-option-#e5484d") as HTMLButtonElement).className).toContain("is-active");
   });
+
+  it("applies the glass effect from the palette's Glass swatch instead of a fill", () => {
+    const onApplyGlassEffect = vi.fn();
+    const onEditNodeStyle = vi.fn();
+    render(<PropertiesPanel {...baseProps} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} />);
+    fireEvent.click(screen.getByTestId("color-swatch-Fill"));
+    fireEvent.click(screen.getByTestId("color-option-glass"));
+    expect(onApplyGlassEffect).toHaveBeenCalledWith(60);
+    expect(onEditNodeStyle).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("color-popover-Fill")).toBeNull();
+  });
+
+  it("marks the Glass swatch active when the fill is already glassed", () => {
+    const glassy: OverlayBridgeTargetState = {
+      ...entry,
+      inspection: {
+        ...inspection,
+        attributes: { ...inspection.attributes, "data-design-tool-glass": "50" },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        bridgeTargets={{ "frame-1:rect-1": glassy }}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("color-swatch-Fill"));
+    expect((screen.getByTestId("color-option-glass") as HTMLButtonElement).className).toContain("is-active");
+  });
 });
 
 const textInspection: BridgeInspection = {
@@ -322,6 +351,18 @@ describe("PropertiesPanel profile coverage", () => {
     unmount();
     renderTarget("div-1", { elementId: "div-1", tagName: "div", name: "Group" });
     expect(screen.getByTestId("glass-level-slider")).toBeTruthy();
+  });
+
+  it("offers the Glass swatch on a button's background fill", () => {
+    renderTarget("btn-1", { elementId: "btn-1", tagName: "button", name: "Button" });
+    fireEvent.click(screen.getByTestId("color-swatch-Background"));
+    expect(screen.getByTestId("color-option-glass")).toBeTruthy();
+  });
+
+  it("offers the Glass swatch on a text layer's fill", () => {
+    renderTarget("div-text", { elementId: "div-text", tagName: "div" }, { "data-design-tool-kind": "text" });
+    fireEvent.click(screen.getByTestId("color-swatch-Fill"));
+    expect(screen.getByTestId("color-option-glass")).toBeTruthy();
   });
 });
 

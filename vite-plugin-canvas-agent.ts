@@ -25,6 +25,12 @@ interface InboxEntry {
    */
   deliveredTo?: string;
   claimedAt?: number;
+  /**
+   * Set once a result lands for this seq — the op already mutated the store,
+   * so the entry must never be re-served to another consumer (lease expiry or
+   * an unload release would replay an applied op, e.g. duplicate a frame).
+   */
+  completed?: boolean;
 }
 
 interface ResultWaiter {
@@ -189,10 +195,13 @@ export function canvasAgentBridge(): Plugin {
       const consumer = url.searchParams.get("consumer") ?? "";
       const now = Date.now();
       const claimExpired = (entry: InboxEntry) =>
-        entry.claimedAt !== undefined && now - entry.claimedAt > CLAIM_TTL_MS;
+        !entry.completed &&
+        entry.claimedAt !== undefined &&
+        now - entry.claimedAt > CLAIM_TTL_MS;
       // Each op belongs to the poller holding its live claim; other consumers
       // (a second tab, a stale preview) never see claimed entries. Expired
-      // claims are re-served so an op outliving its tab is not stranded.
+      // claims are re-served so an op outliving its tab is not stranded —
+      // completed entries are never taken over, their work already landed.
       const ops = inbox.filter(
         (entry) =>
           entry.seq > after &&
@@ -223,7 +232,7 @@ export function canvasAgentBridge(): Plugin {
       const consumer = typeof body.consumer === "string" ? body.consumer : "";
       let released = 0;
       for (const entry of inbox) {
-        if (consumer && entry.deliveredTo === consumer) {
+        if (consumer && entry.deliveredTo === consumer && !entry.completed) {
           delete entry.deliveredTo;
           delete entry.claimedAt;
           released += 1;
@@ -247,6 +256,16 @@ export function canvasAgentBridge(): Plugin {
         return;
       }
       const consumer = typeof body.consumer === "string" && body.consumer ? body.consumer : undefined;
+      const entry = inbox.find((e) => e.seq === resultSeq);
+      if (entry?.deliveredTo !== undefined && entry.deliveredTo !== consumer) {
+        // The claim moved to another consumer (lease expiry) — a late result
+        // from the former owner must not overwrite the new owner's outcome.
+        // 200 keeps the stale client's retry queue draining instead of
+        // re-posting forever.
+        sendJson(res, 200, { ok: true, superseded: true });
+        return;
+      }
+      if (entry) entry.completed = true;
       results.set(resultSeq, { result: body.result ?? null, consumer });
       if (results.size > MAX_RESULTS) {
         results.delete(results.keys().next().value as number);

@@ -270,6 +270,90 @@ describe("canvas-agent bridge middleware", () => {
     expect((JSON.parse(served.body) as { ops: unknown[] }).ops).toHaveLength(1);
   });
 
+  it("never re-serves a completed op, even after its claim lease lapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const handler = createHandler();
+      handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), fakeRes(), () => undefined);
+      handler(
+        fakePostReq("/__canvas-agent/result", { seq: 1, result: { ok: true }, consumer: "tab-a" }),
+        fakeRes(),
+        () => undefined,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Owner went silent after applying — the completed op must not replay
+      // on another tab (an id-less push would duplicate its frame).
+      vi.setSystemTime(Date.now() + 61_000);
+      const takeover = fakeRes();
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), takeover, () => undefined);
+      expect((JSON.parse(takeover.body) as { ops: unknown[] }).ops).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("release leaves completed claims in place", async () => {
+    const handler = createHandler();
+    handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), fakeRes(), () => undefined);
+    handler(
+      fakePostReq("/__canvas-agent/result", { seq: 1, result: { ok: true }, consumer: "tab-a" }),
+      fakeRes(),
+      () => undefined,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    handler(fakePostReq("/__canvas-agent/release", { consumer: "tab-a" }), fakeRes(), () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const served = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), served, () => undefined);
+    expect((JSON.parse(served.body) as { ops: unknown[] }).ops).toHaveLength(0);
+  });
+
+  it("ignores a late result from a consumer whose claim was taken over", async () => {
+    vi.useFakeTimers();
+    try {
+      const handler = createHandler();
+      handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), fakeRes(), () => undefined);
+
+      vi.setSystemTime(Date.now() + 61_000);
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), fakeRes(), () => undefined);
+
+      // The stale owner's late ack must not overwrite the new owner's result.
+      const stale = fakeRes();
+      handler(
+        fakePostReq("/__canvas-agent/result", { seq: 1, result: { ok: true, note: "stale" }, consumer: "tab-a" }),
+        stale,
+        () => undefined,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect((JSON.parse(stale.body) as { superseded?: boolean }).superseded).toBe(true);
+
+      handler(
+        fakePostReq("/__canvas-agent/result", { seq: 1, result: { ok: true, note: "fresh" }, consumer: "tab-b" }),
+        fakeRes(),
+        () => undefined,
+      );
+      await vi.advanceTimersByTimeAsync(0);
+
+      const res = fakeRes();
+      handler(fakeReq({ url: "/__canvas-agent/result?seq=1&timeout=25" }), res, () => undefined);
+      await vi.advanceTimersByTimeAsync(10);
+      const payload = JSON.parse(res.body) as { result?: { note?: string }; consumer?: string };
+      expect(payload.result?.note).toBe("fresh");
+      expect(payload.consumer).toBe("tab-b");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("echoes the consumer id that posted a result", async () => {
     const handler = createHandler();
     handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);

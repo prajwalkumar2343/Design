@@ -81,6 +81,17 @@ describe("buildDesignDocumentHtml", () => {
     expect(html.indexOf("<!doctype")).toBeLessThan(html.indexOf("<style"));
     expect(html.indexOf("<style")).toBeLessThan(html.indexOf("<p>x</p>"));
   });
+
+  it("synthesizes a head when a full document has an <html> tag but no head", () => {
+    const html = buildDesignDocumentHtml({
+      html: "<!doctype html><html><body><p>x</p></body></html>",
+      css: "p { margin: 0; }",
+    })!;
+    expect(html).toContain("<html>\n<head>");
+    expect(html.indexOf("data-canvas-agent-css")).toBeLessThan(html.indexOf("</head>"));
+    expect(html.indexOf("</head>")).toBeLessThan(html.indexOf("<body>"));
+    expect(html).toContain("<body><p>x</p></body>");
+  });
 });
 
 describe("applyAgentOp push (create)", () => {
@@ -158,6 +169,30 @@ describe("applyAgentOp push (create)", () => {
     expect(result).toMatchObject({ ok: false, error: { code: "brainstorm-wireframe-required" } });
     expect(Object.keys(store.getState().frames)).toHaveLength(0);
   });
+
+  it("rejects an id that collides with an existing page", () => {
+    const store = storeWith([frame()]);
+    const result = applyAgentOp(store, { op: "push", id: "page-1", html: doc("<p>x</p>") });
+    expect(result).toMatchObject({ ok: false, error: { code: "id-conflict" } });
+    expect(Object.keys(store.getState().frames)).toHaveLength(1);
+  });
+
+  it("rejects a derived documentId that already exists", () => {
+    const store = storeWith([frame({ documentId: "x-doc" })]);
+    const result = applyAgentOp(store, { op: "push", id: "x", html: doc("<p>x</p>") });
+    expect(result).toMatchObject({ ok: false, error: { code: "id-conflict" } });
+  });
+
+  it("rejects non-finite positions without mutating state", () => {
+    const store = storeWith();
+    const result = applyAgentOp(store, {
+      op: "push",
+      html: doc("<p>x</p>"),
+      x: Number.NaN,
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: "invalid-position" } });
+    expect(Object.keys(store.getState().frames)).toHaveLength(0);
+  });
 });
 
 describe("applyAgentOp push (replace)", () => {
@@ -197,6 +232,16 @@ describe("applyAgentOp remove / list", () => {
     const store = storeWith();
     const result = applyAgentOp(store, { op: "remove", frameId: "nope" });
     expect(result).toMatchObject({ ok: false, error: { code: "frame-not-found" } });
+  });
+
+  it("fails remove when frameId is missing", () => {
+    const store = storeWith();
+    const result = applyAgentOp(store, { op: "remove" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe("frame-not-found");
+      expect(result.error.message).toContain("(missing)");
+    }
   });
 
   it("lists canvas state", () => {
@@ -416,5 +461,35 @@ describe("startAgentBridge", () => {
     expect(consumers.length).toBeGreaterThan(1);
     expect(new Set(consumers).size).toBe(1);
     expect(consumers[0]).not.toBe("");
+  });
+
+  it("prefixes requests with baseUrl and reports each applied op through onApplied", async () => {
+    const store = storeWith();
+    const urls: string[] = [];
+    const applied: Array<[number, boolean]> = [];
+    let inboxCalls = 0;
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/inbox")) {
+        inboxCalls += 1;
+        const ops = inboxCalls === 1 ? [{ seq: 4, op: { op: "list" } }] : [];
+        return new Response(JSON.stringify({ ops, latest: 4 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    };
+
+    const stop = startAgentBridge(store, {
+      baseUrl: "http://bridge.test",
+      fetchImpl,
+      intervalMs: 2,
+      retryMs: 2,
+      onApplied: (seq, result) => applied.push([seq, result.ok]),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    stop();
+
+    expect(urls[0]).toMatch(/^http:\/\/bridge\.test\/__canvas-agent\/inbox\?after=0&consumer=.+/);
+    expect(applied).toEqual([[4, true]]);
   });
 });

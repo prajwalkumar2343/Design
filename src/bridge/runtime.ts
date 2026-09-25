@@ -1689,6 +1689,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         syncCreatedSvgSize(element);
       }
       const value = element.style.getPropertyValue(command.property) || null;
+      const bodyRect = document.body ? document.body.getBoundingClientRect() : null;
       return {
         kind: "command",
         command: "set-inline-style",
@@ -1700,6 +1701,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         // land the element elsewhere (alignment, clamps). This real post-edit
         // rect lets the canvas glue the selection chrome to the truth.
         bounds: localBounds(element),
+        bodyOrigin: bodyRect ? { x: bodyRect.x, y: bodyRect.y } : undefined,
         undo: { command: "set-inline-style", targetId: command.targetId, property: command.property, value: previousValue },
       };
     }

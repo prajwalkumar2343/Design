@@ -260,7 +260,7 @@ export function useNodeOverlayGestures({
    * post-gesture snapshot refresh re-syncs everything.
    */
   const applyMeasuredBounds = useCallback(
-    (change: OverlayStyleChange, bounds: BridgeRect) => {
+    (change: OverlayStyleChange, bounds: BridgeRect, bodyOrigin?: { x: number; y: number }) => {
       if (!nodeGestureRef.current) return;
       // The measured rect is a post-transform AABB — wrong shape for rotated
       // elements, whose overlay box stays the pre-rotation rect.
@@ -268,9 +268,11 @@ export function useNodeOverlayGestures({
       // Ack bounds are measured inside the shifted body — normalize into the
       // canonical space stored targets use, since toOverlayTarget subtracts
       // the live shift back out.
-      const shift = editorStore.getState().frames[change.target.frameId]?.freeform
-        ? shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
-        : { x: 0, y: 0 };
+      const shift = bodyOrigin
+        ? { x: -bodyOrigin.x, y: -bodyOrigin.y }
+        : editorStore.getState().frames[change.target.frameId]?.freeform
+          ? shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
+          : { x: 0, y: 0 };
       const overlay = toOverlayTarget({
         frameId: change.target.frameId,
         target: {
@@ -344,7 +346,7 @@ export function useNodeOverlayGestures({
             captured.set(key, ack.previousValue);
             change.previous[command.property] = ack.previousValue;
           }
-          if (ack.bounds) applyMeasuredBounds(change, ack.bounds);
+          if (ack.bounds) applyMeasuredBounds(change, ack.bounds, ack.bodyOrigin);
         }).catch(() => undefined),
       );
     }

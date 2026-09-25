@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownWideNarrow,
+  Check,
   Copy,
   FileText,
   GalleryHorizontal,
   Globe,
   LayoutDashboard,
+  LayoutGrid,
   Layers3,
+  List,
   Megaphone,
   MoreHorizontal,
   Pencil,
   Plus,
+  Search,
   ShoppingBag,
   Smartphone,
   Sparkles,
@@ -52,6 +57,56 @@ const BLANK_KIND_FOR_CANVAS: Record<CanvasCategory, ProjectKind> = {
   website: "blank",
   mobile: "mobile-blank",
 };
+
+type LakeView = "grid" | "list";
+type LakeSort = "recent" | "name" | "created";
+
+const LAKE_SORTS: readonly { id: LakeSort; label: string }[] = [
+  { id: "recent", label: "Last modified" },
+  { id: "name", label: "Alphabetical" },
+  { id: "created", label: "Newest first" },
+];
+
+const LAKE_PREFS_KEY = "wirecanvas:lake-ui:v1";
+
+interface LakePrefs {
+  view: LakeView;
+  sort: LakeSort;
+  kindFilter: ProjectKind | "all";
+}
+
+function loadLakePrefs(): LakePrefs {
+  const fallback: LakePrefs = { view: "grid", sort: "recent", kindFilter: "all" };
+  try {
+    const raw = window.localStorage?.getItem(LAKE_PREFS_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Partial<LakePrefs>;
+    return {
+      view: parsed.view === "list" ? "list" : "grid",
+      sort: LAKE_SORTS.some((s) => s.id === parsed.sort) ? (parsed.sort as LakeSort) : "recent",
+      kindFilter:
+        typeof parsed.kindFilter === "string" &&
+        (parsed.kindFilter === "all" || PROJECT_KINDS.some((k) => k.id === parsed.kindFilter))
+          ? (parsed.kindFilter as ProjectKind | "all")
+          : "all",
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function saveLakePrefs(prefs: LakePrefs): void {
+  try {
+    window.localStorage?.setItem(LAKE_PREFS_KEY, JSON.stringify(prefs));
+  } catch {}
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable)
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Live project thumbnail — real scaled preview of the saved document  */
@@ -336,6 +391,28 @@ interface ProjectLakeProps {
   onCloseLake?: () => void;
 }
 
+function useFilteredProjects(
+  projects: LocalProjectSummary[],
+  kindFilter: ProjectKind | "all",
+  query: string,
+  sort: LakeSort,
+) {
+  return useMemo(() => {
+    let list = projects;
+    if (kindFilter !== "all") list = list.filter((p) => p.kind === kindFilter);
+    if (query.trim()) {
+      const q = query.trim().toLowerCase();
+      list = list.filter((p) => p.name.toLowerCase().includes(q) || p.kind.toLowerCase().includes(q));
+    }
+    if (sort === "name") {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    } else if (sort === "created") {
+      list = [...list].sort((a, b) => b.createdAt - a.createdAt);
+    }
+    return list;
+  }, [projects, kindFilter, query, sort]);
+}
+
 export function ProjectLake({
   projects,
   activeProjectId,
@@ -347,17 +424,28 @@ export function ProjectLake({
   showAsOverlay = false,
   onCloseLake,
 }: ProjectLakeProps) {
+  const initialPrefs = useMemo(loadLakePrefs, []);
+  const [kindFilter, setKindFilter] = useState<ProjectKind | "all">(initialPrefs.kindFilter);
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<LakeView>(initialPrefs.view);
+  const [sort, setSort] = useState<LakeSort>(initialPrefs.sort);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
   const [menuUp, setMenuUp] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [sortOpen, setSortOpen] = useState(false);
   const [showBlankChooser, setShowBlankChooser] = useState(false);
   // Tracks the live rename session so Enter→unmount-blur can never
   // double-commit and Escape reliably cancels instead of committing.
   const renameSessionRef = useRef<{ id: string; original: string; done: boolean } | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLElement | null>(null);
+  const sortWrapRef = useRef<HTMLDivElement>(null);
+
+  const isMac =
+    typeof navigator !== "undefined" && /mac/i.test(navigator.platform ?? navigator.userAgent ?? "");
 
   const closeMenu = (restoreFocus = false) => {
     setMenuId(null);
@@ -366,20 +454,21 @@ export function ProjectLake({
     menuTriggerRef.current = null;
   };
 
-  // Outside pointer-down closes the card menu.
+  // Outside pointer-down closes whichever popover is open.
   useEffect(() => {
-    if (menuId === null) return;
+    if (menuId === null && !sortOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       if (!(e.target instanceof Element)) return;
       if (e.target.closest("[data-lake-pop]") !== null) return;
       closeMenu();
+      setSortOpen(false);
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [menuId]);
+  }, [menuId, sortOpen]);
 
-  // Global Escape chain: card menu > overlay close. The chooser and the
-  // rename input own their own Escape handling.
+  // Global Escape chain: card menu / sort popover > overlay close. The
+  // chooser and the rename input own their own Escape handling.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || showBlankChooser) return;
@@ -387,12 +476,40 @@ export function ProjectLake({
         closeMenu(true);
         return;
       }
+      if (sortOpen) {
+        setSortOpen(false);
+        return;
+      }
       if (renameId !== null) return;
       if (showAsOverlay) onCloseLake?.();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menuId, renameId, showBlankChooser, showAsOverlay, onCloseLake]);
+  }, [menuId, sortOpen, renameId, showBlankChooser, showAsOverlay, onCloseLake]);
+
+  // ⌘K / Ctrl+K and "/" focus search, matching the hint chip on the field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const withMod = e.metaKey || e.ctrlKey;
+      if (withMod && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+        return;
+      }
+      if (e.key === "/" && !withMod && !e.altKey && !isEditableTarget(e.target)) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Persist view / sort / filter so the lake reopens exactly as left.
+  useEffect(() => {
+    saveLakePrefs({ view, sort, kindFilter });
+  }, [view, sort, kindFilter]);
 
   // Focus the first item when a card menu or the delete confirm opens.
   useEffect(() => {
@@ -401,7 +518,9 @@ export function ProjectLake({
     el?.focus();
   }, [menuId, confirmDeleteId]);
 
+  const filtered = useFilteredProjects(projects, kindFilter, query, sort);
   const hasProjects = projects.length > 0;
+  const sortLabel = LAKE_SORTS.find((s) => s.id === sort)?.label ?? "Last modified";
 
   const startRename = (id: string, currentName: string) => {
     renameSessionRef.current = { id, original: currentName, done: false };
@@ -492,12 +611,128 @@ export function ProjectLake({
           </div>
         </div>
 
-        {showAsOverlay && onCloseLake ? (
-          <button className="figma-close" onClick={onCloseLake} type="button" aria-label="Back to canvas">
-            <X size={16} /> Close
-          </button>
-        ) : null}
+        <div className="figma-lake-topbar-right">
+          <div className="figma-search" role="search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              aria-label="Search files"
+              placeholder="Search files…"
+              value={query}
+              autoComplete="off"
+              autoCorrect="off"
+              spellCheck={false}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  if (query) setQuery("");
+                  else e.currentTarget.blur();
+                  e.stopPropagation();
+                }
+              }}
+            />
+            {query ? (
+              <button aria-label="Clear search" onClick={() => setQuery("")} type="button" className="figma-search-clear">
+                <X size={12} />
+              </button>
+            ) : (
+              <kbd className="figma-search-shortcut">{isMac ? "⌘" : "Ctrl"} K</kbd>
+            )}
+          </div>
+
+          <div className="figma-sort-wrap" data-lake-pop ref={sortWrapRef}>
+            <button
+              className={`figma-sort-button${sortOpen ? " is-active" : ""}`}
+              onClick={() => setSortOpen((v) => !v)}
+              type="button"
+              aria-label={`Sort files, currently ${sortLabel}`}
+              aria-expanded={sortOpen}
+              aria-haspopup="menu"
+              title="Sort"
+            >
+              <ArrowDownWideNarrow size={14} />
+              <span>{sortLabel}</span>
+            </button>
+            {sortOpen ? (
+              <div className="figma-more-menu figma-sort-menu" role="menu" aria-label="Sort files">
+                {LAKE_SORTS.map((s) => (
+                  <button
+                    key={s.id}
+                    role="menuitemradio"
+                    aria-checked={sort === s.id}
+                    onClick={() => {
+                      setSort(s.id);
+                      setSortOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <span className="figma-menu-check">{sort === s.id ? <Check size={13} /> : null}</span>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="figma-view-toggle" role="group" aria-label="View toggle">
+            <button
+              aria-label="Grid view"
+              aria-pressed={view === "grid"}
+              className={view === "grid" ? "is-active" : ""}
+              onClick={() => setView("grid")}
+              type="button"
+              title="Grid view"
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              aria-label="List view"
+              aria-pressed={view === "list"}
+              className={view === "list" ? "is-active" : ""}
+              onClick={() => setView("list")}
+              type="button"
+              title="List view"
+            >
+              <List size={14} />
+            </button>
+          </div>
+
+          {showAsOverlay && onCloseLake ? (
+            <button className="figma-close" onClick={onCloseLake} type="button" aria-label="Back to canvas">
+              <X size={16} /> Close
+            </button>
+          ) : null}
+        </div>
       </header>
+
+      <div className="figma-tabs" role="tablist" aria-label="Filter by kind">
+        <button
+          role="tab"
+          aria-selected={kindFilter === "all"}
+          className={`figma-tab${kindFilter === "all" ? " is-active" : ""}`}
+          onClick={() => setKindFilter("all")}
+          type="button"
+        >
+          <LayoutGrid size={14} aria-hidden="true" /> All files <span>{projects.length}</span>
+        </button>
+        {PROJECT_KINDS.map((kind) => {
+          const Icon = KIND_ICONS[kind.id];
+          const count = projects.filter((p) => p.kind === kind.id).length;
+          return (
+            <button
+              key={kind.id}
+              role="tab"
+              aria-selected={kindFilter === kind.id}
+              className={`figma-tab${kindFilter === kind.id ? " is-active" : ""}`}
+              onClick={() => setKindFilter(kind.id)}
+              type="button"
+              data-testid={`lake-filter-${kind.id}`}
+            >
+              <Icon size={13} /> {kind.label} {count > 0 ? <span>{count}</span> : null}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="figma-lake-body">
         {/* Bundled — starting points shipped with the app */}
@@ -545,13 +780,29 @@ export function ProjectLake({
         {/* Saved — notes the user has saved locally */}
         <div className="figma-section">
           <div className="figma-section-head">
-            <h3>Saved</h3>
-            <span>{projects.length} {projects.length === 1 ? "note" : "notes"}</span>
+            <h3>{sort === "name" ? "A–Z" : sort === "created" ? "Newest" : "Saved"}</h3>
+            <span>{filtered.length} {filtered.length === 1 ? "note" : "notes"}</span>
           </div>
 
-          {hasProjects ? (
-            <div className="figma-file-grid">
-              {projects.map((p) => {
+          {hasProjects && filtered.length === 0 ? (
+            <div className="figma-empty">
+              <FileText size={18} />
+              <strong>No matching notes</strong>
+              <span>Try another kind or clear search.</span>
+              <button
+                className="figma-empty-clear"
+                onClick={() => {
+                  setQuery("");
+                  setKindFilter("all");
+                }}
+                type="button"
+              >
+                Clear search &amp; filters
+              </button>
+            </div>
+          ) : hasProjects ? (
+            <div className={`figma-file-grid${view === "list" ? " is-list" : ""}`}>
+              {filtered.map((p) => {
                 const kindDef = PROJECT_KINDS.find((k) => k.id === p.kind) ?? PROJECT_KINDS[0]!;
                 const Icon = KIND_ICONS[p.kind];
                 const isActive = p.id === activeProjectId;
@@ -559,7 +810,7 @@ export function ProjectLake({
                 return (
                   <article
                     key={p.id}
-                    className={`figma-file-card${isActive ? " is-active" : ""}${isMenuOpen ? " is-menu-open" : ""}`}
+                    className={`figma-file-card${isActive ? " is-active" : ""}${isMenuOpen ? " is-menu-open" : ""}${view === "list" ? " is-list-row" : ""}`}
                     data-testid="project-card"
                     data-project-id={p.id}
                     aria-current={isActive ? "true" : undefined}

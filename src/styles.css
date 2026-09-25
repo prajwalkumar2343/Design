@@ -3437,6 +3437,240 @@ kbd {
 .blank-chooser-cancel:hover { border-color: #d0d0ca; color: #161615; }
 
 /* Body */
+.figma-lake-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.figma-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 300px;
+  height: 32px;
+  padding: 0 10px 0 10px;
+  background: #f4f4f1;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #91918a;
+  transition: all 120ms ease;
+}
+.figma-search:focus-within {
+  background: #FFFFFF;
+  border-color: var(--selection);
+  box-shadow: 0 0 0 3px rgba(93, 92, 226, 0.14);
+  color: var(--ink);
+}
+.figma-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 400;
+}
+.figma-search input::placeholder { color: #91918a; }
+.figma-search-shortcut {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid #e7e7e2;
+  border-radius: 5px;
+  background: #FFFFFF;
+  color: #91918a;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+}
+.figma-search-clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 6px;
+  background: #e7e7e2;
+  color: #666661;
+  cursor: pointer;
+}
+.figma-search-clear:hover { background: #DDDDDD; color: var(--ink); }
+
+.figma-view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: #f4f4f1;
+  border-radius: 8px;
+}
+.figma-view-toggle button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #91918a;
+  cursor: pointer;
+}
+.figma-view-toggle button.is-active {
+  background: #FFFFFF;
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+}
+
+/* Tabs — kind filter strip under the lake topbar */
+.figma-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 44px;
+  padding: 0 24px;
+  background: #FFFFFF;
+  border-bottom: 1px solid #e7e7e2;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.figma-tabs::-webkit-scrollbar { display: none; }
+
+.figma-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #666661;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  margin-bottom: -1px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.figma-tab span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #f4f4f1;
+  color: #666661;
+  font-size: 11px;
+  font-weight: 600;
+}
+.figma-tab:hover { color: var(--ink); }
+.figma-tab.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+.figma-tab.is-active span { background: var(--ink); color: #FFF; }
+
+/* Sort popover in the lake topbar */
+.figma-sort-wrap { position: relative; }
+.figma-sort-menu { top: calc(100% + 6px); min-width: 160px; }
+.figma-menu-check {
+  width: 16px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--selection);
+}
+.figma-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f4f4f1;
+  color: #666661;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.figma-sort-button:hover { color: var(--ink); }
+.figma-sort-button.is-active { background: #FFFFFF; border-color: #e7e7e2; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+
+/* Filtered-empty reset affordance */
+.figma-empty-clear {
+  margin-top: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #e7e7e2;
+  border-radius: 999px;
+  background: #FFFFFF;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.figma-empty-clear:hover { border-color: #d0d0ca; background: #fbfbfa; }
+.figma-empty-clear:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+
+/* List view */
+.figma-file-grid.is-list {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+.figma-file-card.is-list-row {
+  flex-direction: row;
+  align-items: center;
+  height: 64px;
+  padding: 0;
+}
+.figma-file-card.is-list-row .figma-file-thumb {
+  width: 88px;
+  height: 100%;
+  flex: 0 0 88px;
+  border-right: 1px solid #efefea;
+  border-bottom: 0;
+  border-radius: 0;
+}
+.figma-file-card.is-list-row .figma-file-footer {
+  flex: 1;
+  border-top: 0;
+  padding: 0 16px;
+  height: 100%;
+  align-items: center;
+  flex-direction: row;
+  justify-content: space-between;
+}
+
+.figma-tab:focus-visible,
+.figma-view-toggle button:focus-visible,
+.figma-search-clear:focus-visible,
+.figma-sort-button:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 2px;
+}
+.figma-tab:focus-visible { outline-offset: -2px; }
+
+/* Keep the lake topbar usable on narrow widths: search stays primary and the
+   sort button collapses to its icon. */
+@media (max-width: 1100px) {
+  .figma-sort-button span { display: none; }
+  .figma-sort-button { width: 32px; padding: 0; justify-content: center; }
+}
+@media (max-width: 760px) {
+  .figma-lake-topbar-right { gap: 6px; }
+  .figma-search { width: auto; flex: 1 1 120px; min-width: 0; }
+  .figma-search-shortcut { display: none; }
+  .figma-tabs { padding: 0 12px; }
+}
+
 .figma-lake-body {
   flex: 1;
   overflow: auto;

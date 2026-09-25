@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { SafeInlineStyleProperty } from "../bridge/protocol";
 import {
+  DEFAULT_GLASS_LEVEL,
   MAX_GLASS_LEVEL,
   MAX_SHAPE_RADIUS,
   clampGlassLevel,
@@ -570,7 +571,7 @@ function TypographySection({ entries, onEditNodeStyle, tokens }: Pick<Properties
   );
 }
 
-function FillBorderSection({ entries, onEditNodeStyle, tokens }: Pick<PropertiesPanelProps, "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[] }) {
+function FillBorderSection({ entries, onEditNodeStyle, onApplyGlassEffect, tokens }: Pick<PropertiesPanelProps, "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[]; onApplyGlassEffect?: (level: number) => void }) {
   // Created vectors paint through `data-design-tool-fill` (the applied fill,
   // which may be a `var(--token)` link), not a background style.
   const fill = mixedValue(entries.map((entry) =>
@@ -593,7 +594,14 @@ function FillBorderSection({ entries, onEditNodeStyle, tokens }: Pick<Properties
   return (
     <PropertySection title="Fill & border" icon={<Palette size={13} />}>
       <div className="property-grid property-grid-single">
-        <ColorField label="Fill" value={fill} onCommit={(value) => onEditNodeStyle("background-color", value)} token={control("background-color", fill)} />
+        <ColorField
+          label="Fill"
+          value={fill}
+          onCommit={(value) => onEditNodeStyle("background-color", value)}
+          onPickGlass={onApplyGlassEffect ? () => onApplyGlassEffect(DEFAULT_GLASS_LEVEL) : undefined}
+          glassActive={entries.length > 0 && entries.every(entryHasGlass)}
+          token={control("background-color", fill)}
+        />
         <div className="property-grid"><PropertyField label="Border" value={border} onCommit={(value) => onEditNodeStyle("border-color", value)} token={control("border-color", border)} /><PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={control("border-width", borderWidth)} /></div>
         <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} token={control("border-radius", radius)} />
       </div>
@@ -609,6 +617,34 @@ function OpacityEffectsSection({ entries, onEditNodeStyle, tokens }: Pick<Proper
       <div className="property-grid property-grid-single"><PropertyField label="Opacity" value={opacity} onCommit={(value) => onEditNodeStyle("opacity", value)} token={<TokenControl tokens={tokens} property="opacity" value={opacity} onCommit={(value) => onEditNodeStyle("opacity", value)} />} /><PropertyField label="Shadow" value={shadow} onCommit={(value) => onEditNodeStyle("box-shadow", value)} token={<TokenControl tokens={tokens} property="box-shadow" value={shadow} onCommit={(value) => onEditNodeStyle("box-shadow", value)} />} /></div>
     </PropertySection>
   );
+}
+
+/**
+ * Untracked glass: foreign surfaces carry the effect as inline styles with no
+ * `data-design-tool-glass` attribute. The runtime stamps
+ * `data-design-tool-backdrop` on every editor-driven backdrop-filter write,
+ * which is how panel-applied glass lands on non-created elements — requiring
+ * that marker keeps authored `linear-gradient` backgrounds and `inset 0 1`
+ * shadows from being mistaken for glass and stripped on blur.
+ */
+function hasGlassSurfaceStyles(entry: OverlayBridgeTargetState): boolean {
+  if (entry.inspection?.attributes["data-design-tool-backdrop"] == null) return false;
+  const style = entry.inspection?.inlineStyle;
+  if (!style) return false;
+  const backdrop = style["backdrop-filter"];
+  const background = style["background"];
+  const shadow = style["box-shadow"];
+  return (
+    (typeof backdrop === "string" && backdrop.includes("blur(")) ||
+    (typeof background === "string" && background.includes("linear-gradient(")) ||
+    (typeof shadow === "string" && shadow.includes("inset 0 1"))
+  );
+}
+
+/** Glass on an inspected node, tracked (attribute) or untracked (styles). */
+function entryHasGlass(entry: OverlayBridgeTargetState): boolean {
+  const level = glassLevelFromAttribute(entry.inspection?.attributes["data-design-tool-glass"]);
+  return (level !== null && level > 0) || hasGlassSurfaceStyles(entry);
 }
 
 function GlassSection({
@@ -629,21 +665,7 @@ function GlassSection({
   }, [entries]);
   // Foreign surfaces get glass via inline styles, which never write the
   // tracking attribute; the backdrop-filter + sheen + rim shadow identify them.
-  const hasUntrackedGlass = useMemo(
-    () => entries.some((entry) => {
-      const style = entry.inspection?.inlineStyle;
-      if (!style) return false;
-      const bf = style["backdrop-filter"];
-      const bg = style["background"];
-      const shadow = style["box-shadow"];
-      return (
-        (typeof bf === "string" && bf.includes("blur(")) ||
-        (typeof bg === "string" && bg.includes("linear-gradient(")) ||
-        (typeof shadow === "string" && shadow.includes("inset 0 1"))
-      );
-    }),
-    [entries],
-  );
+  const hasUntrackedGlass = useMemo(() => entries.some(hasGlassSurfaceStyles), [entries]);
   const [level, setLevel] = useState(currentLevel);
   const appliedLevelRef = useRef<number | null>(null);
   const selectionKey = entries.map((entry) => `${entry.frameId}:${entry.target.elementId}`).sort().join("|");
@@ -850,7 +872,13 @@ function NodeDesignPanel({
           {glassSection}
           <PropertySection title="Button style" icon={<Palette size={13} />}>
             <div className="property-grid property-grid-single">
-              <ColorField label="Background" value={styleValue(entries, "background-color") ?? styleValue(entries, "background")} onCommit={(value) => onEditNodeStyle("background-color", value)} />
+              <ColorField
+                label="Background"
+                value={styleValue(entries, "background-color") ?? styleValue(entries, "background")}
+                onCommit={(value) => onEditNodeStyle("background-color", value)}
+                onPickGlass={() => onApplyGlassEffect(DEFAULT_GLASS_LEVEL)}
+                glassActive={entries.length > 0 && entries.every(entryHasGlass)}
+              />
               <PropertyField label="Radius" value={styleValue(entries, "border-radius")} onCommit={(value) => onEditNodeStyle("border-radius", value)} />
               <div className="property-grid"><PropertyField label="Border" value={styleValue(entries, "border-color")} onCommit={(value) => onEditNodeStyle("border-color", value)} /><PropertyField label="Width" value={styleValue(entries, "border-width")} onCommit={(value) => onEditNodeStyle("border-width", value)} /></div>
             </div>
@@ -868,14 +896,14 @@ function NodeDesignPanel({
           <PositionSizeSection {...positionProps} includeHeight={false} />
           {glassSection}
           <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "shape" ? (
         <>
           <PositionSizeSection {...positionProps} />
           {glassSection}
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "image" ? (
@@ -888,7 +916,7 @@ function NodeDesignPanel({
           <PositionSizeSection {...positionProps} />
           {glassSection}
           <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
+          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       )}

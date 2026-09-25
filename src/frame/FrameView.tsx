@@ -26,6 +26,14 @@ interface FrameViewProps {
   onBridgeInspection?: (frameId: string, inspection: BridgeInspection | null) => void;
   onBridgeSnapshot?: (frameId: string, snapshot: BridgeHierarchySnapshot, requestSequence: number) => void;
   onBridgeController?: (frameId: string, controller: IframeBridgeController | null) => void;
+  /**
+   * The frame's live document is actually going away (isLive turned off or the
+   * view unmounted) — distinct from onBridgeController(null), which also fires
+   * on mere transport teardown when this effect's dependencies change.
+   */
+  onBridgeDetach?: (frameId: string) => void;
+  /** Fires when a DOM-mutating bridge command is dispatched to this frame. */
+  onBridgeMutation?: (frameId: string) => void;
   isCreationMode?: boolean;
   creationShape?: ShapeVariantId | null;
   creationRadius?: number;
@@ -116,6 +124,8 @@ export const FrameView = memo(function FrameView({
   onBridgeInspection,
   onBridgeSnapshot,
   onBridgeController,
+  onBridgeDetach,
+  onBridgeMutation,
   isCreationMode = false,
   creationShape = null,
   creationRadius = 0,
@@ -152,11 +162,37 @@ export const FrameView = memo(function FrameView({
     error: null,
   });
 
+  // Changing the rendered srcDoc reloads the iframe and wipes live DOM edits
+  // (including var() token links), so the theme block is frozen at render time
+  // and updates flow through the `set-token-theme` bridge command instead.
+  const tokenCssRef = useRef(tokenCss);
+  tokenCssRef.current = tokenCss;
+
+  // Reports the live document's unload only when it really goes away: the
+  // bridge effect's cleanup also runs on dependency-change re-runs, so mount
+  // bookkeeping must not hang off onBridgeController(null). StrictMode's
+  // mount double-invoke would still fire this cleanup once on mount, so the
+  // report is deferred a task — the immediate re-setup cancels it.
+  const unloadTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (unloadTimerRef.current !== null) {
+      window.clearTimeout(unloadTimerRef.current);
+      unloadTimerRef.current = null;
+    }
+    return () => {
+      unloadTimerRef.current = window.setTimeout(() => {
+        unloadTimerRef.current = null;
+        onBridgeDetach?.(frame.id);
+      }, 0);
+    };
+  }, [frame.id, onBridgeDetach]);
+
   useEffect(() => {
     if (!isLive || !iframeRef.current) {
       transportRef.current?.destroy();
       transportRef.current = null;
       onBridgeController?.(frame.id, null);
+      onBridgeDetach?.(frame.id);
       setBridgeState((current) => ({ ...current, status: "idle" }));
       return;
     }
@@ -196,6 +232,16 @@ export const FrameView = memo(function FrameView({
       handlers: {
         onReady: () => {
           setBridgeState((current) => ({ ...current, status: "ready", error: null }));
+          // bridgeSrcDoc keeps whatever theme was current when it last
+          // recomputed, so a remounted (evicted) frame can come back with a
+          // stale block — re-push the live theme now that the runtime is
+          // listening. Idempotent when nothing changed; an empty css removes
+          // a block left over from before the tokens were cleared.
+          if (frame.mode !== "wireframe") {
+            void transport
+              .setTokenTheme({ command: "set-token-theme", css: tokenCssRef.current ?? "" })
+              .catch(() => undefined);
+          }
           void requestSnapshot().catch((error: unknown) => {
             setBridgeState((current) => ({
               ...current,
@@ -217,6 +263,7 @@ export const FrameView = memo(function FrameView({
           onBridgeEvent?.(frame.id, message, iframe);
           if (message.event === "hover" || message.event === "select") inspectTarget(message.target);
         },
+        onMutatingCommand: () => onBridgeMutation?.(frame.id),
       },
     });
 
@@ -267,16 +314,13 @@ export const FrameView = memo(function FrameView({
     frame.id,
     isLive,
     onBridgeController,
+    onBridgeDetach,
     onBridgeEvent,
     onBridgeInspection,
+    onBridgeMutation,
     onBridgeSnapshot,
   ]);
 
-  // Changing the rendered srcDoc reloads the iframe and wipes live DOM edits
-  // (including var() token links), so the theme block is frozen at render time
-  // and updates flow through the `set-token-theme` bridge command instead.
-  const tokenCssRef = useRef(tokenCss);
-  tokenCssRef.current = tokenCss;
   const bridgeSrcDoc = useMemo(
     () => renderFrameDocument(frame.srcDoc, frame.mode, bridgeSession, tokenCssRef.current),
     [frame.srcDoc, frame.mode, bridgeSession],
@@ -481,7 +525,7 @@ export const FrameView = memo(function FrameView({
             <button
               className="frame-activation-layer"
               aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}
-              onClick={isPanTool ? undefined : () => onSelect(frame.id)}
+              onClick={isPanTool || isCreationMode ? undefined : () => onSelect(frame.id)}
               onPointerDown={isPanTool ? onStartPan : (event) => onStartMove(frame.id, event)}
               type="button"
             />

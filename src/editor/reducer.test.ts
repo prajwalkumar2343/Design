@@ -167,4 +167,253 @@ describe("editor reducer", () => {
     expect(next.nodes.root.childIds).toEqual([]);
     expect(next.documents["document-1"].rootNodeIds).toEqual(["root"]);
   });
+
+  it("detaches a root node from its previous document on a root-to-root document move", () => {
+    // Two documents (one per frame) — a node upserted into the other document
+    // with parentId still null must leave the FIRST document's root list.
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withRoot = editorReducer(current, {
+      type: "node/upsert",
+      node: {
+        id: "moving-root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element",
+        name: "Root",
+        attributes: {},
+        childIds: [],
+      },
+    });
+    expect(withRoot.documents["document-1"].rootNodeIds).toEqual(["moving-root"]);
+
+    const moved = editorReducer(withRoot, {
+      type: "node/upsert",
+      node: { ...withRoot.nodes["moving-root"], documentId: "document-2" },
+    });
+    expect(moved.documents["document-1"].rootNodeIds).toEqual([]);
+    expect(moved.documents["document-2"].rootNodeIds).toEqual(["moving-root"]);
+    expect(moved.nodes["moving-root"].documentId).toBe("document-2");
+  });
+
+  it("detaches a root node from its previous document in the bulk upsert path", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withRoot = editorReducer(current, {
+      type: "node/upsert",
+      node: {
+        id: "moving-root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element",
+        name: "Root",
+        attributes: {},
+        childIds: [],
+      },
+    });
+
+    const moved = editorReducer(withRoot, {
+      type: "nodes/upsert-many",
+      nodes: [{ ...withRoot.nodes["moving-root"], documentId: "document-2" }],
+    });
+    expect(moved.documents["document-1"].rootNodeIds).toEqual([]);
+    expect(moved.documents["document-2"].rootNodeIds).toEqual(["moving-root"]);
+  });
+
+  it("accepts a bulk snapshot that lists a child before its parent", () => {
+    const current = createEditorStateFromFrameSeeds([baseFrame]);
+    const child = {
+      id: "child",
+      documentId: "document-1",
+      parentId: "parent",
+      kind: "element" as const,
+      name: "Child",
+      attributes: {},
+      childIds: [],
+    };
+    const next = editorReducer(current, {
+      type: "nodes/upsert-many",
+      nodes: [
+        child,
+        {
+          id: "parent",
+          documentId: "document-1",
+          parentId: null,
+          kind: "element",
+          name: "Parent",
+          attributes: {},
+          childIds: ["child"],
+        },
+      ],
+    });
+    expect(next.nodes["parent"].childIds).toEqual(["child"]);
+    expect(next.documents["document-1"].rootNodeIds).toContain("parent");
+  });
+
+  it("attaches a bulk child to a parent whose snapshot row omitted it", () => {
+    const current = createEditorStateFromFrameSeeds([baseFrame]);
+    const next = editorReducer(current, {
+      type: "nodes/upsert-many",
+      nodes: [
+        {
+          id: "child",
+          documentId: "document-1",
+          parentId: "parent",
+          kind: "element",
+          name: "Child",
+          attributes: {},
+          childIds: [],
+        },
+        {
+          id: "parent",
+          documentId: "document-1",
+          parentId: null,
+          kind: "element",
+          name: "Parent",
+          attributes: {},
+          childIds: [],
+        },
+      ],
+    });
+    expect(next.nodes["parent"].childIds).toEqual(["child"]);
+  });
+
+  it("moves a root's whole subtree when it crosses documents", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withTree = [
+      {
+        id: "root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element" as const,
+        name: "Root",
+        attributes: {},
+        childIds: [] as string[],
+      },
+      {
+        id: "child",
+        documentId: "document-1",
+        parentId: "root",
+        kind: "element" as const,
+        name: "Child",
+        attributes: {},
+        childIds: [] as string[],
+      },
+    ].reduce(
+      (s, node) => editorReducer(s, { type: "node/upsert", node }),
+      current,
+    );
+    expect(withTree.nodes["root"].childIds).toEqual(["child"]);
+
+    const single = editorReducer(withTree, {
+      type: "node/upsert",
+      node: { ...withTree.nodes["root"], documentId: "document-2" },
+    });
+    expect(single.nodes["child"].documentId).toBe("document-2");
+
+    const bulk = editorReducer(withTree, {
+      type: "nodes/upsert-many",
+      nodes: [{ ...withTree.nodes["root"], documentId: "document-2" }],
+    });
+    expect(bulk.nodes["child"].documentId).toBe("document-2");
+  });
+
+  it("resolves a bulk child's parent from the batch when the parent is moving documents", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withParent = editorReducer(current, {
+      type: "node/upsert",
+      node: {
+        id: "parent",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element",
+        name: "Parent",
+        attributes: {},
+        childIds: [],
+      },
+    });
+
+    // Child row first, then the parent's move row — the parent lookup must see
+    // the incoming document-2 record, not the stale document-1 one in state.
+    // The parent's row omits the child entirely: membership must come from the
+    // child's own parentId once the fresh parent record lands.
+    const next = editorReducer(withParent, {
+      type: "nodes/upsert-many",
+      nodes: [
+        {
+          id: "child",
+          documentId: "document-2",
+          parentId: "parent",
+          kind: "element",
+          name: "Child",
+          attributes: {},
+          childIds: [],
+        },
+        {
+          id: "parent",
+          documentId: "document-2",
+          parentId: null,
+          kind: "element",
+          name: "Parent",
+          attributes: {},
+          childIds: [],
+        },
+      ],
+    });
+    expect(next.nodes["parent"].documentId).toBe("document-2");
+    expect(next.nodes["child"].documentId).toBe("document-2");
+    expect(next.nodes["parent"].childIds).toEqual(["child"]);
+    expect(next.nodes["child"].parentId).toBe("parent");
+  });
+
+  it("clears descendant frameIds that reference frames left in the old document", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withTree = [
+      {
+        id: "root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element" as const,
+        name: "Root",
+        attributes: {},
+        childIds: [] as string[],
+      },
+      {
+        id: "child",
+        documentId: "document-1",
+        parentId: "root",
+        kind: "element" as const,
+        name: "Child",
+        attributes: {},
+        childIds: [] as string[],
+        frameId: "frame-1",
+      },
+    ].reduce(
+      (s, node) => editorReducer(s, { type: "node/upsert", node }),
+      current,
+    );
+
+    const next = editorReducer(withTree, {
+      type: "node/upsert",
+      node: { ...withTree.nodes["root"], documentId: "document-2" },
+    });
+    const moved = next.nodes["child"];
+    expect(moved.documentId).toBe("document-2");
+    // frame-1 lives in document-1 — keeping it would fail serialization's
+    // same-document frame check.
+    expect(moved.frameId).toBeUndefined();
+  });
 });

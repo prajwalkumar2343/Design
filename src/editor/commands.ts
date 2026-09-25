@@ -46,6 +46,7 @@ export type EditorCommand =
     }
   | { type: "frame/remove"; frameId: string }
   | { type: "node/upsert"; node: NodeEntity }
+  | { type: "nodes/upsert-many"; nodes: NodeEntity[] }
   | { type: "node/remove"; nodeId: string }
   | { type: "node/update"; nodeId: string; patch: Partial<Pick<NodeEntity, "name" | "locked" | "hidden">> }
   | { type: "node/reorder"; nodeId: string; direction: "up" | "down" }
@@ -158,6 +159,7 @@ export function applyEditorCommand(
     case "page/rename":
     case "page/switch":
     case "node/upsert":
+    case "nodes/upsert-many":
     case "node/remove":
     case "node/update":
     case "node/reorder":

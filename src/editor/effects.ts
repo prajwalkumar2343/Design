@@ -21,6 +21,9 @@
 
 export const MAX_GLASS_LEVEL = 100;
 
+/** Level applied by the palette's Glass swatch — mid-frost, still clearly transparent. */
+export const DEFAULT_GLASS_LEVEL = 60;
+
 /** Corner radius ceiling for created shapes — high enough to fully round any practical shape into a pill/circle. */
 export const MAX_SHAPE_RADIUS = 360;
 

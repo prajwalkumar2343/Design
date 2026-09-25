@@ -9,6 +9,36 @@ export const BRIDGE_PROTOCOL = "design-tool/iframe-bridge" as const;
 export const BRIDGE_PROTOCOL_VERSION = 1 as const;
 export const SANDBOXED_IFRAME_ORIGIN = "null" as const;
 
+/**
+ * Element ids are frame-scoped (`frm~<frameId>~<data:|id:|path:…>`) so the
+ * flat node map can hold structurally identical elements from different
+ * frame documents without colliding — every document used to mint the same
+ * `path:html[1]` ids and corrupt the shared graph.
+ */
+export const MAX_ELEMENT_ID_LENGTH = 1536;
+
+export function bridgeElementScope(frameId: string): string {
+  return `frm~${frameId}~`;
+}
+
+export function scopedBridgeElementId(frameId: string, rawId: string): string {
+  return bridgeElementScope(frameId) + rawId;
+}
+
+/** The document-local form of an element id, or the id itself when unscoped. */
+export function unscopeBridgeElementId(frameId: string, elementId: string): string {
+  const scope = bridgeElementScope(frameId);
+  return elementId.startsWith(scope) ? elementId.slice(scope.length) : elementId;
+}
+
+/**
+ * True when the element id derives from `data-design-element-id` — the marker
+ * of an editor-created element — whether or not it carries a frame scope.
+ */
+export function isDataBridgeElementId(elementId: string): boolean {
+  return elementId.startsWith("data:") || /^frm~.+~data:/.test(elementId);
+}
+
 export type BridgeVersion = typeof BRIDGE_PROTOCOL_VERSION;
 
 export interface BridgePoint {
@@ -151,7 +181,7 @@ export type BridgeCommand =
     }
   | {
       command: "restore-element";
-      snapshot: BridgeCreatedElementSnapshot;
+      snapshot: BridgeRestoreSnapshot;
     }
   | {
       command: "duplicate-element";
@@ -204,6 +234,13 @@ export type BridgeCreationKind =
 
 export interface BridgeCreatedElementSnapshot {
   elementId: string;
+  /**
+   * The raw `data-design-element-id` attribute the element carries. Restore
+   * must write this verbatim — re-embedding the derived `elementId` double-
+   * prefixes the attribute and the restored element mints a new identity
+   * every undo/redo cycle.
+   */
+  attrId?: string;
   kind: BridgeCreationKind;
   bounds: BridgeRect;
   text: string;
@@ -219,6 +256,15 @@ export interface BridgeCreatedElementSnapshot {
   glass?: number | null;
   style: Record<string, string>;
 }
+
+/** Verbatim-outerHTML snapshot used to undo deleting document markup. */
+export interface BridgeMarkupSnapshot {
+  markup: string;
+  parentId: string | null;
+  index: number;
+}
+
+export type BridgeRestoreSnapshot = BridgeCreatedElementSnapshot | BridgeMarkupSnapshot;
 
 export type BridgeUndoCommand =
   | {
@@ -238,7 +284,7 @@ export type BridgeUndoCommand =
     }
   | {
       command: "restore-element";
-      snapshot: BridgeCreatedElementSnapshot;
+      snapshot: BridgeRestoreSnapshot;
     }
   | {
       command: "set-shape-radius";
@@ -264,6 +310,13 @@ export type BridgeCommandAck =
       property: SafeInlineStyleProperty;
       previousValue: string | null;
       value: string | null;
+      /**
+       * Live element rect (frame-document coordinates) read after the edit.
+       * Layout may land the element somewhere other than the bounds the
+       * editor predicted — flex/grid alignment, min/max clamps, intrinsic
+       * sizing — so gesture overlays glue to this rect, not the prediction.
+       */
+      bounds?: BridgeRect;
       undo: BridgeUndoCommand;
     }
   | {
@@ -473,12 +526,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isValidString(value: unknown, options: { maxLength: number; allowEmpty?: boolean }): value is string {
+function isValidString(
+  value: unknown,
+  options: { maxLength: number; allowEmpty?: boolean; allowTextWhitespace?: boolean },
+): value is string {
   return (
     typeof value === "string" &&
     value.length <= options.maxLength &&
     (options.allowEmpty || value.length > 0) &&
-    !/[\u0000-\u001f\u007f]/.test(value)
+    !(options.allowTextWhitespace
+      // Text payloads legitimately carry \n \t \r — everything else in the
+      // C0/DEL range stays rejected.
+      ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)
+      : /[\u0000-\u001f\u007f]/.test(value))
   );
 }
 
@@ -510,10 +570,10 @@ function isRect(value: unknown): value is BridgeRect {
 function isElementTarget(value: unknown): value is BridgeElementTarget {
   return (
     isRecord(value) &&
-    isValidString(value.elementId, { maxLength: 512 }) &&
+    isValidString(value.elementId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
     isValidString(value.tagName, { maxLength: 64 }) &&
     isValidString(value.path, { maxLength: 2048 }) &&
-    isValidString(value.name, { maxLength: 512, allowEmpty: true }) &&
+    isValidString(value.name, { maxLength: 512, allowEmpty: true, allowTextWhitespace: true }) &&
     (value.role === null || isValidString(value.role, { maxLength: 256, allowEmpty: true })) &&
     isRect(value.bounds) &&
     (value.locked === undefined || typeof value.locked === "boolean")
@@ -526,7 +586,9 @@ function isStringRecord(value: unknown, maxValueLength: number): value is Record
     Object.entries(value).every(
       ([key, item]) =>
         isValidString(key, { maxLength: 256 }) &&
-        isValidString(item, { maxLength: maxValueLength, allowEmpty: true }),
+        // Attribute/style values are user text — aria-label, inline styles,
+        // computed values all legitimately carry newlines and tabs.
+        isValidString(item, { maxLength: maxValueLength, allowEmpty: true, allowTextWhitespace: true }),
     )
   );
 }
@@ -545,21 +607,37 @@ function isShapeRadius(value: unknown): value is number {
   return isFiniteNumber(value) && value >= 0 && value <= 360;
 }
 
-/** Concrete paint colors only; gradients, urls, and statements stay out. Transparent is allowed for pure glass. */
+/**
+ * Concrete paint colors plus `var(--token)` links — the runtime deliberately
+ * supports token-linked fills. Gradients, urls, and statements stay out.
+ */
+const CSS_VAR_COLOR_PATTERN = /^var\(\s*--[A-Za-z0-9_-]+\s*(?:,[^()]{1,128})?\)$/;
+
 function isShapeColor(value: unknown): value is string {
-  return typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 128 &&
-    (/^#[0-9a-f]{3,8}$|^rgba?\(\s*[\d.\s,/]+\)$/i.test(value.trim()) || value.trim().toLowerCase() === "transparent");
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > 128 || /[\u0000-\u001f\u007f<>"']/.test(trimmed)) {
+    return false;
+  }
+  return (
+    /^#[0-9a-f]{3,8}$/i.test(trimmed) ||
+    /^rgba?\(\s*[\d.\s,%/]+\)$/i.test(trimmed) ||
+    /^hsla?\(\s*[\d.\s,%/]+\)$/i.test(trimmed) ||
+    CSS_VAR_COLOR_PATTERN.test(trimmed) ||
+    trimmed.toLowerCase() === "transparent" ||
+    // Named CSS colors (red, rebeccapurple, currentcolor…).
+    /^[a-z]{2,24}$/i.test(trimmed)
+  );
 }
 
 function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElementSnapshot {
   return isRecord(value) &&
-    isValidString(value.elementId, { maxLength: 512 }) &&
+    isValidString(value.elementId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
+    (value.attrId === undefined || isValidString(value.attrId, { maxLength: 512, allowEmpty: true })) &&
     isCreationKind(value.kind) &&
     isRect(value.bounds) &&
-    isValidString(value.text, { maxLength: 20000, allowEmpty: true }) &&
-    isValidString(value.alt, { maxLength: 4096, allowEmpty: true }) &&
+    isValidString(value.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true }) &&
+    isValidString(value.alt, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true }) &&
     (value.kind === "image" ? isSafeDataImage(value.src) : value.src === "") &&
     Array.isArray(value.points) && value.points.length <= 256 && value.points.every(isPoint) &&
     isValidString(value.fill, { maxLength: 4096, allowEmpty: true }) &&
@@ -571,52 +649,60 @@ function isCreatedElementSnapshot(value: unknown): value is BridgeCreatedElement
     isStringRecord(value.style, 4096);
 }
 
+/** outerHTML snapshots from document-markup deletes — formatting newlines are legitimate. */
+function isMarkupSnapshot(value: unknown): value is BridgeMarkupSnapshot {
+  return isRecord(value) &&
+    isValidString(value.markup, { maxLength: 2_000_000, allowTextWhitespace: true }) &&
+    (value.parentId === null || isValidString(value.parentId, { maxLength: MAX_ELEMENT_ID_LENGTH })) &&
+    isFiniteNumber(value.index) && value.index >= 0;
+}
+
 function isBridgeCommand(value: unknown): value is BridgeCommand {
   if (!isRecord(value) || typeof value.command !== "string") return false;
   if (value.command === "set-inline-style") {
     return (
-      isValidString(value.targetId, { maxLength: 512 }) &&
+      isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
       isSafeInlineStyleProperty(value.property) &&
-      (value.value === null || isValidString(value.value, { maxLength: 4096, allowEmpty: true }))
+      (value.value === null || isValidString(value.value, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true }))
     );
   }
   if (value.command === "set-text") {
-    return isValidString(value.targetId, { maxLength: 512 }) &&
-      isValidString(value.text, { maxLength: 20000, allowEmpty: true });
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
+      isValidString(value.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true });
   }
   if (value.command === "start-text-edit" || value.command === "cancel-text-edit") {
-    return isValidString(value.targetId, { maxLength: 512 });
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH });
   }
   if (value.command === "commit-text-edit") {
-    return isValidString(value.targetId, { maxLength: 512 }) &&
-      isValidString(value.text, { maxLength: 20000, allowEmpty: true });
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
+      isValidString(value.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true });
   }
   if (value.command === "delete-element") {
-    return isValidString(value.targetId, { maxLength: 512 });
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH });
   }
   if (value.command === "restore-element") {
-    return isCreatedElementSnapshot(value.snapshot);
+    return isCreatedElementSnapshot(value.snapshot) || isMarkupSnapshot(value.snapshot);
   }
   if (value.command === "duplicate-element") {
-    return isValidString(value.targetId, { maxLength: 512 }) &&
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
       isValidString(value.elementId, { maxLength: 512 });
   }
   if (value.command === "set-shape-radius") {
-    return isValidString(value.targetId, { maxLength: 512 }) && isShapeRadius(value.radius);
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) && isShapeRadius(value.radius);
   }
   if (value.command === "set-shape-fill") {
-    return isValidString(value.targetId, { maxLength: 512 }) &&
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
       (value.color === null || isShapeColor(value.color));
   }
   if (value.command === "set-shape-glass") {
-    return isValidString(value.targetId, { maxLength: 512 }) &&
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
       (value.level === null || (isFiniteNumber(value.level) && value.level >= 0 && value.level <= 100));
   }
   if (value.command === "pick-element") {
     return isPoint(value.point) && typeof value.shiftKey === "boolean";
   }
   if (value.command === "inject-font-faces") {
-    return isValidString(value.css, { maxLength: 4_000_000 });
+    return isValidString(value.css, { maxLength: 4_000_000, allowTextWhitespace: true });
   }
   if (value.command === "set-token-theme") {
     return typeof value.css === "string" && value.css.length <= 262_144;
@@ -625,9 +711,9 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
     return isValidString(value.elementId, { maxLength: 512 }) &&
       isCreationKind(value.kind) &&
       isRect(value.bounds) &&
-      (value.parentId === undefined || value.parentId === null || isValidString(value.parentId, { maxLength: 512 })) &&
-      (value.text === undefined || isValidString(value.text, { maxLength: 20000, allowEmpty: true })) &&
-      (value.alt === undefined || isValidString(value.alt, { maxLength: 4096, allowEmpty: true })) &&
+      (value.parentId === undefined || value.parentId === null || isValidString(value.parentId, { maxLength: MAX_ELEMENT_ID_LENGTH })) &&
+      (value.text === undefined || isValidString(value.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true })) &&
+      (value.alt === undefined || isValidString(value.alt, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true })) &&
       (value.src === undefined || (value.kind === "image" ? isSafeDataImage(value.src) : value.src === "")) &&
       (value.points === undefined || (Array.isArray(value.points) && value.points.length <= 256 && value.points.every(isPoint))) &&
       (value.fill === undefined || isValidString(value.fill, { maxLength: 4096, allowEmpty: true })) &&
@@ -645,9 +731,9 @@ function isHierarchyNode(value: unknown): value is BridgeHierarchyNode {
   return (
     isElementTarget(value) &&
     record !== null &&
-    (record.parentId === null || isValidString(record.parentId, { maxLength: 512 })) &&
+    (record.parentId === null || isValidString(record.parentId, { maxLength: MAX_ELEMENT_ID_LENGTH })) &&
     Array.isArray(record.childIds) &&
-    record.childIds.every((id) => isValidString(id, { maxLength: 512 }))
+    record.childIds.every((id) => isValidString(id, { maxLength: MAX_ELEMENT_ID_LENGTH }))
   );
 }
 
@@ -655,7 +741,7 @@ function isHierarchySnapshot(value: unknown): value is BridgeHierarchySnapshot {
   return (
     isRecord(value) &&
     Array.isArray(value.rootIds) &&
-    value.rootIds.every((id) => isValidString(id, { maxLength: 512 })) &&
+    value.rootIds.every((id) => isValidString(id, { maxLength: MAX_ELEMENT_ID_LENGTH })) &&
     Array.isArray(value.nodes) &&
     value.nodes.length <= 5000 &&
     value.nodes.every(isHierarchyNode) &&
@@ -667,7 +753,7 @@ function isInspection(value: unknown): value is BridgeInspection {
   return (
     isRecord(value) &&
     isElementTarget(value.target) &&
-    isValidString(value.text, { maxLength: 20000, allowEmpty: true }) &&
+    isValidString(value.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true }) &&
     isStringRecord(value.attributes, 4096) &&
     isStringRecord(value.inlineStyle, 4096) &&
     isStringRecord(value.computedStyle, 4096)
@@ -675,22 +761,23 @@ function isInspection(value: unknown): value is BridgeInspection {
 }
 
 function isCommandAck(value: unknown): value is BridgeCommandAck {
-  if (!isRecord(value) || value.kind !== "command" || !isValidString(value.targetId, { maxLength: 512 })) {
+  if (!isRecord(value) || value.kind !== "command" || !isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH })) {
     return false;
   }
   if (value.command === "set-inline-style") {
     return (
       isSafeInlineStyleProperty(value.property) &&
-      (value.previousValue === null || isValidString(value.previousValue, { maxLength: 4096, allowEmpty: true })) &&
-      (value.value === null || isValidString(value.value, { maxLength: 4096, allowEmpty: true })) &&
+      (value.previousValue === null || isValidString(value.previousValue, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true })) &&
+      (value.value === null || isValidString(value.value, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true })) &&
+      (value.bounds === undefined || isRect(value.bounds)) &&
       isRecord(value.undo) &&
       isBridgeCommand(value.undo) &&
       value.undo.command === "set-inline-style"
     );
   }
   if (value.command === "set-text") return (
-    isValidString(value.previousText, { maxLength: 20000, allowEmpty: true }) &&
-    isValidString(value.text, { maxLength: 20000, allowEmpty: true }) &&
+    isValidString(value.previousText, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true }) &&
+    isValidString(value.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true }) &&
     isRecord(value.undo) &&
     isBridgeCommand(value.undo) &&
       value.undo.command === "set-text"
@@ -779,7 +866,7 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
         (record.target === null || isElementTarget(record.target)) &&
         isPoint(record.point) &&
         (record.key === undefined || isValidString(record.key, { maxLength: 64, allowEmpty: true })) &&
-        (record.text === undefined || isValidString(record.text, { maxLength: 20000, allowEmpty: true })) &&
+        (record.text === undefined || isValidString(record.text, { maxLength: 20000, allowEmpty: true, allowTextWhitespace: true })) &&
         (record.buttons === undefined || (typeof record.buttons === "number" && Number.isInteger(record.buttons) && record.buttons >= 0 && record.buttons <= 31)) &&
         (record.pointerId === undefined || (typeof record.pointerId === "number" && Number.isInteger(record.pointerId) && record.pointerId >= 0)) &&
         (record.shiftKey === undefined || typeof record.shiftKey === "boolean") &&
@@ -793,7 +880,7 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
       return (
         isValidString(record.requestId, { maxLength: 256 }) &&
         (record.command === "snapshot" || record.command === "inspect") &&
-        (record.targetId === undefined || isValidString(record.targetId, { maxLength: 512 }))
+        (record.targetId === undefined || isValidString(record.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }))
       )
         ? (value as BridgeRequestMessage)
         : null;

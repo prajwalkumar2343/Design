@@ -718,12 +718,14 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         }
         if (node.parentId) {
           const parent = nodes[node.parentId];
-          if (parent && !parent.childIds.includes(node.id)) {
-            nodes[parent.id] = { ...parent, childIds: [...parent.childIds, node.id] };
-          } else if (!parent) {
-            // Parent exists only in the incoming batch — attach once it has
-            // been written into the accumulated record below.
+          const incomingParent = incomingById.get(node.parentId);
+          if (!parent || (incomingParent !== undefined && parent !== incomingParent)) {
+            // Parent row hasn't been applied yet — it exists only in the
+            // incoming batch, or `nodes` still holds its stale record which a
+            // later row will overwrite. Attach once it lands, below.
             deferredChildAdds.push({ parentId: node.parentId, nodeId: node.id });
+          } else if (!parent.childIds.includes(node.id)) {
+            nodes[parent.id] = { ...parent, childIds: [...parent.childIds, node.id] };
           }
         } else {
           const document = documents[node.documentId];

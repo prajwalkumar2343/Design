@@ -345,6 +345,8 @@ describe("editor reducer", () => {
 
     // Child row first, then the parent's move row — the parent lookup must see
     // the incoming document-2 record, not the stale document-1 one in state.
+    // The parent's row omits the child entirely: membership must come from the
+    // child's own parentId once the fresh parent record lands.
     const next = editorReducer(withParent, {
       type: "nodes/upsert-many",
       nodes: [
@@ -364,13 +366,14 @@ describe("editor reducer", () => {
           kind: "element",
           name: "Parent",
           attributes: {},
-          childIds: ["child"],
+          childIds: [],
         },
       ],
     });
     expect(next.nodes["parent"].documentId).toBe("document-2");
     expect(next.nodes["child"].documentId).toBe("document-2");
     expect(next.nodes["parent"].childIds).toEqual(["child"]);
+    expect(next.nodes["child"].parentId).toBe("parent");
   });
 
   it("clears descendant frameIds that reference frames left in the old document", () => {

@@ -1,5 +1,5 @@
-import type { Camera, CanvasFrame, Rect, Size } from "./types";
-import { OVERSCAN_SCREEN_PX, MAX_LIVE_FRAMES } from "./constants";
+import type { Camera, Rect, Size } from "./types";
+import { OVERSCAN_SCREEN_PX } from "./constants";
 
 export function getVisibleWorldRect(
   camera: Camera,
@@ -28,76 +28,27 @@ export function rectsIntersect(a: Rect, b: Rect): boolean {
   );
 }
 
-function squaredDistanceToViewportCenter(
-  frame: CanvasFrame,
-  camera: Camera,
-  viewport: Size,
-): number {
-  const cx = camera.x + viewport.width / (2 * camera.zoom);
-  const cy = camera.y + viewport.height / (2 * camera.zoom);
-  const dx = frame.x + frame.width / 2 - cx;
-  const dy = frame.y + frame.height / 2 - cy;
-  return dx * dx + dy * dy;
+export interface MountEvictionCandidate {
+  id: string;
+  distanceSq: number;
 }
 
-export interface RankVisibleFramesInput {
-  frames: CanvasFrame[];
-  camera: Camera;
-  viewport: Size;
-  overscanScreenPx?: number;
-  maxLiveFrames?: number;
-  pinnedFrameId?: string;
-}
-
-export interface RankVisibleFramesOutput {
-  liveFrameIds: string[];
-  coldFrameIds: string[];
-}
-
-export function rankVisibleFrames(
-  input: RankVisibleFramesInput,
-): RankVisibleFramesOutput {
-  const {
-    frames,
-    camera,
-    viewport,
-    overscanScreenPx = OVERSCAN_SCREEN_PX,
-    maxLiveFrames = MAX_LIVE_FRAMES,
-    pinnedFrameId,
-  } = input;
-
-  const visibleRect = getVisibleWorldRect(camera, viewport, overscanScreenPx);
-
-  const visible = frames.filter((f) => rectsIntersect(f, visibleRect));
-
-  const pinned =
-    pinnedFrameId !== undefined
-      ? frames.find((f) => f.id === pinnedFrameId)
-      : undefined;
-
-  const others = pinned
-    ? visible.filter((f) => f.id !== pinnedFrameId)
-    : [...visible];
-
-  others.sort((a, b) => {
-    const da = squaredDistanceToViewportCenter(a, camera, viewport);
-    const db = squaredDistanceToViewportCenter(b, camera, viewport);
-    return da !== db ? da - db : a.id < b.id ? -1 : 1;
-  });
-
-  const liveFrameIds: string[] = [];
-  if (pinned) {
-    liveFrameIds.push(pinned.id);
+/**
+ * Unpinned mounts ordered farthest-from-viewport first. Past the mount cap
+ * this is the eviction order (evict from the front until the cap holds), and
+ * the head entry is the displacement check for an at-cap scan mount, which
+ * may only proceed when it is strictly closer.
+ */
+export function mountEvictionCandidates(
+  mountedIds: Iterable<string>,
+  pinnedIds: ReadonlySet<string>,
+  distanceSq: (id: string) => number,
+): MountEvictionCandidate[] {
+  const candidates: MountEvictionCandidate[] = [];
+  for (const id of mountedIds) {
+    if (pinnedIds.has(id)) continue;
+    candidates.push({ id, distanceSq: distanceSq(id) });
   }
-  for (const f of others) {
-    if (liveFrameIds.length >= maxLiveFrames + (pinned ? 1 : 0)) break;
-    liveFrameIds.push(f.id);
-  }
-
-  const liveSet = new Set(liveFrameIds);
-  const coldFrameIds = frames
-    .filter((f) => !liveSet.has(f.id))
-    .map((f) => f.id);
-
-  return { liveFrameIds, coldFrameIds };
+  candidates.sort((a, b) => b.distanceSq - a.distanceSq);
+  return candidates;
 }

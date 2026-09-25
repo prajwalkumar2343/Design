@@ -13,6 +13,13 @@ export interface OverlayStyleChange {
   target: OverlayNodeTarget;
   nextBounds: Rect;
   rotation: number;
+  /**
+   * True when `nextBounds` (and `target.bounds`) are the element's unrotated
+   * canonical rect rather than the measured post-transform AABB. Footprint
+   * math must rotate canonical bounds exactly once; AABB-space bounds are
+   * already post-rotation and pass through verbatim.
+   */
+  canonical?: boolean;
   previous: Partial<Record<SafeInlineStyleProperty, string | null>>;
   next: Partial<Record<SafeInlineStyleProperty, string | null>>;
 }
@@ -226,6 +233,7 @@ function createChange(
   nextBounds: Rect,
   rotation: number,
   resize?: { handle: ResizeHandle },
+  canonical?: boolean,
 ): OverlayStyleChange {
   const previousTransform = styleValue(snapshot, "transform");
   const translation = {
@@ -305,6 +313,7 @@ function createChange(
     target: snapshot.target,
     nextBounds,
     rotation: totalRotation,
+    canonical,
     previous,
     next,
   };
@@ -336,6 +345,60 @@ export function buildMoveChanges(
   );
 }
 
+/**
+ * The change's canonical working snapshot: for rotated elements the overlay
+ * target's AABB is swapped for the reconstructed unrotated rect so writes,
+ * overlay chrome, and fitting all operate in one space. `canonical` reports
+ * whether the returned bounds are unrotated-space — true for unrotated
+ * elements (AABB is the canonical rect) and for successful reconstructions,
+ * false when a rotated element's untransformed size isn't knowable.
+ */
+function canonicalizedSnapshot(
+  snapshot: OverlayStyleSnapshot,
+): { snapshot: OverlayStyleSnapshot; canonical: boolean } {
+  const parsed = parseTransform(snapshotTransform(snapshot));
+  if (!parsed || Math.abs(parsed.rotation) < 0.01) return { snapshot, canonical: true };
+  const canonical = unrotatedSnapshotBounds(snapshot);
+  if (!canonical) return { snapshot, canonical: false };
+  return {
+    snapshot: { ...snapshot, target: { ...snapshot.target, bounds: canonical } },
+    canonical: true,
+  };
+}
+
+export function cssPixelValue(value: string | undefined): number | null {
+  if (!value) return null;
+  const match = value.match(/^(-?\d+(?:\.\d+)?)px$/);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * The element's canonical (unrotated) rect for a rotated target. The overlay
+ * target only carries the post-transform AABB — rotating it again for writes
+ * or fitting double-applies the angle and inflates the element. Under a
+ * center-origin rotation the AABB shares the rect's center, so the canonical
+ * box is the element's own laid-out size re-centered on the AABB. Returns
+ * null when the untransformed size isn't knowable, so callers can fall back.
+ */
+function unrotatedSnapshotBounds(snapshot: OverlayStyleSnapshot): Rect | null {
+  const width = cssPixelValue(
+    snapshot.inlineStyle.width ?? snapshot.computedStyle.width,
+  );
+  const height = cssPixelValue(
+    snapshot.inlineStyle.height ?? snapshot.computedStyle.height,
+  );
+  if (width === null || height === null || width <= 0 || height <= 0) return null;
+  const bounds = snapshot.target.bounds;
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+  return {
+    x: centerX - width / 2,
+    y: centerY - height / 2,
+    width,
+    height,
+  };
+}
+
 export function buildResizeChanges(
   snapshots: readonly OverlayStyleSnapshot[],
   groupBounds: Rect,
@@ -350,10 +413,14 @@ export function buildResizeChanges(
     if (parsed && Math.abs(parsed.rotation) > 0.01) {
       const radians = (parsed.rotation * Math.PI) / 180;
       const localDelta = rotateVector(delta, -radians);
+      // Resize the canonical unrotated rect, never the measured AABB: the
+      // written width/height and the composed transform are canonical-space
+      // values, and the fit layer re-rotates the rect exactly once.
+      const { snapshot: canonical, canonical: isCanonical } = canonicalizedSnapshot(snapshot);
       const nextBounds = isImage
-        ? resizeImageRect(snapshot.target.bounds, handle, localDelta, minimumSize)
-        : resizeRect(snapshot.target.bounds, handle, localDelta, minimumSize);
-      return [createChange(snapshot, nextBounds, 0, { handle })];
+        ? resizeImageRect(canonical.target.bounds, handle, localDelta, minimumSize)
+        : resizeRect(canonical.target.bounds, handle, localDelta, minimumSize);
+      return [createChange(canonical, nextBounds, 0, { handle }, isCanonical)];
     }
     if (isImage) {
       const nextBounds = resizeImageRect(snapshot.target.bounds, handle, delta, minimumSize);
@@ -379,7 +446,13 @@ export function buildRotationChanges(
   rotation: number,
 ): OverlayStyleChange[] {
   if (snapshots.length <= 1) {
-    return snapshots.map((snapshot) => createChange(snapshot, snapshot.target.bounds, rotation));
+    // Canonical bounds: re-rotating the measured AABB would double-apply the
+    // element's existing angle — the footprint is derived by rotating the
+    // unrotated rect exactly once.
+    return snapshots.map((snapshot) => {
+      const { snapshot: canonical, canonical: isCanonical } = canonicalizedSnapshot(snapshot);
+      return createChange(canonical, canonical.target.bounds, rotation, undefined, isCanonical);
+    });
   }
   const group = unionRects(snapshots.map((snapshot) => snapshot.target.bounds));
   if (!group) return [];
@@ -389,17 +462,21 @@ export function buildRotationChanges(
   const cos = Math.cos(radians);
   const sin = Math.sin(radians);
   return snapshots.map((snapshot) => {
-    const bounds = snapshot.target.bounds;
+    // Each element's own rect rides to its rotated group position — canonical
+    // space when the unrotated size is knowable so fitting/painting don't
+    // re-rotate a measured AABB.
+    const { snapshot: canonical, canonical: isCanonical } = canonicalizedSnapshot(snapshot);
+    const bounds = canonical.target.bounds;
     const offsetX = bounds.x + bounds.width / 2 - centerX;
     const offsetY = bounds.y + bounds.height / 2 - centerY;
     const nextCenterX = centerX + offsetX * cos - offsetY * sin;
     const nextCenterY = centerY + offsetX * sin + offsetY * cos;
-    return createChange(snapshot, {
+    return createChange(canonical, {
       x: nextCenterX - bounds.width / 2,
       y: nextCenterY - bounds.height / 2,
       width: bounds.width,
       height: bounds.height,
-    }, rotation);
+    }, rotation, undefined, isCanonical);
   });
 }
 

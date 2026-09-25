@@ -38,7 +38,9 @@ dangling stash commits before hand-repairing.
   both `ShadersPanel` (left list) and `PropertiesPanel`'s `ShaderDesignPanel`.
   `applyPickedHex` lives here too.
 - `src/components/ColorField.tsx` — shared `ColorField`, `SwatchGrid`,
-  `COLOR_SWATCHES`.
+  `COLOR_SWATCHES`. Fill/Background fields pass `onPickGlass`, which leads
+  the grid with a Glass pseudo-swatch that applies the glass effect
+  (`DEFAULT_GLASS_LEVEL` in `src/editor/effects.ts`) instead of a color.
 - Shader selection lives in `CanvasSurface` (`selectedShaderElementId`);
   `ShaderElementView` ignores outside pointerdowns inside
   `[data-canvas-control]` so inspector edits don't deselect.
@@ -51,14 +53,35 @@ dangling stash commits before hand-repairing.
   in by `src/frame/freeform.ts`, which must mirror the DOM that
   `createElementFromSpec` in `src/bridge/runtime.ts` produces — keep them in
   sync or snapshot/persistence round-trips diverge.
-- The element node is upserted eagerly as `data:<elementId>`
-  (`bridgeNodeIdForElement`) so selection/layers work before the frame's
-  first bridge snapshot re-parents it under `body`.
+- Bridge element ids are frame-scoped: `frm~<frameId>~<raw>` where `<raw>` is
+  `data:<encoded>`, `id:<encoded>`, or `path:<dom-path>` — see
+  `bridgeElementScope`/`unscopeBridgeElementId` in `src/bridge/protocol.ts`.
+  The scope keeps identical DOM structures in different frames distinct in the
+  flat node map; `wirecanvas.ts` migrates legacy unscoped ids on load.
+- The freeform element node is upserted eagerly as
+  `bridgeNodeIdForElement(frameId, elementId)` so selection/layers work
+  before the frame's first bridge snapshot re-parents it under `body`.
 - The drag threshold for canvas creation is screen-space (`world delta *
   zoom`), unlike the frame-unit threshold used inside frames.
 - Deleting every `data-design-tool-created` node inside a freeform frame
   deletes the frame itself (see the `delete-selection` branch in
   CanvasSurface) — otherwise invisible empty shells pile up.
+
+## Agent bridge
+
+- `vite-plugin-canvas-agent.ts` (repo root, registered in `vite.config.ts`)
+  serves the loopback bridge on dev AND preview servers:
+  `POST /__canvas-agent/op`, `GET /inbox?after=`, `POST /result`,
+  `GET /result?seq=` (long-poll), `GET /ping`. In-memory queues per server.
+- `src/agent-bridge/` — `protocol.ts` (op types: `push`/`remove`/`list`, plus
+  html/fragment/css → doctype-doc normalization), `apply.ts` (`applyAgentOp`
+  on the editor store — upsert creates a design-mode frame on the active page
+  or replaces the doc when `id`/`documentId` matches), `client.ts`
+  (`startAgentBridge` poll loop).
+- `CanvasSurface` starts the poller in dev, or with `?agent=1` on preview.
+- Agent-facing CLI: `plugins/canvas-design/scripts/push-design.mjs`
+  (`--html/--css/--fragment/--id/--list/--remove/--stdin`). Design pushes are
+  refused during an active brainstorm session (wireframe-only guard).
 
 ## Comments feature
 

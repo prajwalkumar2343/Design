@@ -36,8 +36,10 @@ async function drag(page: Page, locator: Locator, dx: number, dy: number) {
  * selection's box already satisfies a bare visibility assertion.
  */
 async function waitForSelectionOf(page: Page, fixtureId: string) {
+  // Element ids are frame-scoped (frm~<frameId>~id:<fixture>) — match on the
+  // suffix so the test doesn't couple to a specific frame's scope prefix.
   await expect(
-    page.locator(`[data-testid="node-selection-outline-id:${fixtureId}"]`),
+    page.locator(`[data-testid$="id:${fixtureId}"]`),
   ).toBeVisible();
 }
 
@@ -165,6 +167,61 @@ test.describe("iframe node overlays", () => {
     await expect.poll(() => heading.evaluate((element) => element.getBoundingClientRect().width)).toBeLessThan(beforeWidth);
     const inlineWidth = await heading.evaluate((element) => element.style.width);
     expect(Number.parseFloat(inlineWidth)).toBeGreaterThanOrEqual(24);
+  });
+
+  test("keeps the selection box glued to a layout-anchored element mid-resize", async ({ page }) => {
+    const { frame, preview } = await openDesktop(page);
+    const pill = preview.locator("#resize-constrained-fixture");
+    await preview.locator("body").evaluate((body) => {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = [
+        "position: fixed",
+        "left: 80px",
+        "top: 480px",
+        "width: 420px",
+        "height: 260px",
+        "display: flex",
+        "align-items: center",
+        "justify-content: center",
+      ].join(";");
+      const fixture = document.createElement("div");
+      fixture.id = "resize-constrained-fixture";
+      fixture.style.cssText = "width: 280px; height: 64px; border-radius: 32px; background: rgb(190, 194, 204);";
+      wrap.appendChild(fixture);
+      body.appendChild(wrap);
+    });
+    await pill.click();
+    await waitForSelectionOf(page, "resize-constrained-fixture");
+
+    const handle = page.getByTestId("node-resize-handle-s");
+    const handleBox = await handle.boundingBox();
+    const iframeBox = await frame.locator("iframe").boundingBox();
+    if (!handleBox || !iframeBox) throw new Error("The constrained resize fixture is unavailable");
+    const zoom = await readZoom(page);
+    const start = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 };
+
+    // A flex-centered child grows about its middle, not its top edge, so the
+    // predicted box drifts off the painted element mid-drag unless the overlay
+    // tracks the measured rect the bridge acks back.
+    const screenEdgeGap = async () => {
+      const [box, el] = await Promise.all([
+        page.getByTestId("node-selection-box").boundingBox(),
+        pill.evaluate((element) => element.getBoundingClientRect().toJSON()),
+      ]);
+      if (!box) throw new Error("The selection box is unavailable");
+      const topGap = Math.abs(box.y - (iframeBox.y + el.top * zoom));
+      const bottomGap = Math.abs(box.y + box.height - (iframeBox.y + el.bottom * zoom));
+      return Math.max(topGap, bottomGap);
+    };
+
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 4; step += 1) {
+      await page.mouse.move(start.x, start.y + 18 * step * zoom, { steps: 2 });
+      await expect.poll(screenEdgeGap).toBeLessThan(4);
+    }
+    await page.mouse.up();
+    await expect.poll(screenEdgeGap).toBeLessThan(4);
   });
 
   test("locks a constrained content-box image resize to its aspect ratio while lifting accidental CSS constraints", async ({ page }) => {

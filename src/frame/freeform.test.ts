@@ -114,8 +114,12 @@ describe("buildFreeformDocument", () => {
 });
 
 describe("bridgeNodeIdForElement", () => {
-  it("matches the bridge runtime's data: id derivation", () => {
-    expect(bridgeNodeIdForElement("shape-abc")).toBe("data:shape-abc");
-    expect(bridgeNodeIdForElement("a b/c")).toBe(`data:${encodeURIComponent("a b/c")}`);
+  it("matches the bridge runtime's scoped data: id derivation", () => {
+    expect(bridgeNodeIdForElement("frame-1", "shape-abc")).toBe("frm~frame-1~data:shape-abc");
+    expect(bridgeNodeIdForElement("frame-1", "a b/c")).toBe(`frm~frame-1~data:${encodeURIComponent("a b/c")}`);
+    // The scope keeps identical local ids in different frames distinct.
+    expect(bridgeNodeIdForElement("frame-2", "shape-abc")).not.toBe(
+      bridgeNodeIdForElement("frame-1", "shape-abc"),
+    );
   });
 });

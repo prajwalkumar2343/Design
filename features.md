@@ -113,6 +113,7 @@ Every feature in the project, one line each. Grouped by area.
 - **.wirecanvas.json project files** — versioned whole-project export/import; untrusted-input validation, atomic replace, full undo (`persistence/wirecanvas.ts`, `persistence/adapter.ts`).
 - **Figma .fig export** — writes a real Figma binary (kiwi schema + zstd) verified against Figma's own format (`persistence/figma.ts`).
 - **Export Code** — downloads clean working code (bridge stripped): single page → `.html`, multi-page → `.zip` with `index.html`, `tokens.json`, `tokens.css` (`export/`).
+- **Export React** — downloads a runnable Vite + React + TS project zip: per-page `.tsx` + scoped `.css` (`dc-<slug>` classes), hash-routed `App.tsx`, tokens + bundled font faces, `ScriptNode`/`useDocumentAttributes` helpers, manifest + fidelity notes (`export/react/`).
 - **Dependency-free zip writer** — STORE-only archive builder (`export/zip.ts`).
 
 ## Agent & AI

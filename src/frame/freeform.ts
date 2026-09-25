@@ -50,9 +50,14 @@ function num(value: number): string {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
 }
 
-/** Stable editor id the bridge runtime derives from `data-design-element-id`. */
-export function bridgeNodeIdForElement(elementId: string): string {
-  return `data:${encodeURIComponent(elementId)}`;
+/**
+ * Stable editor id the bridge runtime derives from `data-design-element-id`.
+ * Ids are frame-scoped (`frm~<frameId>~data:<encoded>`) because the attribute
+ * is only unique within one frame's document — two frames minting the same
+ * `data:` id would collide in the flat editor node map.
+ */
+export function bridgeNodeIdForElement(frameId: string, elementId: string): string {
+  return `frm~${frameId}~data:${encodeURIComponent(elementId)}`;
 }
 
 interface CreatedElementBase {

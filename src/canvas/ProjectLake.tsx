@@ -2,24 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownWideNarrow,
   Check,
+  Copy,
+  FileText,
   GalleryHorizontal,
   Globe,
   LayoutDashboard,
+  LayoutGrid,
   Layers3,
+  List,
   Megaphone,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Search,
   ShoppingBag,
   Smartphone,
   Sparkles,
-  Search,
   Trash2,
-  Copy,
-  MoreHorizontal,
-  FileText,
   X,
-  Plus,
-  LayoutGrid,
-  List,
-  Pencil,
 } from "lucide-react";
 import {
   CANVAS_CATEGORIES,
@@ -387,7 +387,6 @@ interface ProjectLakeProps {
   onDelete: (id: string) => void;
   onDuplicate: (id: string) => void;
   onRename?: (id: string, name: string) => void;
-  onStartBlank?: () => void;
   showAsOverlay?: boolean;
   onCloseLake?: () => void;
 }
@@ -410,7 +409,6 @@ function useFilteredProjects(
     } else if (sort === "created") {
       list = [...list].sort((a, b) => b.createdAt - a.createdAt);
     }
-    // "recent" keeps the store order (updatedAt desc)
     return list;
   }, [projects, kindFilter, query, sort]);
 }
@@ -437,7 +435,6 @@ export function ProjectLake({
   const [menuUp, setMenuUp] = useState(false);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
-  const [newOpen, setNewOpen] = useState(false);
   const [showBlankChooser, setShowBlankChooser] = useState(false);
   // Tracks the live rename session so Enter→unmount-blur can never
   // double-commit and Escape reliably cancels instead of committing.
@@ -446,7 +443,6 @@ export function ProjectLake({
   const menuRef = useRef<HTMLDivElement>(null);
   const menuTriggerRef = useRef<HTMLElement | null>(null);
   const sortWrapRef = useRef<HTMLDivElement>(null);
-  const newWrapRef = useRef<HTMLDivElement>(null);
 
   const isMac =
     typeof navigator !== "undefined" && /mac/i.test(navigator.platform ?? navigator.userAgent ?? "");
@@ -460,20 +456,19 @@ export function ProjectLake({
 
   // Outside pointer-down closes whichever popover is open.
   useEffect(() => {
-    if (menuId === null && !sortOpen && !newOpen) return;
+    if (menuId === null && !sortOpen) return;
     const onPointerDown = (e: PointerEvent) => {
       if (!(e.target instanceof Element)) return;
       if (e.target.closest("[data-lake-pop]") !== null) return;
       closeMenu();
       setSortOpen(false);
-      setNewOpen(false);
     };
     window.addEventListener("pointerdown", onPointerDown);
     return () => window.removeEventListener("pointerdown", onPointerDown);
-  }, [menuId, sortOpen, newOpen]);
+  }, [menuId, sortOpen]);
 
-  // Global Escape chain: menu/sort/new > overlay close. The chooser and the
-  // rename input own their own Escape handling.
+  // Global Escape chain: card menu / sort popover > overlay close. The
+  // chooser and the rename input own their own Escape handling.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || showBlankChooser) return;
@@ -485,16 +480,12 @@ export function ProjectLake({
         setSortOpen(false);
         return;
       }
-      if (newOpen) {
-        setNewOpen(false);
-        return;
-      }
       if (renameId !== null) return;
       if (showAsOverlay) onCloseLake?.();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menuId, sortOpen, newOpen, renameId, showBlankChooser, showAsOverlay, onCloseLake]);
+  }, [menuId, sortOpen, renameId, showBlankChooser, showAsOverlay, onCloseLake]);
 
   // ⌘K / Ctrl+K and "/" focus search, matching the hint chip on the field.
   useEffect(() => {
@@ -529,9 +520,7 @@ export function ProjectLake({
 
   const filtered = useFilteredProjects(projects, kindFilter, query, sort);
   const hasProjects = projects.length > 0;
-  // Show every matching file. An arbitrary cut made files look missing /
-  // unopenable — the store caps at 100 projects, so no slice here.
-  const recent = filtered;
+  const sortLabel = LAKE_SORTS.find((s) => s.id === sort)?.label ?? "Last modified";
 
   const startRename = (id: string, currentName: string) => {
     renameSessionRef.current = { id, original: currentName, done: false };
@@ -597,22 +586,20 @@ export function ProjectLake({
     onCreate(kind);
   };
 
-  // Templates visible on home — hide internal blank variants, keep single blank card for chooser
+  // Bundled entries — hide internal blank variants, keep a single blank card
+  // that opens the canvas chooser.
   const templateKinds = useMemo(
     () => PROJECT_KINDS.filter((k) => k.id !== "mobile-blank"),
     [],
   );
 
-  const sortLabel = LAKE_SORTS.find((s) => s.id === sort)?.label ?? "Last modified";
-
   return (
     <section
       className={`project-lake figma-lake${showAsOverlay ? " is-overlay" : ""}`}
       data-testid="project-lake"
-      aria-label="Project lake"
+      aria-label="Library"
       data-canvas-control
     >
-      {/* Figma-like top bar */}
       <header className="figma-lake-topbar">
         <div className="figma-lake-topbar-left">
           <div className="figma-lake-logo" aria-hidden="true">
@@ -620,7 +607,7 @@ export function ProjectLake({
             <span />
           </div>
           <div className="figma-lake-heading">
-            <h2>{kindFilter === "all" ? "All files" : PROJECT_KINDS.find((kind) => kind.id === kindFilter)?.label ?? "Files"}</h2>
+            <h2>Library</h2>
           </div>
         </div>
 
@@ -656,10 +643,7 @@ export function ProjectLake({
           <div className="figma-sort-wrap" data-lake-pop ref={sortWrapRef}>
             <button
               className={`figma-sort-button${sortOpen ? " is-active" : ""}`}
-              onClick={() => {
-                setSortOpen((v) => !v);
-                setNewOpen(false);
-              }}
+              onClick={() => setSortOpen((v) => !v)}
               type="button"
               aria-label={`Sort files, currently ${sortLabel}`}
               aria-expanded={sortOpen}
@@ -713,55 +697,6 @@ export function ProjectLake({
             </button>
           </div>
 
-          <div className="figma-new-wrap" data-lake-pop ref={newWrapRef}>
-            <button
-              className="figma-new-file"
-              onClick={() => {
-                setNewOpen((v) => !v);
-                setSortOpen(false);
-              }}
-              type="button"
-              aria-expanded={newOpen}
-              aria-haspopup="menu"
-              data-testid="new-file-button"
-            >
-              <Plus size={14} /> New
-            </button>
-            {newOpen ? (
-              <div className="figma-more-menu figma-new-menu" role="menu" aria-label="Create a file">
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setNewOpen(false);
-                    setShowBlankChooser(true);
-                  }}
-                  type="button"
-                >
-                  <Sparkles size={13} /> Blank canvas…
-                </button>
-                <div className="figma-more-divider" />
-                {templateKinds
-                  .filter((k) => k.id !== "blank")
-                  .map((kind) => {
-                    const Icon = KIND_ICONS[kind.id];
-                    return (
-                      <button
-                        key={kind.id}
-                        role="menuitem"
-                        onClick={() => {
-                          setNewOpen(false);
-                          onCreate(kind.id);
-                        }}
-                        type="button"
-                      >
-                        <Icon size={13} /> {kind.label}
-                      </button>
-                    );
-                  })}
-              </div>
-            ) : null}
-          </div>
-
           {showAsOverlay && onCloseLake ? (
             <button className="figma-close" onClick={onCloseLake} type="button" aria-label="Back to canvas">
               <X size={16} /> Close
@@ -770,9 +705,7 @@ export function ProjectLake({
         </div>
       </header>
 
-      {/* Figma-like tabs / filters */}
       <div className="figma-tabs" role="tablist" aria-label="Filter by kind">
-        <span className="lake-nav-heading">Your files</span>
         <button
           role="tab"
           aria-selected={kindFilter === "all"}
@@ -802,220 +735,11 @@ export function ProjectLake({
       </div>
 
       <div className="figma-lake-body">
-        {/* Recents — Figma file grid */}
-        {hasProjects ? (
-          <div className="figma-section">
-            <div className="figma-section-head">
-              <h3>{sort === "name" ? "A–Z" : sort === "created" ? "Newest" : "Recent"}</h3>
-              <span>{filtered.length} {filtered.length === 1 ? "file" : "files"}</span>
-            </div>
-
-            {recent.length === 0 ? (
-              <div className="figma-empty">
-                <FileText size={18} />
-                <strong>No matching files</strong>
-                <span>Try another kind or clear search.</span>
-                <button
-                  className="figma-empty-clear"
-                  onClick={() => {
-                    setQuery("");
-                    setKindFilter("all");
-                  }}
-                  type="button"
-                >
-                  Clear search &amp; filters
-                </button>
-              </div>
-            ) : (
-              <div className={`figma-file-grid${view === "list" ? " is-list" : ""}`}>
-                {recent.map((p) => {
-                  const kindDef = PROJECT_KINDS.find((k) => k.id === p.kind) ?? PROJECT_KINDS[0]!;
-                  const Icon = KIND_ICONS[p.kind];
-                  const isActive = p.id === activeProjectId;
-                  const isMenuOpen = menuId === p.id;
-                  return (
-                    <article
-                      key={p.id}
-                      className={`figma-file-card${isActive ? " is-active" : ""}${isMenuOpen ? " is-menu-open" : ""}${view === "list" ? " is-list-row" : ""}`}
-                      data-testid="project-card"
-                      data-project-id={p.id}
-                      aria-current={isActive ? "true" : undefined}
-                    >
-                      <button className="figma-file-thumb" onClick={() => onOpen(p.id)} type="button" aria-label={`Open ${p.name}`}>
-                        <LiveThumbnail
-                          projectId={p.id}
-                          updatedAt={p.updatedAt}
-                          fallback={<KindThumbnail kind={p.kind} accent={kindDef.accent} />}
-                        />
-                        <span className="figma-file-open">Open</span>
-                        {isActive ? <span className="figma-file-active-dot" title="Active file" /> : null}
-                      </button>
-
-                      <div className="figma-file-footer">
-                        <div className="figma-file-meta">
-                          <span className="figma-file-icon" style={{ background: `${kindDef.accent}14`, color: kindDef.accent }}>
-                            <Icon size={13} />
-                          </span>
-                          <div className="figma-file-text">
-                            {renameId === p.id ? (
-                              <div className="figma-rename">
-                                <input
-                                  autoFocus
-                                  value={renameValue}
-                                  maxLength={80}
-                                  onChange={(e) => setRenameValue(e.target.value)}
-                                  onFocus={(e) => e.currentTarget.select()}
-                                  onKeyDown={(e) => {
-                                    e.stopPropagation();
-                                    if (e.key === "Enter") commitRename(p.id);
-                                    if (e.key === "Escape") cancelRename(p.id);
-                                  }}
-                                  onBlur={() => commitRename(p.id)}
-                                  placeholder="File name"
-                                  aria-label="Rename file"
-                                />
-                              </div>
-                            ) : (
-                              <button
-                                className="figma-file-name"
-                                onClick={() => onOpen(p.id)}
-                                onDoubleClick={() => onRename && startRename(p.id, p.name)}
-                                type="button"
-                                title={onRename ? `${p.name} — double-click to rename` : p.name}
-                              >
-                                {p.name}
-                              </button>
-                            )}
-                            <span className="figma-file-sub" title={`${kindDef.label} · ${p.frameCount} ${p.frameCount === 1 ? "frame" : "frames"}`}>
-                              {formatRelativeTime(p.updatedAt)}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="figma-file-actions">
-                          <div className="figma-more-wrap" data-lake-pop>
-                            <button
-                              className={`figma-icon-btn${isMenuOpen ? " is-active" : ""}`}
-                              onClick={(e) => openCardMenu(p.id, e.currentTarget)}
-                              type="button"
-                              aria-label="More actions"
-                              aria-expanded={isMenuOpen}
-                              aria-haspopup="menu"
-                              title="More"
-                            >
-                              <MoreHorizontal size={14} />
-                            </button>
-                            {isMenuOpen ? (
-                              <div
-                                className={`figma-more-menu${menuUp ? " is-up" : ""}`}
-                                role="menu"
-                                ref={menuRef}
-                                onKeyDown={onMenuKeyDown}
-                              >
-                                {confirmDeleteId === p.id ? (
-                                  <div className="figma-more-confirm" role="alertdialog" aria-label={`Delete ${p.name}`}>
-                                    <strong>Delete “{p.name}”?</strong>
-                                    <span>This can’t be undone.</span>
-                                    <div className="figma-more-confirm-actions">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          setConfirmDeleteId(null);
-                                          menuRef.current?.querySelector<HTMLElement>("button")?.focus();
-                                        }}
-                                      >
-                                        Cancel
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="is-danger"
-                                        data-testid="confirm-delete-project"
-                                        onClick={() => {
-                                          closeMenu();
-                                          onDelete(p.id);
-                                        }}
-                                      >
-                                        Delete
-                                      </button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <button
-                                      role="menuitem"
-                                      onClick={() => startRename(p.id, p.name)}
-                                      type="button"
-                                    >
-                                      <Pencil size={13} /> Rename
-                                    </button>
-                                    <button role="menuitem" onClick={() => { onDuplicate(p.id); closeMenu(); }} type="button">
-                                      <Copy size={13} /> Duplicate
-                                    </button>
-                                    <div className="figma-more-divider" />
-                                    <button
-                                      role="menuitem"
-                                      className="is-danger"
-                                      onClick={() => setConfirmDeleteId(p.id)}
-                                      type="button"
-                                    >
-                                      <Trash2 size={13} /> Delete…
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="figma-onboarding">
-            <div className="figma-onboarding-art" aria-hidden="true">
-              <div className="figma-onboarding-grid">
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="figma-onboarding-cursor">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                  <path d="M5 3l11 8-5 1-2 5-4-14z" fill="#1A1A1A" stroke="white" strokeWidth="1.2" />
-                </svg>
-              </div>
-            </div>
-            <h3>No files yet</h3>
-            <p>Create your first file to get started.</p>
-            <div className="figma-onboarding-actions">
-              <button data-testid="start-brainstorming" onClick={() => setShowBlankChooser(true)} type="button" className="figma-primary">
-                <Plus size={14} /> New design file
-              </button>
-              <span>or choose a template below</span>
-            </div>
-          </div>
-        )}
-
-        {/* Hidden legacy hook for tests/e2e when files exist */}
-        {hasProjects ? (
-          <div style={{ display: "none" }} aria-hidden="true">
-            <button data-testid="start-brainstorming" onClick={() => onCreate("blank")} type="button">
-              Start brainstorming
-            </button>
-          </div>
-        ) : null}
-
-        {/* Templates — Figma community / template gallery */}
+        {/* Bundled — starting points shipped with the app */}
         <div className="figma-section">
           <div className="figma-section-head">
-            <h3>Templates</h3>
+            <h3>Bundled</h3>
+            <span>{templateKinds.length} {templateKinds.length === 1 ? "note" : "notes"}</span>
           </div>
 
           <div className="figma-template-grid">
@@ -1053,6 +777,199 @@ export function ProjectLake({
           </div>
         </div>
 
+        {/* Saved — notes the user has saved locally */}
+        <div className="figma-section">
+          <div className="figma-section-head">
+            <h3>{sort === "name" ? "A–Z" : sort === "created" ? "Newest" : "Saved"}</h3>
+            <span>{filtered.length} {filtered.length === 1 ? "note" : "notes"}</span>
+          </div>
+
+          {hasProjects && filtered.length === 0 ? (
+            <div className="figma-empty">
+              <FileText size={18} />
+              <strong>No matching notes</strong>
+              <span>Try another kind or clear search.</span>
+              <button
+                className="figma-empty-clear"
+                onClick={() => {
+                  setQuery("");
+                  setKindFilter("all");
+                }}
+                type="button"
+              >
+                Clear search &amp; filters
+              </button>
+            </div>
+          ) : hasProjects ? (
+            <div className={`figma-file-grid${view === "list" ? " is-list" : ""}`}>
+              {filtered.map((p) => {
+                const kindDef = PROJECT_KINDS.find((k) => k.id === p.kind) ?? PROJECT_KINDS[0]!;
+                const Icon = KIND_ICONS[p.kind];
+                const isActive = p.id === activeProjectId;
+                const isMenuOpen = menuId === p.id;
+                return (
+                  <article
+                    key={p.id}
+                    className={`figma-file-card${isActive ? " is-active" : ""}${isMenuOpen ? " is-menu-open" : ""}${view === "list" ? " is-list-row" : ""}`}
+                    data-testid="project-card"
+                    data-project-id={p.id}
+                    aria-current={isActive ? "true" : undefined}
+                  >
+                    <button className="figma-file-thumb" onClick={() => onOpen(p.id)} type="button" aria-label={`Open ${p.name}`}>
+                      <LiveThumbnail
+                        projectId={p.id}
+                        updatedAt={p.updatedAt}
+                        fallback={<KindThumbnail kind={p.kind} accent={kindDef.accent} />}
+                      />
+                      <span className="figma-file-open">Open</span>
+                      {isActive ? <span className="figma-file-active-dot" title="Active file" /> : null}
+                    </button>
+
+                    <div className="figma-file-footer">
+                      <div className="figma-file-meta">
+                        <span className="figma-file-icon" style={{ background: `${kindDef.accent}14`, color: kindDef.accent }}>
+                          <Icon size={13} />
+                        </span>
+                        <div className="figma-file-text">
+                          {renameId === p.id ? (
+                            <div className="figma-rename">
+                              <input
+                                autoFocus
+                                value={renameValue}
+                                maxLength={80}
+                                onChange={(e) => setRenameValue(e.target.value)}
+                                onFocus={(e) => e.currentTarget.select()}
+                                onKeyDown={(e) => {
+                                  e.stopPropagation();
+                                  if (e.key === "Enter") commitRename(p.id);
+                                  if (e.key === "Escape") cancelRename(p.id);
+                                }}
+                                onBlur={() => commitRename(p.id)}
+                                placeholder="File name"
+                                aria-label="Rename file"
+                              />
+                            </div>
+                          ) : (
+                            <button
+                              className="figma-file-name"
+                              onClick={() => onOpen(p.id)}
+                              onDoubleClick={() => onRename && startRename(p.id, p.name)}
+                              type="button"
+                              title={onRename ? `${p.name} — double-click to rename` : p.name}
+                            >
+                              {p.name}
+                            </button>
+                          )}
+                          <span className="figma-file-sub" title={`${kindDef.label} · ${p.frameCount} ${p.frameCount === 1 ? "frame" : "frames"}`}>
+                            {formatRelativeTime(p.updatedAt)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="figma-file-actions">
+                        <div className="figma-more-wrap" data-lake-pop>
+                          <button
+                            className={`figma-icon-btn${isMenuOpen ? " is-active" : ""}`}
+                            onClick={(e) => openCardMenu(p.id, e.currentTarget)}
+                            type="button"
+                            aria-label="More actions"
+                            aria-expanded={isMenuOpen}
+                            aria-haspopup="menu"
+                            title="More"
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                          {isMenuOpen ? (
+                            <div
+                              className={`figma-more-menu${menuUp ? " is-up" : ""}`}
+                              role="menu"
+                              ref={menuRef}
+                              onKeyDown={onMenuKeyDown}
+                            >
+                              {confirmDeleteId === p.id ? (
+                                <div className="figma-more-confirm" role="alertdialog" aria-label={`Delete ${p.name}`}>
+                                  <strong>Delete “{p.name}”?</strong>
+                                  <span>This can’t be undone.</span>
+                                  <div className="figma-more-confirm-actions">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setConfirmDeleteId(null);
+                                        menuRef.current?.querySelector<HTMLElement>("button")?.focus();
+                                      }}
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="is-danger"
+                                      data-testid="confirm-delete-project"
+                                      onClick={() => {
+                                        closeMenu();
+                                        onDelete(p.id);
+                                      }}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    role="menuitem"
+                                    onClick={() => startRename(p.id, p.name)}
+                                    type="button"
+                                  >
+                                    <Pencil size={13} /> Rename
+                                  </button>
+                                  <button role="menuitem" onClick={() => { onDuplicate(p.id); closeMenu(); }} type="button">
+                                    <Copy size={13} /> Duplicate
+                                  </button>
+                                  <div className="figma-more-divider" />
+                                  <button
+                                    role="menuitem"
+                                    className="is-danger"
+                                    onClick={() => setConfirmDeleteId(p.id)}
+                                    type="button"
+                                  >
+                                    <Trash2 size={13} /> Delete…
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="figma-empty">
+              <FileText size={18} />
+              <strong>No saved notes yet</strong>
+              <span>Pick a bundled note above, or start from a blank canvas.</span>
+              <button
+                data-testid="start-brainstorming"
+                onClick={() => setShowBlankChooser(true)}
+                type="button"
+                className="figma-primary"
+              >
+                <Plus size={14} /> New blank note
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Hidden legacy hook for tests/e2e when files exist */}
+        {hasProjects ? (
+          <div style={{ display: "none" }} aria-hidden="true">
+            <button data-testid="start-brainstorming" onClick={() => onCreate("blank")} type="button">
+              Start brainstorming
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <BlankCanvasChooser open={showBlankChooser} onClose={() => setShowBlankChooser(false)} onChoose={handleBlankChoose} />

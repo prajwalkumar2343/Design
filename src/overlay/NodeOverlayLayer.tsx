@@ -14,6 +14,12 @@ export interface OverlayNodeTarget {
   bounds: Rect;
   locked?: boolean;
   rotation?: number;
+  /**
+   * The element's unrotated rect for a rotated target (`bounds` is always the
+   * measured post-transform AABB). Painted with `rotation` so the chrome hugs
+   * the real box instead of rotating the AABB a second time.
+   */
+  canonicalBounds?: Rect;
 }
 
 export type NodeGestureKind = "move" | "resize" | "rotate";
@@ -49,9 +55,14 @@ function worldBox(rect: Rect): CSSProperties {
 }
 
 function targetBox(target: OverlayNodeTarget): CSSProperties {
+  // A rotated element's `bounds` is its post-transform AABB — painting it
+  // with rotate() spins the AABB a second time. When the canonical rect is
+  // known, rotate that; otherwise show the plain AABB (still truthful, just
+  // looser).
+  const rect = target.rotation ? (target.canonicalBounds ?? target.bounds) : target.bounds;
   return {
-    ...worldBox(target.bounds),
-    ...(target.rotation
+    ...worldBox(rect),
+    ...(target.rotation && target.canonicalBounds
       ? {
           transform: `rotate(${target.rotation}deg)`,
           transformOrigin: "center",

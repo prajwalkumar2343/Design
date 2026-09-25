@@ -257,6 +257,52 @@ describe("overlay style commands", () => {
     expect(change.rotation).toBe(30);
   });
 
+  it("resizes the canonical rect of a rotated element, not its measured AABB", () => {
+    // A 100x40 rect rotated 45deg has a ~99x99 AABB. Resizing the AABB writes
+    // inflated width/height; the canonical path recovers the element's real
+    // 100x40 box (AABB center + computed size) and resizes that.
+    const aabb = { x: 0, y: 0, width: 99, height: 99 };
+    const rotated = snapshot(
+      "div",
+      aabb,
+      { transform: "rotate(45deg)", width: "100px", height: "40px" },
+      { width: "100px", height: "40px" },
+    );
+    const change = buildResizeChanges(
+      [rotated],
+      rotated.target.bounds,
+      "e",
+      { x: 20, y: 0 },
+    )[0];
+
+    expect(change.target.bounds).toEqual({ x: -0.5, y: 29.5, width: 100, height: 40 });
+    // The pointer delta is re-expressed in the element's rotated axes:
+    // {20, 0} rotated -45deg contributes ~14.14 to the width edge.
+    expect(change.nextBounds.width).toBeCloseTo(114.14, 1);
+    expect(change.nextBounds.height).toBeCloseTo(40, 1);
+    expect(Number.parseFloat(change.next.width!)).toBeCloseTo(114.14, 1);
+    expect(change.next.height).toBeUndefined();
+    expect(change.rotation).toBe(45);
+    expect(change.canonical).toBe(true);
+  });
+
+  it("rotates the canonical rect so the overlay box hugs the element", () => {
+    const rotated = snapshot(
+      "div",
+      { x: 0, y: 0, width: 99, height: 99 },
+      { transform: "rotate(45deg)", width: "100px", height: "40px" },
+      { width: "100px", height: "40px" },
+    );
+    const change = buildRotationChanges([rotated], 15)[0];
+
+    // nextBounds stays the unrotated rect — painting it with the new total
+    // rotation draws the true element box, not a re-rotated AABB.
+    expect(change.nextBounds).toEqual({ x: -0.5, y: 29.5, width: 100, height: 40 });
+    expect(change.rotation).toBe(60);
+    expect(change.canonical).toBe(true);
+    expect(change.next.transform).toContain("rotate(60deg)");
+  });
+
   it("rotates a multi-node selection rigidly around the group center", () => {
     const left = snapshot("div", { x: 0, y: 0, width: 100, height: 50 });
     const right = snapshot("div", { x: 200, y: 0, width: 100, height: 50 });

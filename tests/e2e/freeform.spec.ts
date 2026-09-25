@@ -98,9 +98,13 @@ test.describe("drawing outside frames", () => {
     await page.keyboard.press("r");
 
     // With a creation tool active every live frame exposes a creation layer,
-    // not only the selected one.
+    // not only the selected one. Pin the frame by id: drawing into it selects
+    // it, and a `:not([data-selected])` locator would re-resolve mid-assertion.
     const unselected = page.locator(`${frameSelector}:not([data-selected="true"])`).first();
-    const creationLayer = unselected.getByTestId("frame-creation-layer");
+    const frameId = await unselected.getAttribute("data-frame-id");
+    if (!frameId) throw new Error("The unselected frame has no id");
+    const target = page.locator(`${frameSelector}[data-frame-id="${frameId}"]`);
+    const creationLayer = target.getByTestId("frame-creation-layer");
     await expect(creationLayer).toBeAttached();
     const box = await creationLayer.boundingBox();
     if (!box) throw new Error("The unselected frame's creation layer is unavailable");
@@ -108,7 +112,7 @@ test.describe("drawing outside frames", () => {
     const start = { x: box.x + box.width * 0.25, y: box.y + box.height * 0.25 };
     await dragOnCanvas(page, start, 120, 80);
 
-    const doc = unselected.locator("iframe").contentFrame();
+    const doc = target.locator("iframe").contentFrame();
     await expect
       .poll(() => doc.locator('[data-design-tool-kind="rectangle"]').count())
       .toBe(1);
@@ -143,7 +147,17 @@ test.describe("drawing outside frames", () => {
     await expect(page.locator(surfaceSelector)).toBeVisible();
     await expect(page.locator(frameSelector)).toHaveCount(0);
 
+    // The brief frame materializes on a ~30ms timer after project creation
+    // and the camera re-fits to it — wait for it before probing for a
+    // background point, or the drag can land on the panel mid-layout.
+    await expect(page.locator("[data-brief-frame-id]")).toBeVisible();
+
+    // A brief field can hold focus on a fresh project — blur it so the "r"
+    // shortcut reaches the canvas instead of typing into the field.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press("r");
+    await expect(page.getByTestId("creation-mode-status")).toContainText("Rectangle mode");
+
     const start = await findBackgroundPoint(page);
     await dragOnCanvas(page, start, 160, 110);
 
@@ -152,6 +166,142 @@ test.describe("drawing outside frames", () => {
     await expect
       .poll(() => doc.locator('[data-design-tool-kind="rectangle"]').count())
       .toBe(1);
+  });
+
+  test("keeps a dragged shape visible after it leaves the frame's original bounds", async ({ page }) => {
+    await openDemo(page);
+    await page.keyboard.press("r");
+    const start = await findBackgroundPoint(page);
+    await dragOnCanvas(page, start, 150, 100);
+
+    const freeform = page.locator(freeformSelector);
+    await expect(freeform).toHaveCount(1);
+    await expect(freeform).toHaveAttribute("data-bridge-status", "ready");
+    const doc = freeform.locator("iframe").contentFrame();
+    const shape = doc.locator('[data-design-tool-kind="rectangle"]');
+    await expect(shape).toHaveCount(1);
+
+    const frameBoxBefore = await freeform.boundingBox();
+    if (!frameBoxBefore) throw new Error("The freeform frame is unavailable");
+
+    // Select the shape node, then drag it well past the frame's right edge —
+    // the iframe viewport must not clip it, so the frame has to follow.
+    const shapeBox = await shape.boundingBox();
+    if (!shapeBox) throw new Error("The drawn shape is unavailable");
+    await page.mouse.click(shapeBox.x + shapeBox.width / 2, shapeBox.y + shapeBox.height / 2);
+    await expect(page.getByTestId("node-selection-box")).toBeVisible();
+
+    const selectionBox = page.getByTestId("node-selection-box");
+    const selectionBounds = await selectionBox.boundingBox();
+    if (!selectionBounds) throw new Error("The node selection box is unavailable");
+    const dragStart = { x: selectionBounds.x + selectionBounds.width / 2, y: selectionBounds.y + selectionBounds.height / 2 };
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart.x + 320, dragStart.y + 40, { steps: 8 });
+    await page.mouse.up();
+
+    const zoom = await page.evaluate(() => {
+      const world = document.querySelector('[data-testid="canvas-world"]');
+      return new DOMMatrixReadOnly(getComputedStyle(world!).transform).a;
+    });
+
+    // The shape's doc-space rect must still land inside the frame viewport —
+    // before the fix it translated beyond the iframe and disappeared.
+    await expect
+      .poll(async () => {
+        const [shapeRect, iframeBox] = await Promise.all([
+          shape.evaluate((element) => element.getBoundingClientRect().toJSON()),
+          freeform.locator("iframe").boundingBox(),
+        ]);
+        if (!iframeBox) return -1;
+        const frameWidth = iframeBox.width / zoom;
+        return shapeRect.x >= -1 && shapeRect.x + shapeRect.width <= frameWidth + 1 ? 1 : -1;
+      })
+      .toBe(1);
+
+    // Undo restores both the shape position and the frame's original rect.
+    await page.keyboard.press("Control+z");
+    await expect
+      .poll(async () => (await freeform.boundingBox())?.x ?? 0)
+      .toBeCloseTo(frameBoxBefore.x, 0);
+  });
+
+  test("keeps the frame hugging a rotated shape when it moves", async ({ page }) => {
+    await openDemo(page);
+    await page.keyboard.press("r");
+    const start = await findBackgroundPoint(page);
+    await dragOnCanvas(page, start, 120, 70);
+
+    const freeform = page.locator(freeformSelector);
+    await expect(freeform).toHaveCount(1);
+    await expect(freeform).toHaveAttribute("data-bridge-status", "ready");
+    const doc = freeform.locator("iframe").contentFrame();
+    const shape = doc.locator('[data-design-tool-kind="rectangle"]');
+    await expect(shape).toHaveCount(1);
+
+    const shapeBox = await shape.boundingBox();
+    if (!shapeBox) throw new Error("The drawn shape is unavailable");
+    await page.mouse.click(shapeBox.x + shapeBox.width / 2, shapeBox.y + shapeBox.height / 2);
+    const rotationHandle = page.getByTestId("node-rotation-handle");
+    await expect(rotationHandle).toBeVisible();
+
+    // Rotate ~45°: the handle starts straight above the selection center, so
+    // dragging it to the -45° point on the same circle rotates the shape.
+    const handleBox = await rotationHandle.boundingBox();
+    if (!handleBox) throw new Error("The rotation handle is unavailable");
+    const center = { x: shapeBox.x + shapeBox.width / 2, y: shapeBox.y + shapeBox.height / 2 };
+    const handleStart = { x: handleBox.x + handleBox.width / 2, y: handleBox.y + handleBox.height / 2 };
+    const radius = center.y - handleStart.y;
+    const handleEnd = {
+      x: center.x + radius * Math.SQRT1_2,
+      y: center.y - radius * Math.SQRT1_2,
+    };
+    await page.mouse.move(handleStart.x, handleStart.y);
+    await page.mouse.down();
+    await page.mouse.move(handleEnd.x, handleEnd.y, { steps: 8 });
+    await page.mouse.up();
+
+    // Then nudge the shape — the regression double-rotated the already
+    // axis-aligned bounds, inflating the frame far past content + pad.
+    const selectionBox = page.getByTestId("node-selection-box");
+    const selectionBounds = await selectionBox.boundingBox();
+    if (!selectionBounds) throw new Error("The node selection box is unavailable");
+    const dragStart = { x: selectionBounds.x + selectionBounds.width / 2, y: selectionBounds.y + selectionBounds.height / 2 };
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart.x + 24, dragStart.y + 12, { steps: 6 });
+    await page.mouse.up();
+
+    const zoom = await page.evaluate(() => {
+      const world = document.querySelector('[data-testid="canvas-world"]');
+      return new DOMMatrixReadOnly(getComputedStyle(world!).transform).a;
+    });
+
+    // The frame must track the shape's true (rotated) footprint within pad —
+    // not the AABB of the already-rotated AABB (which for ~45° inflates the
+    // frame by ~50%: the regression this guards against).
+    await expect
+      .poll(async () => {
+        const [shapeRect, iframeBox] = await Promise.all([
+          shape.evaluate((element) => element.getBoundingClientRect().toJSON()),
+          freeform.locator("iframe").boundingBox(),
+        ]);
+        if (!iframeBox) return null;
+        const frameDocWidth = iframeBox.width / zoom;
+        return frameDocWidth - shapeRect.width;
+      })
+      .toBeGreaterThanOrEqual(8); // contains the shape: pad minus rounding slack
+    await expect
+      .poll(async () => {
+        const [shapeRect, iframeBox] = await Promise.all([
+          shape.evaluate((element) => element.getBoundingClientRect().toJSON()),
+          freeform.locator("iframe").boundingBox(),
+        ]);
+        if (!iframeBox) return null;
+        const frameDocWidth = iframeBox.width / zoom;
+        return frameDocWidth - shapeRect.width;
+      })
+      .toBeLessThan(30); // pad*2 + slack — double-rotated bounds land ~70 over
   });
 
   test("deletes a canvas-drawn shape and restores it on undo", async ({ page }) => {

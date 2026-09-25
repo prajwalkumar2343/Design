@@ -239,4 +239,33 @@ describe("WireCanvas project codec", () => {
     expect(project.state.session.kind).toBe("brainstorm-session");
     expect(project.state.session.schemaVersion).toBe(1);
   });
+
+  it("migrates legacy unscoped bridge node ids to frame-scoped ids", () => {
+    // Files saved before frame-scoped ids carry data:/id:/path: node ids that
+    // are only unique inside their frame's document. Loading rewrites them to
+    // the scoped form so the next live bridge snapshot binds to the same
+    // nodes instead of minting fresh ones.
+    const json = asProjectJson(createState(), (project) => {
+      const node = project.state.nodes.find((item: { id: string }) => item.id === "node-1");
+      node.id = "data:shape-1";
+      const document = project.state.documents.find((item: { id: string }) => item.id === "document-1");
+      document.rootNodeIds = document.rootNodeIds.map((id: string) =>
+        id === "node-1" ? "data:shape-1" : id);
+      project.state.selection = {
+        ...project.state.selection,
+        frameIds: ["frame-a"],
+        nodeIds: ["data:shape-1"],
+        primaryFrameId: "frame-a",
+        primaryNodeId: "data:shape-1",
+      };
+    });
+
+    const parsed = parseWireCanvasProject(json);
+    const migrated = parsed.nodes["frm~frame-a~data:shape-1"];
+    expect(migrated).toBeDefined();
+    expect(migrated!.frameId).toBe("frame-a");
+    expect(parsed.documents["document-1"].rootNodeIds).toContain("frm~frame-a~data:shape-1");
+    expect(parsed.selection.nodeIds).toEqual(["frm~frame-a~data:shape-1"]);
+    expect(parsed.selection.primaryNodeId).toBe("frm~frame-a~data:shape-1");
+  });
 });

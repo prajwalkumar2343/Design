@@ -11,12 +11,14 @@ import {
 import type {
   BridgeElementTarget,
   BridgeInspection,
+  BridgeRect,
   SafeInlineStyleProperty,
 } from "../bridge/protocol";
 import type { IframeBridgeController } from "../bridge/transport";
 import { screenToWorld } from "../canvas/camera";
 import type { Camera, Point, Rect } from "../canvas/types";
-import type { SelectionState } from "../editor/model";
+import type { EditorCommand } from "../editor/commands";
+import type { FrameEntity, SelectionState } from "../editor/model";
 import {
   buildMoveChanges,
   buildResizeChanges,
@@ -25,6 +27,14 @@ import {
   type OverlayStyleChange,
   type OverlayStyleSnapshot,
 } from "./commands";
+import {
+  changeFootprint,
+  computeFreeformFit,
+  freeformBodyShiftFromValue,
+  freeformBodyShiftValue,
+  freeformFrameCommands,
+  isFreeformContentNode,
+} from "./freeform-fit";
 import {
   rotationAngle,
   snapTranslation,
@@ -63,20 +73,31 @@ interface NodeGestureOperation {
   queue: Promise<void>;
   changes: OverlayStyleChange[];
   capturedPrevious: Map<string, string | null>;
+  /**
+   * One canonical synthesized <body> change per re-anchored freeform frame,
+   * kept for the life of the gesture. `previous` is the pre-gesture body
+   * transform (so undo fully clears the re-anchor even when the last
+   * pointermove fitted nothing new), `next` tracks the latest shift.
+   */
+  freeformBodyChanges: Map<string, OverlayStyleChange>;
   cancelled: boolean;
+  /** Ownership token for the transaction this gesture opened, if it opened one. */
+  txToken?: symbol;
 }
 
 interface UseNodeOverlayGesturesOptions {
   surfaceRef: RefObject<HTMLDivElement | null>;
   cameraRef: MutableRefObject<Camera>;
   editorStore: {
-    beginTransaction: (label: string) => void;
-    commitTransaction: (effect?: {
-      undo: () => void;
-      redo: () => void;
-    }) => boolean;
-    rollbackTransaction: () => boolean;
+    beginTransaction: (label: string) => symbol;
+    commitTransaction: (
+      effect?: { undo: () => void; redo: () => void },
+      token?: symbol,
+    ) => boolean;
+    rollbackTransaction: (token?: symbol) => boolean;
     hasActiveTransaction: () => boolean;
+    getState: () => { frames: Record<string, FrameEntity> };
+    execute: (command: EditorCommand) => boolean;
   };
   bridgeTargets: Record<string, OverlayBridgeTargetState>;
   bridgeControllersRef: MutableRefObject<Map<string, IframeBridgeController>>;
@@ -85,11 +106,24 @@ interface UseNodeOverlayGesturesOptions {
   selection: SelectionState;
   toOverlayTarget: (entry: OverlayBridgeTargetState) => OverlayNodeTarget | null;
   setInteractionMode: (mode: NodeInteractionMode) => void;
+  /**
+   * Cumulative doc-space re-anchor shift applied to each freeform frame's
+   * <body>, keyed by frameId. Shared with the surface so non-gesture fits
+   * (e.g. snapshot-driven growth) stay consistent with undo/redo.
+   */
+  freeformShiftRef?: MutableRefObject<Map<string, Point>>;
 }
 
 function targetStateKey(frameId: string, nodeId: string): string {
   return `${frameId}:${nodeId}`;
 }
+
+/**
+ * Changes the freeform fit synthesizes against a frame's <body> rather than
+ * a gesture target. Marked so undo/redo replays can resync the cumulative
+ * shift tracker, and so they never paint selection chrome.
+ */
+const synthesizedBodyChanges = new WeakSet<OverlayStyleChange>();
 
 function getSurfacePoint(
   event: { clientX: number; clientY: number },
@@ -126,7 +160,51 @@ function dispatchClickThrough(
   }).catch(() => undefined);
 }
 
-  function hasOverlayStyleChanges(changes: readonly OverlayStyleChange[]): boolean {
+/**
+ * Moves/rescales a canonical rect alongside the AABB-space box the gesture
+ * computed — the canonical center rides the AABB's center delta and scales
+ * by the same ratios, so a rotated element's painted box tracks the change.
+ */
+function mapCanonicalBounds(canonical: Rect, before: Rect, after: Rect): Rect {
+  const sx = before.width > 0 ? after.width / before.width : 1;
+  const sy = before.height > 0 ? after.height / before.height : 1;
+  const cx = (canonical.x + canonical.width / 2 - (before.x + before.width / 2)) * sx;
+  const cy = (canonical.y + canonical.height / 2 - (before.y + before.height / 2)) * sy;
+  const width = canonical.width * sx;
+  const height = canonical.height * sy;
+  return {
+    x: after.x + after.width / 2 + cx - width / 2,
+    y: after.y + after.height / 2 + cy - height / 2,
+    width,
+    height,
+  };
+}
+
+/**
+ * The rect + rotation the gesture chrome should paint for a change. Canonical
+ * changes already carry the unrotated rect — painting them with the change's
+ * rotation reproduces the element's real box. AABB-space changes keep the
+ * measured box unless a canonical rect can ride along with it; painting a
+ * bare AABB with rotate() would double-apply the element's own angle.
+ */
+function gestureOverlayBox(
+  change: OverlayStyleChange,
+  measured: Rect | undefined,
+): Pick<OverlayNodeTarget, "bounds" | "rotation"> {
+  if (change.canonical && !measured) {
+    return { bounds: change.nextBounds, rotation: change.rotation };
+  }
+  const bounds = measured ?? change.nextBounds;
+  if (change.target.canonicalBounds) {
+    return {
+      bounds: mapCanonicalBounds(change.target.canonicalBounds, change.target.bounds, bounds),
+      rotation: change.rotation,
+    };
+  }
+  return { bounds, rotation: 0 };
+}
+
+function hasOverlayStyleChanges(changes: readonly OverlayStyleChange[]): boolean {
   return changes.some((change) => {
     const properties = new Set([
       ...Object.keys(change.previous),
@@ -151,12 +229,80 @@ export function useNodeOverlayGestures({
   selection,
   toOverlayTarget,
   setInteractionMode,
+  freeformShiftRef,
 }: UseNodeOverlayGesturesOptions) {
   const nodeGestureRef = useRef<NodeGestureOperation | null>(null);
+  const ownShiftRef = useRef(new Map<string, Point>());
+  const shiftRef = freeformShiftRef ?? ownShiftRef;
   const gestureStylesRef = useRef(new Map<string, Partial<Record<SafeInlineStyleProperty, string | null>>>());
+  const measuredBoundsRef = useRef(new Map<string, Rect>());
   const [gestureOverlayTargets, setGestureOverlayTargets] = useState<OverlayNodeTarget[] | null>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<{ axis: "x" | "y"; value: number }[]>([]);
   const liveSettledRef = useRef<Promise<void>>(Promise.resolve());
+
+  /**
+   * Predicted gesture bounds assume a top/left-anchored edit, but layout is
+   * free to land the element elsewhere — a flex/grid-aligned or
+   * min/max-clamped element grows around a different anchor, so the selection
+   * box drifts off the painted element mid-drag. Command acks carry the
+   * element's real post-edit rect; glue the overlay to it until the
+   * post-gesture snapshot refresh re-syncs everything.
+   */
+  const applyMeasuredBounds = useCallback(
+    (change: OverlayStyleChange, bounds: BridgeRect) => {
+      if (!nodeGestureRef.current) return;
+      // The measured rect is a post-transform AABB — wrong shape for rotated
+      // elements, whose overlay box stays the pre-rotation rect.
+      if (Math.abs(change.rotation) > 0.01) return;
+      // Ack bounds are measured inside the shifted body — normalize into the
+      // canonical space stored targets use, since toOverlayTarget subtracts
+      // the live shift back out.
+      const shift = editorStore.getState().frames[change.target.frameId]?.freeform
+        ? shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
+        : { x: 0, y: 0 };
+      const overlay = toOverlayTarget({
+        frameId: change.target.frameId,
+        target: {
+          elementId: change.target.nodeId,
+          tagName: change.target.tagName,
+          path: "",
+          name: change.target.name,
+          role: null,
+          bounds: {
+            x: bounds.x + shift.x,
+            y: bounds.y + shift.y,
+            width: bounds.width,
+            height: bounds.height,
+          },
+        },
+        inspection: null,
+      });
+      if (!overlay) return;
+      const key = targetStateKey(change.target.frameId, change.target.nodeId);
+      measuredBoundsRef.current.set(key, overlay.bounds);
+      setGestureOverlayTargets((current) => {
+        if (!current) return current;
+        let changed = false;
+        const next = current.map((target) => {
+          if (targetStateKey(target.frameId, target.nodeId) !== key) return target;
+          const b = target.bounds;
+          const measured = overlay.bounds;
+          if (
+            Math.abs(b.x - measured.x) < 0.05 &&
+            Math.abs(b.y - measured.y) < 0.05 &&
+            Math.abs(b.width - measured.width) < 0.05 &&
+            Math.abs(b.height - measured.height) < 0.05
+          ) {
+            return target;
+          }
+          changed = true;
+          return { ...target, bounds: measured };
+        });
+        return changed ? next : current;
+      });
+    },
+    [editorStore, shiftRef, toOverlayTarget],
+  );
 
   /**
    * Live edits post to the frame iframe from inside the pointermove dispatch.
@@ -187,13 +333,14 @@ export function useNodeOverlayGestures({
             captured.set(key, ack.previousValue);
             change.previous[command.property] = ack.previousValue;
           }
+          if (ack.bounds) applyMeasuredBounds(change, ack.bounds);
         }).catch(() => undefined),
       );
     }
     if (captures.length === 0) return;
     const settle = Promise.all(captures).then(() => undefined).catch(() => undefined);
     liveSettledRef.current = liveSettledRef.current.then(() => settle);
-  }, [bridgeControllersRef]);
+  }, [applyMeasuredBounds, bridgeControllersRef]);
 
   const selectedOverlayTargets = useMemo(() => {
     if (gestureOverlayTargets) return gestureOverlayTargets;
@@ -242,8 +389,18 @@ export function useNodeOverlayGestures({
           }
         }),
       );
+      // Undo/redo/cancel replays move the freeform <body> re-anchor with
+      // them — keep the cumulative tracker on the value that just landed.
+      for (const change of changes) {
+        if (!synthesizedBodyChanges.has(change)) continue;
+        const value = (direction === "previous" ? change.previous : change.next).transform;
+        shiftRef.current.set(
+          change.target.frameId,
+          freeformBodyShiftFromValue(value),
+        );
+      }
     },
-    [bridgeControllersRef],
+    [bridgeControllersRef, shiftRef],
   );
 
   const beginNodeGesture = useCallback(
@@ -295,8 +452,10 @@ export function useNodeOverlayGestures({
         queue: Promise.resolve(),
         changes: [],
         capturedPrevious: new Map(),
+        freeformBodyChanges: new Map(),
         cancelled: false,
       };
+      measuredBoundsRef.current.clear();
       nodeGestureRef.current = operation;
       // Keep the initial click on the pressed control so native click/double-click
       // dispatch remains intact; moveNodeGesture transfers capture to the surface
@@ -304,6 +463,94 @@ export function useNodeOverlayGestures({
       event.currentTarget.setPointerCapture(gesture.pointerId);
     },
     [bridgeTargets, editorStore, gestureOverlayTargets, setInteractionMode, surfaceRef, cameraRef],
+  );
+
+  /**
+   * Freeform frames must hug their content — the iframe clips whatever
+   * leaves the frame rect, so an element dragged past the edge slides under
+   * an invisible boundary. Fit grows (and shrinks) the frame to the union of
+   * its content plus pad; when the frame origin moves, a matching <body>
+   * translate re-anchors every fixed-position element (the transform makes
+   * body their containing block), so nothing visually jumps. The body edit
+   * rides inside the same change list, keeping live-apply, undo, and redo
+   * coherent.
+   */
+  const fitFreeformFrames = useCallback(
+    (changes: OverlayStyleChange[]): OverlayStyleChange[] => {
+      const state = editorStore.getState();
+      const changeByKey = new Map(
+        changes.map((change) => [
+          targetStateKey(change.target.frameId, change.target.nodeId),
+          change,
+        ]),
+      );
+      const extras: OverlayStyleChange[] = [];
+      for (const frameId of new Set(changes.map((change) => change.target.frameId))) {
+        const frame = state.frames[frameId];
+        if (!frame?.freeform) continue;
+        const content: Rect[] = [];
+        for (const entry of Object.values(bridgeTargets)) {
+          if (entry.frameId !== frameId) continue;
+          if (!isFreeformContentNode(entry.target)) continue;
+          const change = changeByKey.get(
+            targetStateKey(frameId, entry.target.elementId),
+          );
+          const bounds = change
+            ? changeFootprint(change)
+            : toOverlayTarget(entry)?.bounds;
+          if (bounds) content.push(bounds);
+        }
+        // A change target might not have a bridge entry yet — count it anyway.
+        // Synthesized <body> changes describe the frame itself, not content:
+        // feeding the fit rect back into the union would pin the frame at its
+        // largest size instead of letting it shrink on reverse drags.
+        for (const change of changes) {
+          if (change.target.frameId === frameId && !synthesizedBodyChanges.has(change)) {
+            content.push(changeFootprint(change));
+          }
+        }
+        const fit = computeFreeformFit(frame, content);
+        if (!fit) continue;
+        for (const command of freeformFrameCommands(frame, fit.rect)) {
+          editorStore.execute(command);
+        }
+        if (Math.abs(fit.originDelta.x) < 0.01 && Math.abs(fit.originDelta.y) < 0.01) {
+          continue;
+        }
+        const body = Object.values(bridgeTargets).find(
+          (entry) =>
+            entry.frameId === frameId && entry.target.tagName.toLowerCase() === "body",
+        );
+        if (!body) continue;
+        const previous = shiftRef.current.get(frameId) ?? { x: 0, y: 0 };
+        const next = {
+          x: previous.x + fit.originDelta.x,
+          y: previous.y + fit.originDelta.y,
+        };
+        shiftRef.current.set(frameId, next);
+        const change: OverlayStyleChange = {
+          target: {
+            frameId,
+            nodeId: body.target.elementId,
+            tagName: "body",
+            name: "body",
+            bounds: { x: frame.x, y: frame.y, width: frame.width, height: frame.height },
+          },
+          nextBounds: fit.rect,
+          rotation: 0,
+          previous: {
+            transform: freeformBodyShiftValue({ x: -previous.x, y: -previous.y }),
+          },
+          next: {
+            transform: freeformBodyShiftValue({ x: -next.x, y: -next.y }),
+          },
+        };
+        synthesizedBodyChanges.add(change);
+        extras.push(change);
+      }
+      return extras.length > 0 ? [...changes, ...extras] : changes;
+    },
+    [bridgeTargets, editorStore, shiftRef, toOverlayTarget],
   );
 
   const moveNodeGesture = useCallback(
@@ -328,10 +575,16 @@ export function useNodeOverlayGestures({
         return true;
       }
       if (!operation.started) {
+        // A transaction open from another path (a bridge edit awaiting acks)
+        // can't host this gesture — beginning one throws here, leaving the
+        // pointer captured and the gesture half-live. Keep the operation
+        // armed but unstarted; the pointer simply can't move the node this
+        // round.
+        if (editorStore.hasActiveTransaction()) return true;
         operation.started = true;
         surface.setPointerCapture(operation.pointerId);
         setGestureOverlayTargets(operation.snapshots.map((snapshot) => snapshot.target));
-        editorStore.beginTransaction(
+        operation.txToken = editorStore.beginTransaction(
           operation.kind === "move"
             ? "Move selection"
             : operation.kind === "resize"
@@ -380,6 +633,28 @@ export function useNodeOverlayGestures({
         );
       }
 
+      changes = fitFreeformFrames(changes);
+      // Fold this move's synthesized body changes into the per-operation
+      // record, then re-emit them: undo must replay the pre-gesture body
+      // transform even when this particular move fitted nothing new.
+      for (const change of changes) {
+        if (!synthesizedBodyChanges.has(change)) continue;
+        const key = targetStateKey(change.target.frameId, change.target.nodeId);
+        const recorded = operation.freeformBodyChanges.get(key);
+        if (recorded) {
+          recorded.next = change.next;
+          recorded.nextBounds = change.nextBounds;
+        } else {
+          operation.freeformBodyChanges.set(key, change);
+        }
+      }
+      if (operation.freeformBodyChanges.size > 0) {
+        changes = [
+          ...changes.filter((change) => !synthesizedBodyChanges.has(change)),
+          ...operation.freeformBodyChanges.values(),
+        ];
+      }
+
       for (const change of changes) {
         for (const property of Object.keys(change.next) as Array<keyof typeof change.next>) {
           const key = targetStateKey(change.target.frameId, change.target.nodeId) + `:${property}`;
@@ -400,16 +675,26 @@ export function useNodeOverlayGestures({
       }
       operation.changes = changes;
       setGestureOverlayTargets(
-        changes.map((change) => ({
-          ...change.target,
-          bounds: change.nextBounds,
-          rotation: change.rotation,
-        })),
+        changes
+          // Synthesized freeform <body> changes ride along for apply/undo —
+          // they must not paint selection chrome.
+          .filter((change) => !synthesizedBodyChanges.has(change))
+          .map((change) => ({
+            ...change.target,
+            // Once the bridge has reported where the element actually landed,
+            // keep the chrome on the measured rect rather than the prediction.
+            ...gestureOverlayBox(
+              change,
+              measuredBoundsRef.current.get(
+                targetStateKey(change.target.frameId, change.target.nodeId),
+              ),
+            ),
+          })),
       );
       flushLiveApply(changes);
       return true;
     },
-    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, flushLiveApply, setInteractionMode, surfaceRef, toOverlayTarget],
+    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, fitFreeformFrames, flushLiveApply, setInteractionMode, surfaceRef, toOverlayTarget],
   );
 
   const endNodeGesture = useCallback(
@@ -421,7 +706,12 @@ export function useNodeOverlayGestures({
       setInteractionMode("idle");
 
       if (operation.cancelled || !hasOverlayStyleChanges(operation.changes)) {
-        if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
+        // Only the gesture's own transaction may be rolled back — an
+        // unstarted gesture (blocked on a foreign transaction) must not
+        // revert that other edit.
+        if (operation.txToken !== undefined && editorStore.hasActiveTransaction()) {
+          editorStore.rollbackTransaction(operation.txToken);
+        }
         setGestureOverlayTargets(null);
         if (!operation.cancelled && !operation.started && operation.kind === "move") {
           const frameId = operation.snapshots[0]?.target.frameId;
@@ -463,21 +753,39 @@ export function useNodeOverlayGestures({
         setGestureOverlayTargets(
           direction === "previous"
             ? operation.snapshots.map((snapshot) => snapshot.target)
-            : operation.changes.map((change) => ({
-                ...change.target,
-                bounds: change.nextBounds,
-                rotation: change.rotation,
-              })),
+            : operation.changes
+                .filter((change) => !synthesizedBodyChanges.has(change))
+                .map((change) => ({
+                  ...change.target,
+                  ...gestureOverlayBox(change, undefined),
+                })),
         );
         refreshAfterQueue();
         return run.then(() => undefined);
       };
       const effect = { undo: () => schedule("previous"), redo: () => schedule("next") };
-      if (editorStore.hasActiveTransaction()) editorStore.commitTransaction(effect);
+      if (operation.txToken !== undefined && editorStore.hasActiveTransaction()) {
+        editorStore.commitTransaction(effect, operation.txToken);
+      }
       refreshAfterQueue();
     },
     [applyStyleChanges, bridgeControllersRef, editorStore, refreshSnapshot, refreshTarget, setInteractionMode, surfaceRef],
   );
+
+  // When a frame's document reloads (new srcDoc, remount) its <body>
+  // transform is gone — the tracked re-anchor shift would double-apply on
+  // the next fit, so drop it as soon as the body target disappears.
+  useEffect(() => {
+    if (shiftRef.current.size === 0) return;
+    const presentFrameIds = new Set(
+      Object.values(bridgeTargets)
+        .filter((entry) => entry.target.tagName.toLowerCase() === "body")
+        .map((entry) => entry.frameId),
+    );
+    for (const frameId of [...shiftRef.current.keys()]) {
+      if (!presentFrameIds.has(frameId)) shiftRef.current.delete(frameId);
+    }
+  }, [bridgeTargets, shiftRef]);
 
   const cancelNodeGesture = useCallback(() => {
     const operation = nodeGestureRef.current;
@@ -508,16 +816,21 @@ export function useNodeOverlayGestures({
         setGestureOverlayTargets(null);
       })
       .catch(() => undefined);
-    if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
+    if (operation.txToken !== undefined && editorStore.hasActiveTransaction()) {
+      editorStore.rollbackTransaction(operation.txToken);
+    }
     setInteractionMode("idle");
     return true;
   }, [applyStyleChanges, editorStore, refreshSnapshot, refreshTarget, setInteractionMode]);
+
+  const isNodeGestureActive = useCallback(() => nodeGestureRef.current !== null, []);
 
   return {
     alignmentGuides,
     beginNodeGesture,
     cancelNodeGesture,
     endNodeGesture,
+    isNodeGestureActive,
     moveNodeGesture,
     selectedOverlayTargets,
   };

@@ -254,6 +254,39 @@ describe("sanitizeImportedHtml", () => {
     expect(result.html).toContain("ok");
   });
 
+  it("strips handlers separated by / or quotes and whitespace-obfuscated javascript:", () => {
+    // `<svg/onload=` and `a="b"onload=` are legal attribute separators in
+    // HTML5 tokenization; `java\tscript:` executes because browsers strip
+    // tabs/newlines from the scheme. All must reach the DOMParser scrub.
+    const raw =
+      '<!doctype html><html><head></head><body><svg/onload="x()"><a title="ok"onclick="y()" href="java\tscript:steal()">go</a></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("onload");
+    expect(result.html).not.toContain("onclick");
+    expect(result.html).not.toContain("javascript");
+    expect(result.html).toContain("go");
+  });
+
+  it("catches entity-encoded javascript: schemes past the raw-text gate", () => {
+    const raw =
+      '<!doctype html><html><head></head><body><a href="java&#x73;cript:steal()">enc</a><a href="java&Tab;script&colon;steal()">named</a></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("&#x73;");
+    expect(result.html).not.toContain("&Tab;");
+    expect(result.html).not.toContain("javascript");
+  });
+
+  it("neutralizes javascript: URLs in xlink:href", () => {
+    const raw =
+      '<!doctype html><html><head></head><body><svg><a xlink:href="javascript:x()"><rect width="10" height="10"/></a></svg></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("xlink:href");
+    expect(result.html).toContain("<rect");
+  });
+
   it("keeps full styling, media, links, and navigation", () => {
     const raw = '<!doctype html><html><head><link rel="stylesheet" href="https://example.com/a.css"><style>.a { color: red; }</style></head><body><a href="https://example.com/">out</a><img src="https://example.com/i.png"><video src="https://example.com/v.mp4"></video></body></html>';
     const result = sanitizeImportedHtml(raw);

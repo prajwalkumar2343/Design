@@ -6,6 +6,7 @@ import {
   type EditorState,
   type FrameEntity,
   type NodeEntity,
+  type NodeId,
   type PageEntity,
   type SelectionState,
 } from "./model";
@@ -56,6 +57,7 @@ export type EditorAction =
     }
   | { type: "frame/remove"; frameId: string }
   | { type: "node/upsert"; node: NodeEntity }
+  | { type: "nodes/upsert-many"; nodes: NodeEntity[] }
   | { type: "node/remove"; nodeId: string }
   | {
       type: "node/update";
@@ -587,15 +589,18 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       }
       const previous = state.nodes[action.node.id];
       let nextState = { ...state, nodes: { ...state.nodes, [action.node.id]: action.node } };
-      if (previous && previous.parentId !== action.node.parentId) {
+      // Detach whenever the membership slot changes: a parent swap, or a
+      // root-to-root move across documents (parentId stays null while
+      // documentId moves — detach must target the PREVIOUS document).
+      if (previous && (previous.parentId !== action.node.parentId || previous.documentId !== action.node.documentId)) {
         if (previous.parentId && nextState.nodes[previous.parentId]) {
           const parent = nextState.nodes[previous.parentId];
           nextState = {
             ...nextState,
             nodes: { ...nextState.nodes, [parent.id]: { ...parent, childIds: parent.childIds.filter((id) => id !== action.node.id) } },
           };
-        } else if (nextState.documents[action.node.documentId]) {
-          const document = nextState.documents[action.node.documentId];
+        } else if (!previous.parentId && nextState.documents[previous.documentId]) {
+          const document = nextState.documents[previous.documentId];
           nextState = {
             ...nextState,
             documents: { ...nextState.documents, [document.id]: { ...document, rootNodeIds: document.rootNodeIds.filter((id) => id !== action.node.id) } },
@@ -614,6 +619,72 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         }
       }
       return nextState;
+    }
+
+    // Bulk path of node/upsert: one state transition for a whole snapshot —
+    // the nodes record is copied once instead of once per node.
+    case "nodes/upsert-many": {
+      if (action.nodes.length === 0) return state;
+      const nodes: Record<NodeId, NodeEntity> = { ...state.nodes };
+      let documents = state.documents;
+      let documentsCopied = false;
+      const copyDocuments = () => {
+        if (!documentsCopied) {
+          documents = { ...documents };
+          documentsCopied = true;
+        }
+      };
+      for (const node of action.nodes) {
+        requireDocument(state, node.documentId);
+        if (node.parentId) {
+          const parent = nodes[node.parentId];
+          if (!parent) {
+            throw new EditorReducerError(`Unknown parent node: ${node.parentId}`);
+          }
+          if (parent.documentId !== node.documentId) {
+            throw new EditorReducerError("Node parent belongs to another document");
+          }
+        }
+        const previous = nodes[node.id];
+        nodes[node.id] = node;
+        // Same rule as node/upsert: membership changes on parent swap or on a
+        // root-to-root document move; a previous root detaches from ITS OWN
+        // document, not the destination's root list.
+        if (previous && (previous.parentId !== node.parentId || previous.documentId !== node.documentId)) {
+          if (previous.parentId && nodes[previous.parentId]) {
+            const parent = nodes[previous.parentId];
+            nodes[parent.id] = {
+              ...parent,
+              childIds: parent.childIds.filter((id) => id !== node.id),
+            };
+          } else if (!previous.parentId) {
+            const document = documents[previous.documentId];
+            if (document) {
+              copyDocuments();
+              documents[previous.documentId] = {
+                ...document,
+                rootNodeIds: document.rootNodeIds.filter((id) => id !== node.id),
+              };
+            }
+          }
+        }
+        if (node.parentId) {
+          const parent = nodes[node.parentId];
+          if (parent && !parent.childIds.includes(node.id)) {
+            nodes[parent.id] = { ...parent, childIds: [...parent.childIds, node.id] };
+          }
+        } else {
+          const document = documents[node.documentId];
+          if (document && !document.rootNodeIds.includes(node.id)) {
+            copyDocuments();
+            documents[node.documentId] = {
+              ...document,
+              rootNodeIds: [...document.rootNodeIds, node.id],
+            };
+          }
+        }
+      }
+      return { ...state, nodes, documents };
     }
 
     case "node/update": {

@@ -11,6 +11,9 @@ const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_INBOX = 200;
 const MAX_RESULTS = 200;
 const MAX_RESULT_WAIT_MS = 30_000;
+// A claim outliving this lease is presumed abandoned — the owning tab closed
+// or reloaded mid-gesture — so another consumer may take over the op.
+const CLAIM_TTL_MS = 60_000;
 
 interface InboxEntry {
   seq: number;
@@ -21,6 +24,7 @@ interface InboxEntry {
    * nobody claimed, so two tabs can't both apply the same push/remove.
    */
   deliveredTo?: string;
+  claimedAt?: number;
 }
 
 interface ResultWaiter {
@@ -183,19 +187,49 @@ export function canvasAgentBridge(): Plugin {
     if (req.method === "GET" && path === "/inbox") {
       const after = Number(url.searchParams.get("after") ?? "0");
       const consumer = url.searchParams.get("consumer") ?? "";
-      // Each op belongs to the first poller it was served to; other consumers
-      // (a second tab, a stale preview) never see claimed entries.
+      const now = Date.now();
+      const claimExpired = (entry: InboxEntry) =>
+        entry.claimedAt !== undefined && now - entry.claimedAt > CLAIM_TTL_MS;
+      // Each op belongs to the poller holding its live claim; other consumers
+      // (a second tab, a stale preview) never see claimed entries. Expired
+      // claims are re-served so an op outliving its tab is not stranded.
       const ops = inbox.filter(
         (entry) =>
           entry.seq > after &&
-          (entry.deliveredTo === undefined || entry.deliveredTo === consumer),
+          (entry.deliveredTo === undefined ||
+            entry.deliveredTo === consumer ||
+            claimExpired(entry)),
       );
       if (consumer) {
         for (const entry of ops) {
-          entry.deliveredTo ??= consumer;
+          if (entry.deliveredTo !== consumer) {
+            entry.deliveredTo = consumer;
+          }
+          entry.claimedAt = now;
         }
       }
       sendJson(res, 200, { ops, latest: seq, bootId });
+      return;
+    }
+
+    if (req.method === "POST" && path === "/release") {
+      let body: { consumer?: unknown };
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        sendJson(res, 400, { error: { code: "invalid-json", message: "Request body must be JSON" } });
+        return;
+      }
+      const consumer = typeof body.consumer === "string" ? body.consumer : "";
+      let released = 0;
+      for (const entry of inbox) {
+        if (consumer && entry.deliveredTo === consumer) {
+          delete entry.deliveredTo;
+          delete entry.claimedAt;
+          released += 1;
+        }
+      }
+      sendJson(res, 200, { ok: true, released });
       return;
     }
 

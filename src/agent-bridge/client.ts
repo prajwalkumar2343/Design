@@ -129,9 +129,30 @@ export function startAgentBridge(
     }
   };
 
+  // Release this tab's op claims on unload so ops it never applied (e.g. ones
+  // deferred by an unfinished gesture) return to the shared inbox instead of
+  // staying claimed by a dead consumer. sendBeacon survives page teardown.
+  const releaseClaims = () => {
+    if (typeof navigator === "undefined" || typeof navigator.sendBeacon !== "function") return;
+    try {
+      navigator.sendBeacon(
+        `${baseUrl}/release`,
+        new Blob([JSON.stringify({ consumer: consumerId })], { type: "application/json" }),
+      );
+    } catch {
+      /* unloading — nothing sensible to retry */
+    }
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", releaseClaims);
+  }
+
   void tick();
   return () => {
     stopped = true;
     if (timer !== null) clearTimeout(timer);
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pagehide", releaseClaims);
+    }
   };
 }

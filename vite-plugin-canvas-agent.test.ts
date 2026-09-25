@@ -223,6 +223,53 @@ describe("canvas-agent bridge middleware", () => {
     expect((JSON.parse(again.body) as { ops: unknown[] }).ops).toHaveLength(1);
   });
 
+  it("re-serves ops whose claim lease expired to a different consumer", async () => {
+    vi.useFakeTimers();
+    try {
+      const handler = createHandler();
+      handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const first = fakeRes();
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), first, () => undefined);
+      expect((JSON.parse(first.body) as { ops: unknown[] }).ops).toHaveLength(1);
+
+      // The claiming tab goes silent (closed mid-gesture) — past the lease the
+      // op belongs to whoever polls next instead of stranding forever.
+      vi.setSystemTime(Date.now() + 61_000);
+      const takeover = fakeRes();
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), takeover, () => undefined);
+      expect((JSON.parse(takeover.body) as { ops: unknown[] }).ops).toHaveLength(1);
+
+      // The stale owner's claim is gone — it no longer sees the op either.
+      const staleOwner = fakeRes();
+      handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), staleOwner, () => undefined);
+      expect((JSON.parse(staleOwner.body) as { ops: unknown[] }).ops).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("releases a consumer's claims so another tab can serve them", async () => {
+    const handler = createHandler();
+    handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), fakeRes(), () => undefined);
+    const blocked = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), blocked, () => undefined);
+    expect((JSON.parse(blocked.body) as { ops: unknown[] }).ops).toHaveLength(0);
+
+    const releaseRes = fakeRes();
+    handler(fakePostReq("/__canvas-agent/release", { consumer: "tab-a" }), releaseRes, () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect((JSON.parse(releaseRes.body) as { released?: number }).released).toBe(1);
+
+    const served = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), served, () => undefined);
+    expect((JSON.parse(served.body) as { ops: unknown[] }).ops).toHaveLength(1);
+  });
+
   it("echoes the consumer id that posted a result", async () => {
     const handler = createHandler();
     handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);

@@ -852,8 +852,18 @@ export function CanvasSurface({
       const controller = bridgeControllersRef.current.get(frameId);
       const document = frame ? editorStore.getState().documents[frame.documentId] : undefined;
       if (!frame || !controller || !document) return;
+      // Captured before the async read — a project switch mid-flight (e.g.
+      // opening a duplicated project, which reuses document ids and
+      // revisions) must not let this read stage the old project's HTML.
+      const projectId = getActiveProjectId();
       void controller.readDocument().then((html) => {
         if (html.length === 0 || html === document.srcDoc) return;
+        const state = editorStore.getState();
+        if (
+          getActiveProjectId() !== projectId ||
+          state.frames[frameId]?.documentId !== document.id ||
+          state.documents[document.id]?.revision !== document.revision
+        ) return;
         pendingDocWritesRef.current.set(document.id, { html, revision: document.revision });
         // A save may have run between the mutation and this read-back — without
         // re-scheduling, the harvested document can sit unsaved until the next

@@ -523,4 +523,23 @@ describe("CanvasSurface drawing on empty canvas", () => {
     expect(createCommands(postSpy)).toHaveLength(1);
     expect(document.querySelectorAll("[data-freeform='true']")).toHaveLength(0);
   });
+
+  it("remounts a frame restored by undo when the stale unmount-detach lands after the fresh grant", async () => {
+    render(<CanvasSurface frames={[seed("frame-1")]} disableLocalPersistence />);
+    // frame-1 is auto-selected on seed, so the selection pin mounts it.
+    await waitFor(() => expect(document.querySelector("iframe")).not.toBeNull());
+
+    fireEvent.keyDown(window, { key: "Delete" });
+    expect(document.querySelectorAll("[data-frame-id]")).toHaveLength(0);
+
+    // The undo lands inside the deferred unmount-detach window: the stale
+    // report fires after the fresh mount is granted. Ownership of the mount
+    // must stop it from wiping the new session's bookkeeping — otherwise the
+    // frame sits on a dead placeholder until the next visibility scan.
+    fireEvent.keyDown(window, { key: "z", ctrlKey: true });
+    await waitFor(() =>
+      expect(document.querySelectorAll("[data-frame-id]")).toHaveLength(1),
+    );
+    await waitFor(() => expect(document.querySelector("iframe")).not.toBeNull());
+  });
 });

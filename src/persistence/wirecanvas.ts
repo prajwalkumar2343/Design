@@ -43,9 +43,11 @@ export const WIRECANVAS_LIMITS = {
   maxFileBytes: 8 * 1024 * 1024,
   maxStringLength: 2 * 1024 * 1024,
   maxCollectionItems: 10_000,
+  maxIdLength: 256,
   // Bridge element ids are frame-scoped (`frm~<frameId>~<data:|id:|path:…>`);
-  // deep documents produce long path ids, so the cap tracks the protocol's.
-  maxIdLength: MAX_ELEMENT_ID_LENGTH,
+  // deep documents produce long path ids, so the element cap tracks the
+  // protocol's while other entity ids stay at the tighter cap.
+  maxElementIdLength: MAX_ELEMENT_ID_LENGTH,
 } as const;
 
 export interface WireCanvasDurableState {
@@ -136,6 +138,18 @@ function nullableId(value: unknown, path: string): string | null {
   return value === null ? null : idValue(value, path);
 }
 
+function elementIdValue(value: unknown, path: string): string {
+  if (typeof value !== "string") fail("invalid-field", path, "expected a string");
+  const max = WIRECANVAS_LIMITS.maxElementIdLength;
+  if (value.length > max) fail("string-too-large", path, `string exceeds the ${max}-character limit`);
+  if (value.trim().length === 0) fail("invalid-id", path, "must not be empty");
+  return value;
+}
+
+function nullableElementId(value: unknown, path: string): string | null {
+  return value === null ? null : elementIdValue(value, path);
+}
+
 function finiteNumber(value: unknown, path: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     fail("invalid-coordinates", path, "must be a finite number");
@@ -178,6 +192,12 @@ function stringArray(value: unknown, path: string): string[] {
 
 function idArray(value: unknown, path: string): string[] {
   const ids = collection(value, path).map((item, index) => idValue(item, `${path}[${index}]`));
+  uniqueIds(ids, path);
+  return ids;
+}
+
+function elementIdArray(value: unknown, path: string): string[] {
+  const ids = collection(value, path).map((item, index) => elementIdValue(item, `${path}[${index}]`));
   uniqueIds(ids, path);
   return ids;
 }
@@ -358,7 +378,7 @@ function readDocument(value: unknown, path: string): DocumentEntity {
     mode,
     srcDoc,
     revision: revision(input.revision, `${path}.revision`, 1),
-    rootNodeIds: idArray(input.rootNodeIds, `${path}.rootNodeIds`),
+    rootNodeIds: elementIdArray(input.rootNodeIds, `${path}.rootNodeIds`),
     pageIds: idArray(input.pageIds, `${path}.pageIds`),
   };
 }
@@ -429,13 +449,13 @@ function readNode(value: unknown, path: string): NodeEntity {
   expectKeys(input, ["id", "documentId", "parentId", "kind", "name", "tagName", "attributes", "childIds", "locked", "hidden", "frameId"], path);
   if (!(["element", "text", "component"] as const).includes(input.kind as never)) fail("invalid-field", `${path}.kind`, "has an unknown node kind");
   const node: NodeEntity = {
-    id: idValue(input.id, `${path}.id`),
+    id: elementIdValue(input.id, `${path}.id`),
     documentId: idValue(input.documentId, `${path}.documentId`),
-    parentId: nullableId(input.parentId, `${path}.parentId`),
+    parentId: nullableElementId(input.parentId, `${path}.parentId`),
     kind: input.kind as NodeEntity["kind"],
     name: stringValue(input.name, `${path}.name`, { nonEmpty: true }),
     attributes: mapString(input.attributes, `${path}.attributes`),
-    childIds: idArray(input.childIds, `${path}.childIds`),
+    childIds: elementIdArray(input.childIds, `${path}.childIds`),
   };
   if (Object.prototype.hasOwnProperty.call(input, "tagName")) node.tagName = stringValue(input.tagName, `${path}.tagName`);
   if (Object.prototype.hasOwnProperty.call(input, "locked")) {
@@ -454,9 +474,9 @@ function readSelection(value: unknown, path: string): SelectionState {
   const input = record(value, path);
   expectKeys(input, ["frameIds", "nodeIds", "primaryFrameId", "primaryNodeId"], path);
   const frameIds = idArray(input.frameIds, `${path}.frameIds`);
-  const nodeIds = idArray(input.nodeIds, `${path}.nodeIds`);
+  const nodeIds = elementIdArray(input.nodeIds, `${path}.nodeIds`);
   const primaryFrameId = nullableId(input.primaryFrameId, `${path}.primaryFrameId`);
-  const primaryNodeId = nullableId(input.primaryNodeId, `${path}.primaryNodeId`);
+  const primaryNodeId = nullableElementId(input.primaryNodeId, `${path}.primaryNodeId`);
   if (primaryFrameId !== null && !frameIds.includes(primaryFrameId)) fail("invalid-reference", `${path}.primaryFrameId`, "must be in frameIds");
   if (primaryNodeId !== null && !nodeIds.includes(primaryNodeId)) fail("invalid-reference", `${path}.primaryNodeId`, "must be in nodeIds");
   return { frameIds, nodeIds, primaryFrameId, primaryNodeId };

@@ -45,6 +45,7 @@ type JsonRecord = Record<string, unknown>;
 
 const MAX_STRING = WIRECANVAS_LIMITS.maxStringLength;
 const MAX_ID = WIRECANVAS_LIMITS.maxIdLength;
+const MAX_ELEMENT_ID = WIRECANVAS_LIMITS.maxElementIdLength;
 const MAX_ITEMS = WIRECANVAS_LIMITS.maxCollectionItems;
 
 const LIFECYCLES: readonly BrainstormSessionLifecycle[] = [
@@ -98,6 +99,17 @@ function nullableIdStr(value: unknown): string | null {
   return s.length > 0 && s.length <= MAX_ID ? s : null;
 }
 
+function elementIdStr(value: unknown, fallback: string): string {
+  const s = str(value);
+  return s.length > 0 && s.length <= MAX_ELEMENT_ID ? s : fallback;
+}
+
+function nullableElementIdStr(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const s = str(value);
+  return s.length > 0 && s.length <= MAX_ELEMENT_ID ? s : null;
+}
+
 function finite(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -130,6 +142,20 @@ function idList(value: unknown): string[] {
   const out: string[] = [];
   for (const item of value) {
     if (typeof item !== "string" || item.length === 0 || item.length > MAX_ID) continue;
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+    if (out.length >= MAX_ITEMS) break;
+  }
+  return out;
+}
+
+function elementIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string" || item.length === 0 || item.length > MAX_ELEMENT_ID) continue;
     if (seen.has(item)) continue;
     seen.add(item);
     out.push(item);
@@ -196,7 +222,7 @@ function repairDocument(value: unknown, index: number): JsonRecord | null {
     mode,
     srcDoc,
     revision: intAtLeast(value.revision, 1, 1),
-    rootNodeIds: idList(value.rootNodeIds),
+    rootNodeIds: elementIdList(value.rootNodeIds),
     pageIds: idList(value.pageIds),
   };
 }
@@ -246,12 +272,12 @@ function repairFrame(value: unknown, index: number): JsonRecord | null {
 function repairNode(value: unknown, index: number): JsonRecord | null {
   if (!isRecord(value)) return null;
   const node: JsonRecord = {
-    id: idStr(value.id, `node-recovered-${index}`),
+    id: elementIdStr(value.id, `node-recovered-${index}`),
     documentId: idStr(value.documentId, ""),
-    parentId: nullableIdStr(value.parentId),
+    parentId: nullableElementIdStr(value.parentId),
     kind: NODE_KINDS.has(value.kind as string) ? value.kind : "element",
     name: nonEmptyStr(value.name, "Layer"),
-    childIds: idList(value.childIds),
+    childIds: elementIdList(value.childIds),
   };
   if (typeof value.tagName === "string" && value.tagName.length > 0) node.tagName = str(value.tagName);
   if (typeof value.locked === "boolean") node.locked = value.locked;
@@ -720,9 +746,9 @@ export function repairWireCanvasProjectJson(text: string): string | null {
 
   const selectionInput = isRecord(input.selection) ? input.selection : {};
   const frameIds = idList(selectionInput.frameIds).filter((id) => keptFrameIds.has(id));
-  const nodeIds = idList(selectionInput.nodeIds).filter((id) => keptNodeIds.has(id));
+  const nodeIds = elementIdList(selectionInput.nodeIds).filter((id) => keptNodeIds.has(id));
   const primaryFrameId = nullableIdStr(selectionInput.primaryFrameId);
-  const primaryNodeId = nullableIdStr(selectionInput.primaryNodeId);
+  const primaryNodeId = nullableElementIdStr(selectionInput.primaryNodeId);
 
   const activePageId = nullableIdStr(input.activePageId);
 

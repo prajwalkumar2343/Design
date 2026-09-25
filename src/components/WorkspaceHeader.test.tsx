@@ -27,10 +27,10 @@ describe("WorkspaceHeader", () => {
     fireEvent.click(screen.getByTestId("export-figma-button"));
     fireEvent.click(screen.getByTestId("export-code-button"));
     fireEvent.click(screen.getByTestId("export-react-button"));
-    expect(props.onExport).toHaveBeenCalled();
-    expect(props.onExportFigma).toHaveBeenCalled();
-    expect(props.onExportCode).toHaveBeenCalled();
-    expect(props.onExportReact).toHaveBeenCalled();
+    expect(props.onExport).toHaveBeenCalledTimes(1);
+    expect(props.onExportFigma).toHaveBeenCalledTimes(1);
+    expect(props.onExportCode).toHaveBeenCalledTimes(1);
+    expect(props.onExportReact).toHaveBeenCalledTimes(1);
   });
 
   it("gates Export Code on its own callback even when canExport is true", () => {

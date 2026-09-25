@@ -131,7 +131,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     post({
       type: "ready",
       capabilities: [
-        "hover", "select", "pointer-events", "snapshot", "inspect", "set-inline-style", "set-text",
+        "hover", "select", "pointer-events", "snapshot", "inspect", "document", "set-inline-style", "set-text",
         "create-element", "delete-element", "duplicate-element", "set-shape-radius",
         "set-shape-fill", "set-shape-glass", "inject-font-faces", "set-token-theme",
       ],
@@ -1387,6 +1387,25 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return { rootIds, nodes, truncated };
   }
 
+  // Serializes the live document for persistence: the parent's srcDoc only
+  // knows the markup the document started with, so edits that exist only as
+  // DOM mutations (moves, created elements, the freeform body shift) ride
+  // along here. Runtime-injected chrome — motion/theme/font style blocks and
+  // the text-edit marker — is stripped so the stored copy round-trips clean.
+  function serializeDocument() {
+    const root = document.documentElement;
+    if (!root) return "";
+    const clone = root.cloneNode(true);
+    const tokenThemeAttr = "data-design-tool-" + "token-theme";
+    clone.querySelectorAll(
+      "style[data-design-tool-motion],style[" + FONT_FACES_ATTR + "],style[" + tokenThemeAttr + "]",
+    ).forEach(function (node) { node.remove(); });
+    clone.querySelectorAll("[data-design-tool-editing]").forEach(function (node) {
+      node.removeAttribute("data-design-tool-editing");
+    });
+    return "<!doctype html>\\n" + clone.outerHTML;
+  }
+
   function eventPoint(event) {
     return {
       x: isFiniteNumber(event.clientX) ? event.clientX : 0,
@@ -1912,6 +1931,10 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       }
       if (message.command === "inspect" && isSafeString(message.targetId, 1536)) {
         sendResponse(message.requestId, { ok: true, result: { kind: "inspection", inspection: inspect(findElement(message.targetId)) } });
+        return;
+      }
+      if (message.command === "document") {
+        sendResponse(message.requestId, { ok: true, result: { kind: "document", html: serializeDocument() } });
         return;
       }
       sendError(message.requestId, "invalid-request", "The requested inspection is invalid");

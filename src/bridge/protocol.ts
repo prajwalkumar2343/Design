@@ -91,7 +91,7 @@ export type BridgeEventName =
   | "text-edit-start"
   | "text-commit"
   | "text-cancel";
-export type BridgeRequestCommand = "snapshot" | "inspect";
+export type BridgeRequestCommand = "snapshot" | "inspect" | "document";
 
 export type SafeInlineStyleProperty =
   | "align-items"
@@ -395,6 +395,7 @@ export type BridgeCommandAck =
 export type BridgeResponseResult =
   | { kind: "snapshot"; snapshot: BridgeHierarchySnapshot }
   | { kind: "inspection"; inspection: BridgeInspection | null }
+  | { kind: "document"; html: string }
   | { kind: "command"; ack: BridgeCommandAck };
 
 interface BridgeEnvelopeBase {
@@ -839,6 +840,9 @@ function isResponseResult(value: unknown): value is BridgeResponseResult {
   if (value.kind === "inspection") {
     return value.inspection === null || isInspection(value.inspection);
   }
+  if (value.kind === "document") {
+    return isValidString(value.html, { maxLength: 16_000_000, allowEmpty: true, allowTextWhitespace: true });
+  }
   return value.kind === "command" && isCommandAck(value.ack);
 }
 
@@ -879,7 +883,7 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
     case "request":
       return (
         isValidString(record.requestId, { maxLength: 256 }) &&
-        (record.command === "snapshot" || record.command === "inspect") &&
+        (record.command === "snapshot" || record.command === "inspect" || record.command === "document") &&
         (record.targetId === undefined || isValidString(record.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }))
       )
         ? (value as BridgeRequestMessage)

@@ -284,6 +284,7 @@ export const FrameView = memo(function FrameView({
     onBridgeController?.(frame.id, {
       requestSnapshot,
       inspect: (targetId) => transport.inspect(targetId),
+      readDocument: () => transport.readDocument(),
       setInlineStyle: (command) => transport.setInlineStyle(command),
       setText: (command) => transport.setText(command),
       startTextEdit: (targetId) => transport.startTextEdit(targetId),

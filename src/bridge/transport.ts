@@ -19,6 +19,7 @@ import {
 export interface IframeBridgeController {
   requestSnapshot: () => Promise<BridgeHierarchySnapshot>;
   inspect: (targetId: string) => Promise<BridgeInspection | null>;
+  readDocument: () => Promise<string>;
   setInlineStyle: (
     command: Extract<BridgeCommand, { command: "set-inline-style" }>,
   ) => Promise<BridgeCommandAck>;
@@ -191,6 +192,18 @@ export class IframeBridgeTransport {
       });
   }
 
+  readDocument(): Promise<string> {
+    return this.request(
+      createBridgeRequest(this.identity, this.nextRequestId(), "document"),
+      "document",
+    ).then((message) => {
+      if (!message.ok || message.result.kind !== "document") {
+        throw new BridgeTransportError("invalid-response", "The bridge returned an invalid document response");
+      }
+      return message.result.html;
+    });
+  }
+
   inspect(targetId: string): Promise<BridgeInspection | null> {
     return this.request(
       createBridgeRequest(this.identity, this.nextRequestId(), "inspect", targetId),
@@ -347,13 +360,16 @@ export class IframeBridgeTransport {
   }
 
   private sendCommand(command: BridgeCommand): Promise<BridgeCommandAck> {
-    if (MUTATING_COMMANDS.has(command.command)) {
-      this.handlers.onMutatingCommand?.(command);
-    }
     const requestId = this.nextRequestId();
     return this.request(createBridgeCommand(this.identity, requestId, command), "command").then((message) => {
       if (!message.ok || message.result.kind !== "command") {
         throw new BridgeTransportError("invalid-response", "The bridge returned an invalid command acknowledgement");
+      }
+      // Dirty-mark after the runtime confirms the change: a rejected command
+      // (e.g. target already deleted) leaves the document untouched, so it
+      // must not pin the frame.
+      if (MUTATING_COMMANDS.has(command.command)) {
+        this.handlers.onMutatingCommand?.(command);
       }
       return message.result.ack;
     });

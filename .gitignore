@@ -15,3 +15,9 @@ tmp/
 .env.*.local
 !.env.example
 !.env.development
+BUG_AUDIT.md
+DESIGN_PRINCIPLES.md
+PROJECT_SPEC.md
+QA_REPORT.md
+changes.md
+features.md

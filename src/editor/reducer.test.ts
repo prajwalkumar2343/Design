@@ -167,4 +167,60 @@ describe("editor reducer", () => {
     expect(next.nodes.root.childIds).toEqual([]);
     expect(next.documents["document-1"].rootNodeIds).toEqual(["root"]);
   });
+
+  it("detaches a root node from its previous document on a root-to-root document move", () => {
+    // Two documents (one per frame) — a node upserted into the other document
+    // with parentId still null must leave the FIRST document's root list.
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withRoot = editorReducer(current, {
+      type: "node/upsert",
+      node: {
+        id: "moving-root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element",
+        name: "Root",
+        attributes: {},
+        childIds: [],
+      },
+    });
+    expect(withRoot.documents["document-1"].rootNodeIds).toEqual(["moving-root"]);
+
+    const moved = editorReducer(withRoot, {
+      type: "node/upsert",
+      node: { ...withRoot.nodes["moving-root"], documentId: "document-2" },
+    });
+    expect(moved.documents["document-1"].rootNodeIds).toEqual([]);
+    expect(moved.documents["document-2"].rootNodeIds).toEqual(["moving-root"]);
+    expect(moved.nodes["moving-root"].documentId).toBe("document-2");
+  });
+
+  it("detaches a root node from its previous document in the bulk upsert path", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withRoot = editorReducer(current, {
+      type: "node/upsert",
+      node: {
+        id: "moving-root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element",
+        name: "Root",
+        attributes: {},
+        childIds: [],
+      },
+    });
+
+    const moved = editorReducer(withRoot, {
+      type: "nodes/upsert-many",
+      nodes: [{ ...withRoot.nodes["moving-root"], documentId: "document-2" }],
+    });
+    expect(moved.documents["document-1"].rootNodeIds).toEqual([]);
+    expect(moved.documents["document-2"].rootNodeIds).toEqual(["moving-root"]);
+  });
 });

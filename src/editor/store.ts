@@ -32,6 +32,7 @@ interface ActiveTransaction {
   label: string;
   before: EditorState;
   effect?: EditorHistoryEffect;
+  token: symbol;
 }
 
 export type EditorStoreListener = () => void;
@@ -41,6 +42,8 @@ export class EditorStore {
   private past: EditorHistoryEntry[] = [];
   private future: EditorHistoryEntry[] = [];
   private transaction: ActiveTransaction | null = null;
+  private deferredNotify = 0;
+  private pendingNotify = false;
   private readonly listeners = new Set<EditorStoreListener>();
 
   constructor(initialState: EditorState) {
@@ -119,17 +122,33 @@ export class EditorStore {
     return true;
   }
 
-  beginTransaction(label: string, effect?: EditorHistoryEffect): void {
+  /**
+   * Returns an ownership token for the opened transaction. Long-lived owners
+   * (pointer gestures, async bridge edits) pass it back to commit/rollback so
+   * a transaction sealed by another path mid-flight can't be finalized twice
+   * or merged into a foreign history entry.
+   */
+  beginTransaction(label: string, effect?: EditorHistoryEffect): symbol {
     if (this.transaction) {
       throw new Error("An editor transaction is already active");
     }
-    this.transaction = { label, before: this.state, effect };
+    const token = Symbol(label);
+    this.transaction = { label, before: this.state, effect, token };
+    return token;
   }
 
-  commitTransaction(effect?: EditorHistoryEffect): boolean {
+  /**
+   * With `token`, acts only when the caller still owns the active transaction
+   * — a mismatched token means another path already sealed the owner's
+   * transaction, so this no-ops instead of committing someone else's work.
+   */
+  commitTransaction(effect?: EditorHistoryEffect, token?: symbol): boolean {
     const transaction = this.transaction;
     if (!transaction) {
       throw new Error("No editor transaction is active");
+    }
+    if (token !== undefined && transaction.token !== token) {
+      return false;
     }
     this.transaction = null;
     const historyEffect = effect ?? transaction.effect;
@@ -150,10 +169,13 @@ export class EditorStore {
     return true;
   }
 
-  rollbackTransaction(): boolean {
+  rollbackTransaction(token?: symbol): boolean {
     const transaction = this.transaction;
     if (!transaction) {
       throw new Error("No editor transaction is active");
+    }
+    if (token !== undefined && transaction.token !== token) {
+      return false;
     }
     this.transaction = null;
     if (transaction.before === this.state) {
@@ -172,6 +194,27 @@ export class EditorStore {
     } catch (error) {
       this.rollbackTransaction();
       throw error;
+    }
+  }
+
+  /**
+   * Runs `callback` with listener notifications suspended, flushing a single
+   * notify at the end if anything changed. Used by bulk apply paths (agent
+   * bridge ops, snapshot ingestion) where each individual execute would
+   * otherwise schedule its own React render — N ops went through N renders.
+   * Transactions inside the callback keep their own history entries; only the
+   * intermediate notifies are coalesced.
+   */
+  batchNotifications(callback: () => void): void {
+    this.deferredNotify += 1;
+    try {
+      callback();
+    } finally {
+      this.deferredNotify -= 1;
+      if (this.deferredNotify === 0 && this.pendingNotify) {
+        this.pendingNotify = false;
+        this.notify();
+      }
     }
   }
 
@@ -208,6 +251,10 @@ export class EditorStore {
   }
 
   private notify(): void {
+    if (this.deferredNotify > 0) {
+      this.pendingNotify = true;
+      return;
+    }
     for (const listener of this.listeners) {
       listener();
     }

@@ -334,4 +334,221 @@ describe("iframe bridge protocol", () => {
     };
     expect(parseBridgeMessage(glassAckBadUndo)).toBeNull();
   });
+
+  it("accepts frame-scoped element ids in targets, commands, and hierarchies", () => {
+    const scopedTarget: BridgeElementTarget = {
+      ...target,
+      elementId: "frm~frame-1~id%3Atitle",
+    };
+    expect(
+      parseBridgeMessage({
+        protocol: BRIDGE_PROTOCOL,
+        version: BRIDGE_PROTOCOL_VERSION,
+        ...identity,
+        type: "event",
+        event: "select",
+        target: scopedTarget,
+        point: { x: 0, y: 0 },
+      }),
+    ).not.toBeNull();
+    expect(
+      parseBridgeMessage({
+        protocol: BRIDGE_PROTOCOL,
+        version: BRIDGE_PROTOCOL_VERSION,
+        ...identity,
+        type: "command",
+        requestId: "scoped-1",
+        command: { command: "set-text", targetId: "frm~frame-1~data:shape-1", text: "hi" },
+      }),
+    ).not.toBeNull();
+    expect(
+      parseBridgeMessage({
+        protocol: BRIDGE_PROTOCOL,
+        version: BRIDGE_PROTOCOL_VERSION,
+        ...identity,
+        type: "response",
+        requestId: "scoped-2",
+        ok: true,
+        result: {
+          kind: "snapshot",
+          snapshot: {
+            rootIds: ["frm~frame-1~path:html[1]"],
+            nodes: [
+              {
+                ...scopedTarget,
+                elementId: "frm~frame-1~path:html[1]",
+                parentId: null,
+                childIds: ["frm~frame-1~path:html[1]/body[1]"],
+              },
+            ],
+            truncated: false,
+          },
+        },
+      }),
+    ).not.toBeNull();
+  });
+
+  it("accepts whitespace-bearing text payloads but still rejects control characters", () => {
+    const command = (text: string) => ({
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "command",
+      requestId: "text-1",
+      command: { command: "set-text", targetId: target.elementId, text },
+    });
+    expect(parseBridgeMessage(command("line one\nline two\ttabbed"))).not.toBeNull();
+    expect(parseBridgeMessage(command("bad\x07bell"))).toBeNull();
+
+    const inspection = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "response",
+      requestId: "inspect-1",
+      ok: true,
+      result: {
+        kind: "inspection",
+        inspection: {
+          target,
+          text: "multi\nline\ntext",
+          attributes: {},
+          inlineStyle: {},
+          computedStyle: {},
+        },
+      },
+    };
+    expect(parseBridgeMessage(inspection)).not.toBeNull();
+    expect(
+      parseBridgeMessage({
+        ...inspection,
+        result: { ...inspection.result, inspection: { ...inspection.result.inspection, text: "bell\x07" } },
+      }),
+    ).toBeNull();
+  });
+
+  it("accepts token-linked shape fills and their acknowledgements", () => {
+    const command = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "command",
+      requestId: "fill-1",
+      command: { command: "set-shape-fill", targetId: "frm~f~data:s", color: "var(--brand-fill)" },
+    };
+    expect(parseBridgeMessage(command)).not.toBeNull();
+
+    const ack = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "response",
+      requestId: "fill-2",
+      ok: true,
+      result: {
+        kind: "command",
+        ack: {
+          kind: "command",
+          command: "set-shape-fill",
+          targetId: "frm~f~data:s",
+          previousColor: "#e5484d",
+          color: "var(--brand-fill)",
+          undo: { command: "set-shape-fill", targetId: "frm~f~data:s", color: "#e5484d" },
+        },
+      },
+    };
+    expect(parseBridgeMessage(ack)).not.toBeNull();
+    // Statement vectors still fail even though named colors and var() pass.
+    expect(
+      parseBridgeMessage({
+        ...command,
+        command: { ...command.command, color: "red; position:fixed" },
+      }),
+    ).toBeNull();
+    expect(
+      parseBridgeMessage({
+        ...command,
+        command: { ...command.command, color: "url(#x)" },
+      }),
+    ).toBeNull();
+  });
+
+  it("round-trips markup snapshots through delete/restore validation", () => {
+    const markupSnapshot = {
+      markup: '<div class="panel">\n  <span>hi</span>\n</div>',
+      parentId: "frm~frame-1~path:html[1]/body[1]",
+      index: 2,
+    };
+    const restoreCommand = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "command",
+      requestId: "restore-1",
+      command: { command: "restore-element", snapshot: markupSnapshot },
+    };
+    expect(parseBridgeMessage(restoreCommand)).not.toBeNull();
+
+    // The delete ack's undo is a markup restore — the whole ack validates or
+    // the delete times out and the undo step is lost.
+    const deleteAck = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "response",
+      requestId: "delete-1",
+      ok: true,
+      result: {
+        kind: "command",
+        ack: {
+          kind: "command",
+          command: "delete-element",
+          targetId: "frm~frame-1~path:html[1]/body[1]/div[2]",
+          undo: { command: "restore-element", snapshot: markupSnapshot },
+          replay: { command: "delete-element", targetId: "frm~frame-1~path:html[1]/body[1]/div[2]" },
+        },
+      },
+    };
+    expect(parseBridgeMessage(deleteAck)).not.toBeNull();
+
+    // Control characters and structural oversize still fail the snapshot.
+    expect(
+      parseBridgeMessage({
+        ...restoreCommand,
+        command: {
+          command: "restore-element",
+          snapshot: { ...markupSnapshot, markup: "<div>\x07</div>" },
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers attrId over the scoped snapshot id when restoring created elements", () => {
+    const snapshot = {
+      elementId: "frm~frame-1~data:shape-abc",
+      attrId: "shape-abc",
+      kind: "rectangle",
+      bounds: { x: 0, y: 0, width: 10, height: 10 },
+      text: "",
+      alt: "",
+      src: "",
+      points: [],
+      fill: "#fff",
+      stroke: "#000",
+      strokeWidth: 2,
+      radius: 0,
+      editable: true,
+      style: {},
+    };
+    expect(
+      parseBridgeMessage({
+        protocol: BRIDGE_PROTOCOL,
+        version: BRIDGE_PROTOCOL_VERSION,
+        ...identity,
+        type: "command",
+        requestId: "restore-2",
+        command: { command: "restore-element", snapshot },
+      }),
+    ).not.toBeNull();
+  });
 });

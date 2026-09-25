@@ -1,3 +1,4 @@
+import { bridgeElementScope, MAX_ELEMENT_ID_LENGTH } from "../bridge/protocol";
 import {
   validateCompleteHtml,
 } from "../router/html-admission";
@@ -42,7 +43,9 @@ export const WIRECANVAS_LIMITS = {
   maxFileBytes: 8 * 1024 * 1024,
   maxStringLength: 2 * 1024 * 1024,
   maxCollectionItems: 10_000,
-  maxIdLength: 256,
+  // Bridge element ids are frame-scoped (`frm~<frameId>~<data:|id:|path:…>`);
+  // deep documents produce long path ids, so the cap tracks the protocol's.
+  maxIdLength: MAX_ELEMENT_ID_LENGTH,
 } as const;
 
 export interface WireCanvasDurableState {
@@ -621,6 +624,73 @@ function readTokens(value: unknown, path: string): TokenStoreState {
   }
 }
 
+/**
+ * Node ids minted before element ids became frame-scoped are unscoped
+ * (`data:`/`id:`/`path:`) and only unique within their frame's document.
+ * Rewriting them to the scoped form the live bridge derives keeps saved
+ * nodes bound to their DOM counterparts — otherwise the next bridge
+ * snapshot mints fresh scoped nodes and strands the old ones, and two
+ * documents carrying the same unscoped id collide in the flat node map.
+ */
+const UNSCOPED_BRIDGE_NODE_ID = /^(?:data|id|path):/;
+
+function migrateUnscopedBridgeNodeIds(state: WireCanvasDurableState): void {
+  const migrations = new Map<NodeEntity, string>();
+  const taken = new Set(state.nodes.map((node) => node.id));
+  for (const node of state.nodes) {
+    if (!node.frameId || !UNSCOPED_BRIDGE_NODE_ID.test(node.id)) continue;
+    const scopedId = bridgeElementScope(node.frameId) + node.id;
+    // A collision would fuse two elements' identities — leave the node
+    // unscoped and let relation validation fail closed instead.
+    if (taken.has(scopedId)) continue;
+    taken.add(scopedId);
+    migrations.set(node, scopedId);
+  }
+  if (migrations.size === 0) return;
+
+  // parent/child/root references resolve inside one document — per-document
+  // maps disambiguate the same unscoped id minted by different frames.
+  const scopedByDocument = new Map<string, Map<string, string>>();
+  const migrationsByOldId = new Map<string, NodeEntity[]>();
+  for (const node of state.nodes) {
+    const scopedId = migrations.get(node);
+    if (!scopedId) continue;
+    const oldId = node.id;
+    let docMap = scopedByDocument.get(node.documentId);
+    if (!docMap) scopedByDocument.set(node.documentId, (docMap = new Map()));
+    if (!docMap.has(oldId)) docMap.set(oldId, scopedId);
+    const bucket = migrationsByOldId.get(oldId);
+    if (bucket) bucket.push(node);
+    else migrationsByOldId.set(oldId, [node]);
+    node.id = scopedId;
+  }
+  const remapInDoc = (documentId: string, id: string | null): string | null =>
+    id === null ? null : scopedByDocument.get(documentId)?.get(id) ?? id;
+  for (const node of state.nodes) {
+    node.parentId = remapInDoc(node.documentId, node.parentId);
+    node.childIds = node.childIds.map((id) => remapInDoc(node.documentId, id)!);
+  }
+  for (const document of state.documents) {
+    document.rootNodeIds = document.rootNodeIds.map((id) => remapInDoc(document.id, id)!);
+  }
+  // Selection references are global — disambiguate a shared unscoped id by
+  // the selected frame, which is how the editor resolved it at runtime.
+  const selectedFrames = new Set(state.selection.frameIds);
+  const remapSelectionId = (id: string | null): string | null => {
+    if (id === null) return null;
+    const candidates = migrationsByOldId.get(id);
+    if (!candidates) return id;
+    const scoped = (node: NodeEntity) => migrations.get(node)!;
+    const byFrame = candidates.find((node) => node.frameId !== undefined && selectedFrames.has(node.frameId));
+    return scoped(byFrame ?? candidates[0]!);
+  };
+  state.selection = {
+    ...state.selection,
+    nodeIds: state.selection.nodeIds.map((id) => remapSelectionId(id)!),
+    primaryNodeId: remapSelectionId(state.selection.primaryNodeId),
+  };
+}
+
 function readDurableState(value: unknown, path: string): WireCanvasDurableState {
   const input = record(value, path);
   expectKeys(input, ["session", "tokens", "documents", "pages", "frames", "nodes", "activePageId", "selection", "activeTool"], path);
@@ -639,6 +709,7 @@ function readDurableState(value: unknown, path: string): WireCanvasDurableState 
     selection: readSelection(input.selection, `${path}.selection`),
     activeTool: readActiveTool(input.activeTool, `${path}.activeTool`),
   };
+  migrateUnscopedBridgeNodeIds(state);
   validateRelations(state);
   return state;
 }

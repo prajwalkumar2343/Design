@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import { dirname } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
+import { canvasAgentBridge } from "./vite-plugin-canvas-agent";
 
 // A stray "%" in the path (e.g. /design/%) makes the static handler's
 // decodeURIComponent throw, answering a bare 404 instead of the SPA. Rewrite
@@ -32,7 +33,7 @@ const spaFallbackOnMalformedUrl: Plugin = {
 
 export default defineConfig({
   appType: "spa",
-  plugins: [react(), spaFallbackOnMalformedUrl],
+  plugins: [react(), spaFallbackOnMalformedUrl, canvasAgentBridge()],
   preview: {
     host: true,
   },

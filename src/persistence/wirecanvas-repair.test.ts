@@ -5,6 +5,7 @@ import {
   parseWireCanvasProject,
   serializeWireCanvasProject,
   WIRECANVAS_FILE_KIND,
+  WIRECANVAS_LIMITS,
 } from "./wirecanvas";
 import { repairWireCanvasProjectJson } from "./wirecanvas-repair";
 
@@ -282,7 +283,7 @@ describe("repairWireCanvasProjectJson", () => {
     const state = parseWireCanvasProject(repaired!);
     const sessionId = state.session.sessionId;
     expect(sessionId).not.toBeNull();
-    expect(sessionId!.length).toBeLessThanOrEqual(256);
+    expect(sessionId!.length).toBeLessThanOrEqual(WIRECANVAS_LIMITS.maxIdLength);
     expect(sessionId).not.toBe(briefId);
   });
 

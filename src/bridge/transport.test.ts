@@ -111,4 +111,41 @@ describe("iframe bridge transport validation", () => {
     transport.destroy();
     iframe.remove();
   });
+
+  it("reports DOM-mutating commands through onMutatingCommand but not reads", async () => {
+    const iframe = document.createElement("iframe");
+    document.body.appendChild(iframe);
+    const onMutatingCommand = vi.fn();
+    const transport = new IframeBridgeTransport({
+      iframe,
+      channel: "channel-3",
+      frameId: "frame-3",
+      handlers: { onMutatingCommand },
+    });
+    vi.spyOn(iframe.contentWindow!, "postMessage").mockImplementation(() => undefined);
+
+    const pending: Promise<unknown>[] = [
+      transport.setInlineStyle({ command: "set-inline-style", targetId: "id%3Aa", property: "color", value: "red" }),
+    ];
+    expect(onMutatingCommand).toHaveBeenCalledTimes(1);
+    expect(onMutatingCommand).toHaveBeenLastCalledWith(expect.objectContaining({ command: "set-inline-style" }));
+
+    pending.push(
+      transport.createElement({
+        command: "create-element",
+        elementId: "id%3Anew",
+        kind: "text",
+        bounds: { x: 0, y: 0, width: 10, height: 10 },
+        parentId: "id%3Abody",
+        text: "x",
+      }),
+      transport.startTextEdit("id%3Aa"),
+      transport.inspect("id%3Aa"),
+    );
+    expect(onMutatingCommand).toHaveBeenCalledTimes(2);
+
+    transport.destroy();
+    await Promise.allSettled(pending);
+    iframe.remove();
+  });
 });

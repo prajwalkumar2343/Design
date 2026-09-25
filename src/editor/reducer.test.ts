@@ -223,4 +223,105 @@ describe("editor reducer", () => {
     expect(moved.documents["document-1"].rootNodeIds).toEqual([]);
     expect(moved.documents["document-2"].rootNodeIds).toEqual(["moving-root"]);
   });
+
+  it("accepts a bulk snapshot that lists a child before its parent", () => {
+    const current = createEditorStateFromFrameSeeds([baseFrame]);
+    const child = {
+      id: "child",
+      documentId: "document-1",
+      parentId: "parent",
+      kind: "element" as const,
+      name: "Child",
+      attributes: {},
+      childIds: [],
+    };
+    const next = editorReducer(current, {
+      type: "nodes/upsert-many",
+      nodes: [
+        child,
+        {
+          id: "parent",
+          documentId: "document-1",
+          parentId: null,
+          kind: "element",
+          name: "Parent",
+          attributes: {},
+          childIds: ["child"],
+        },
+      ],
+    });
+    expect(next.nodes["parent"].childIds).toEqual(["child"]);
+    expect(next.documents["document-1"].rootNodeIds).toContain("parent");
+  });
+
+  it("attaches a bulk child to a parent whose snapshot row omitted it", () => {
+    const current = createEditorStateFromFrameSeeds([baseFrame]);
+    const next = editorReducer(current, {
+      type: "nodes/upsert-many",
+      nodes: [
+        {
+          id: "child",
+          documentId: "document-1",
+          parentId: "parent",
+          kind: "element",
+          name: "Child",
+          attributes: {},
+          childIds: [],
+        },
+        {
+          id: "parent",
+          documentId: "document-1",
+          parentId: null,
+          kind: "element",
+          name: "Parent",
+          attributes: {},
+          childIds: [],
+        },
+      ],
+    });
+    expect(next.nodes["parent"].childIds).toEqual(["child"]);
+  });
+
+  it("moves a root's whole subtree when it crosses documents", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withTree = [
+      {
+        id: "root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element" as const,
+        name: "Root",
+        attributes: {},
+        childIds: [] as string[],
+      },
+      {
+        id: "child",
+        documentId: "document-1",
+        parentId: "root",
+        kind: "element" as const,
+        name: "Child",
+        attributes: {},
+        childIds: [] as string[],
+      },
+    ].reduce(
+      (s, node) => editorReducer(s, { type: "node/upsert", node }),
+      current,
+    );
+    expect(withTree.nodes["root"].childIds).toEqual(["child"]);
+
+    const single = editorReducer(withTree, {
+      type: "node/upsert",
+      node: { ...withTree.nodes["root"], documentId: "document-2" },
+    });
+    expect(single.nodes["child"].documentId).toBe("document-2");
+
+    const bulk = editorReducer(withTree, {
+      type: "nodes/upsert-many",
+      nodes: [{ ...withTree.nodes["root"], documentId: "document-2" }],
+    });
+    expect(bulk.nodes["child"].documentId).toBe("document-2");
+  });
 });

@@ -119,6 +119,34 @@ function requireFrame(state: EditorState, frameId: string): FrameEntity {
   return frame;
 }
 
+// Moving a node across documents carries its whole subtree — descendants
+// left in the old document would fail parent/child ownership checks. Returns
+// the input record untouched when nothing needs retargeting.
+function retargetSubtreeDocument(
+  nodes: Record<NodeId, NodeEntity>,
+  rootId: NodeId,
+  documentId: string,
+): Record<NodeId, NodeEntity> {
+  const root = nodes[rootId];
+  if (!root) return nodes;
+  let out: Record<NodeId, NodeEntity> | null = null;
+  const queue = [...root.childIds];
+  const seen = new Set<NodeId>([rootId]);
+  while (queue.length > 0) {
+    const id = queue.pop() as NodeId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const child = (out ?? nodes)[id];
+    if (!child) continue;
+    if (child.documentId !== documentId) {
+      out ??= { ...nodes };
+      out[id] = { ...child, documentId };
+    }
+    queue.push(...child.childIds);
+  }
+  return out ?? nodes;
+}
+
 function uniqueExistingIds(
   ids: readonly string[],
   entities: Record<string, unknown>,
@@ -618,6 +646,9 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           nextState = { ...nextState, documents: { ...nextState.documents, [document.id]: { ...document, rootNodeIds: [...document.rootNodeIds, action.node.id] } } };
         }
       }
+      if (previous && previous.documentId !== action.node.documentId) {
+        nextState = { ...nextState, nodes: retargetSubtreeDocument(nextState.nodes, action.node.id, action.node.documentId) };
+      }
       return nextState;
     }
 
@@ -626,6 +657,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case "nodes/upsert-many": {
       if (action.nodes.length === 0) return state;
       const nodes: Record<NodeId, NodeEntity> = { ...state.nodes };
+      // Parent checks also consult the incoming batch: a snapshot may list a
+      // child before the parent that arrives later in the same batch.
+      const incomingById = new Map<NodeId, NodeEntity>(action.nodes.map((node) => [node.id, node]));
+      const deferredChildAdds: Array<{ parentId: NodeId; nodeId: NodeId }> = [];
       let documents = state.documents;
       let documentsCopied = false;
       const copyDocuments = () => {
@@ -637,7 +672,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       for (const node of action.nodes) {
         requireDocument(state, node.documentId);
         if (node.parentId) {
-          const parent = nodes[node.parentId];
+          const parent = nodes[node.parentId] ?? incomingById.get(node.parentId);
           if (!parent) {
             throw new EditorReducerError(`Unknown parent node: ${node.parentId}`);
           }
@@ -672,6 +707,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           const parent = nodes[node.parentId];
           if (parent && !parent.childIds.includes(node.id)) {
             nodes[parent.id] = { ...parent, childIds: [...parent.childIds, node.id] };
+          } else if (!parent) {
+            // Parent exists only in the incoming batch — attach once it has
+            // been written into the accumulated record below.
+            deferredChildAdds.push({ parentId: node.parentId, nodeId: node.id });
           }
         } else {
           const document = documents[node.documentId];
@@ -684,7 +723,22 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
           }
         }
       }
-      return { ...state, nodes, documents };
+      for (const { parentId, nodeId } of deferredChildAdds) {
+        const parent = nodes[parentId];
+        if (parent && !parent.childIds.includes(nodeId)) {
+          nodes[parentId] = { ...parent, childIds: [...parent.childIds, nodeId] };
+        }
+      }
+      // Cross-document moves reparent membership but the subtree must move
+      // with the root — children left in the old document orphan the tree.
+      let nextNodes = nodes;
+      for (const node of action.nodes) {
+        const previous = state.nodes[node.id];
+        if (previous && previous.documentId !== node.documentId) {
+          nextNodes = retargetSubtreeDocument(nextNodes, node.id, node.documentId);
+        }
+      }
+      return { ...state, nodes: nextNodes, documents };
     }
 
     case "node/update": {

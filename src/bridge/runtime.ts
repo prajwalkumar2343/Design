@@ -626,6 +626,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
 
   function removeLiquidFilter(element) {
     try {
+      unobserveLiquidLens(element);
       const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
       const ids = [liquidFilterId(rawId), liquidFilterId(rawId + "-surface")];
       const container = document.getElementById("design-tool-liquid-filters");
@@ -962,6 +963,92 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     } catch { return null; }
   }
 
+  const liquidLensBoxes = new WeakMap();
+  const liquidLensRestampTimers = new WeakMap();
+  let liquidLensObserver = null;
+
+  function liquidLensFid(element) {
+    const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
+    const kind = element.getAttribute("data-design-tool-kind") || "";
+    return GLASS_VECTOR_KINDS.indexOf(kind) !== -1 ? liquidFilterId(rawId) : liquidFilterId(rawId + "-surface");
+  }
+
+  function liquidLensFilter(element) {
+    const container = document.getElementById("design-tool-liquid-filters");
+    if (!container) return null;
+    return container.querySelector("filter[id='" + liquidLensFid(element) + "']");
+  }
+
+  function syncLiquidLensFrame(element, w, h) {
+    const filter = liquidLensFilter(element);
+    if (!filter) return;
+    const feImage = filter.querySelector("feImage");
+    if (!feImage) return;
+    const W = Math.max(1, Math.round(w));
+    const H = Math.max(1, Math.round(h));
+    if (feImage.getAttribute("width") === String(W) && feImage.getAttribute("height") === String(H)) return;
+    feImage.setAttribute("width", String(W));
+    feImage.setAttribute("height", String(H));
+  }
+
+  function restampLiquidLens(element) {
+    try {
+      if (!element.isConnected || !element.hasAttribute("data-design-tool-glass")) return;
+      const level = Number(element.getAttribute("data-design-tool-glass"));
+      if (!Number.isFinite(level) || level <= 0) return;
+      const kind = element.getAttribute("data-design-tool-kind") || "";
+      if (GLASS_VECTOR_KINDS.indexOf(kind) !== -1) applyVectorGlass(element, level);
+      else applySurfaceGlass(element, level);
+    } catch {}
+  }
+
+  function scheduleLiquidLensRestamp(element) {
+    const existing = liquidLensRestampTimers.get(element);
+    if (existing !== undefined) clearTimeout(existing);
+    liquidLensRestampTimers.set(element, setTimeout(function() {
+      liquidLensRestampTimers.delete(element);
+      restampLiquidLens(element);
+    }, 140));
+  }
+
+  function noteLiquidLensBox(element) {
+    const rect = element.getBoundingClientRect();
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    const last = liquidLensBoxes.get(element);
+    if (last && last.w === w && last.h === h) return;
+    liquidLensBoxes.set(element, { w: w, h: h });
+    if (w < 1 || h < 1) return;
+    syncLiquidLensFrame(element, w, h);
+    scheduleLiquidLensRestamp(element);
+  }
+
+  function observeLiquidLens(element) {
+    try {
+      if (typeof ResizeObserver === "undefined") return;
+      if (!liquidLensObserver) {
+        liquidLensObserver = new ResizeObserver(function(entries) {
+          for (const entry of entries) {
+            if (entry && entry.target instanceof Element) noteLiquidLensBox(entry.target);
+          }
+        });
+      }
+      const rect = element.getBoundingClientRect();
+      liquidLensBoxes.set(element, { w: Math.round(rect.width), h: Math.round(rect.height) });
+      liquidLensObserver.observe(element);
+    } catch {}
+  }
+
+  function unobserveLiquidLens(element) {
+    try {
+      if (liquidLensObserver) liquidLensObserver.unobserve(element);
+      const timer = liquidLensRestampTimers.get(element);
+      if (timer !== undefined) clearTimeout(timer);
+      liquidLensRestampTimers.delete(element);
+      liquidLensBoxes.delete(element);
+    } catch {}
+  }
+
   function shapeGeometryChild(element) {
     return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
   }
@@ -1108,6 +1195,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
 
     element.setAttribute("data-design-tool-glass", String(level));
+    observeLiquidLens(element);
   }
 
   function applySurfaceGlass(element, level) {
@@ -1156,6 +1244,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     // Keep existing radius but ensure clipping so backdrop follows it
     if (radius > 0) element.style.setProperty("overflow", "hidden", "important");
     element.setAttribute("data-design-tool-glass", String(level));
+    observeLiquidLens(element);
   }
 
   function createElementFromSpec(spec) {

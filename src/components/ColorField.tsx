@@ -1,7 +1,8 @@
+import { Droplets } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { parseCssColor } from "../editor/effects";
 
-/** A curated, gesture-friendly palette — no color wheel required. First swatch is transparent for pure glass. */
+/** A curated, gesture-friendly palette — no color wheel required. First swatch is plain transparent. */
 export const COLOR_SWATCHES = [
   "transparent", "#ffffff", "#ebebe8", "#d9d9d9", "#a8a8a1", "#666661", "#161615",
   "#f6b1a4", "#e5484d", "#ffab6b", "#e8792e",
@@ -14,12 +15,29 @@ export const COLOR_SWATCHES = [
 export function SwatchGrid({
   value,
   onPick,
+  onPickGlass,
+  glassActive = false,
 }: {
   value: string | null;
   onPick: (color: string) => void;
+  /** Surface fills pass this to offer the real glass effect (backdrop blur + sheen) as a pseudo-swatch. */
+  onPickGlass?: () => void;
+  glassActive?: boolean;
 }) {
   return (
     <span className="color-swatch-grid">
+      {onPickGlass ? (
+        <button
+          type="button"
+          className={`color-swatch color-swatch-glass${glassActive ? " is-active" : ""}`}
+          data-testid="color-option-glass"
+          aria-label="Glass"
+          title="Glass — transparent, frosted fill"
+          onClick={onPickGlass}
+        >
+          <Droplets size={11} strokeWidth={2} aria-hidden="true" />
+        </button>
+      ) : null}
       {COLOR_SWATCHES.map((color) => {
         const isTransparentSwatch = color === "transparent";
         const isTransparentValue = typeof value === "string" && value.trim().toLowerCase() === "transparent";
@@ -58,11 +76,16 @@ export function ColorField({
   value,
   onCommit,
   token,
+  onPickGlass,
+  glassActive,
 }: {
   label: string;
   value: string | null;
   onCommit: (value: string) => void;
   token?: ReactNode;
+  /** When set, the palette leads with a Glass swatch that applies the glass effect instead of a color. */
+  onPickGlass?: () => void;
+  glassActive?: boolean;
 }) {
   const isMixed = value === "mixed";
   const [open, setOpen] = useState(false);
@@ -81,6 +104,7 @@ export function ColorField({
     onCommit(next);
     setOpen(false);
   };
+  const commitGlass = onPickGlass ? () => { onPickGlass(); setOpen(false); } : undefined;
   return (
     <span className="color-field" ref={wrapRef}>
       <span className="color-field-label">{label}</span>
@@ -110,7 +134,7 @@ export function ColorField({
       />
       {open ? (
         <span className="color-popover" data-testid={`color-popover-${label}`}>
-          <SwatchGrid value={value} onPick={commit} />
+          <SwatchGrid value={value} onPick={commit} onPickGlass={commitGlass} glassActive={glassActive} />
         </span>
       ) : null}
       {token}

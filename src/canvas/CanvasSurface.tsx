@@ -882,6 +882,7 @@ export function CanvasSurface({
     scheduleDocumentSync(frameId);
   }, [scheduleDocumentSync]);
 
+
   // Called when a mounted frame completes bridge init (first snapshot) — frees
   // an in-flight slot so the next queued frame can load.
   const markFrameInitialized = useCallback((id: string) => {
@@ -1542,6 +1543,7 @@ export function CanvasSurface({
       showPersistenceFeedback({ kind: "error", message: `Could not import project: ${message}` });
     }
   }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
+
 
   // Continuous memory autosave — every meaningful editor change is persisted to this device
   useEffect(() => {

@@ -54,8 +54,7 @@ import {
 import {
   createEditorStateFromFrameSeeds,
   createEmptyEditorState,
-  selectAllFrameRenderModels,
-  selectFrameRenderModels,
+  createFrameRenderModelSelector,
   type NodeEntity,
   type PageEntity,
 } from "../editor/model";
@@ -182,7 +181,14 @@ import {
   NodeOverlayLayer,
   type OverlayNodeTarget,
 } from "../overlay/NodeOverlayLayer";
-import { parseTransform } from "../overlay/commands";
+import { cssPixelValue, parseTransform } from "../overlay/commands";
+import {
+  computeFreeformFit,
+  freeformBodyShiftFromValue,
+  freeformBodyShiftValue,
+  freeformFrameCommands,
+  isFreeformContentNode,
+} from "../overlay/freeform-fit";
 import {
   useNodeOverlayGestures,
   type NodeInteractionMode,
@@ -197,6 +203,8 @@ import {
   worldToScreen,
   zoomCameraAtPoint,
 } from "./camera";
+import { MAX_INFLIGHT_MOUNTS, MAX_MOUNTED_FRAMES, MOUNT_READY_TIMEOUT_MS } from "./constants";
+import { getVisibleWorldRect, mountEvictionCandidates, rectsIntersect } from "./virtualization";
 import type { Camera, CanvasFrame, Point, Rect, Size } from "./types";
 
 const CAMERA_FIT_PADDING = 148;
@@ -260,8 +268,8 @@ const worldStyle: CSSProperties = {
 
 type PointerOperation =
   | { type: "pan"; pointerId: number; last: Point }
-  | { type: "move-frame"; pointerId: number; last: Point; frameId: string; start: Point; frameStart: Point }
-  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string; start: Point; briefStart: Point }
+  | { type: "move-frame"; pointerId: number; last: Point; frameId: string; start: Point; frameStart: Point; txToken: symbol }
+  | { type: "move-brief-frame"; pointerId: number; last: Point; briefFrameId: string; start: Point; briefStart: Point; txToken: symbol }
   // A creation-tool drag on empty canvas. `start`/`last` are world-space
   // points; on release it mints a chromeless freeform frame holding the shape.
   | { type: "canvas-create"; pointerId: number; tool: "rectangle" | "text" | "image"; start: Point; last: Point };
@@ -475,12 +483,23 @@ export function CanvasSurface({
     editorStore.getState,
     editorStore.getState,
   );
-  const frames = useMemo(() => selectFrameRenderModels(editorState), [editorState]);
-  const allFrames = useMemo(() => selectAllFrameRenderModels(editorState), [editorState]);
+  // Render models are referentially stable for untouched frames (entities
+  // keep identity across unrelated dispatches), so memoized FrameViews skip
+  // every render that did not change them — the difference between an O(1)
+  // and an O(frames) commit.
+  const renderModelSelectorRef = useRef<ReturnType<typeof createFrameRenderModelSelector> | null>(null);
+  if (renderModelSelectorRef.current === null) {
+    renderModelSelectorRef.current = createFrameRenderModelSelector();
+  }
+  const { all: allFrames, active: frames } = renderModelSelectorRef.current(editorState);
   const briefFrame = editorState.session.briefFrame;
   const renderRects = useMemo(
     () => briefFrame ? [...frames, briefFrame] : frames,
     [briefFrame, frames],
+  );
+  const frameById = useMemo(
+    () => new Map(renderRects.map((frame) => [frame.id, frame])),
+    [renderRects],
   );
   const cameraRef = useRef<Camera>({ x: 0, y: 0, zoom: 1 });
   const surfaceRectRef = useRef<DOMRect | null>(null);
@@ -515,7 +534,6 @@ export function CanvasSurface({
   const cameraInitializedRef = useRef(false);
   const motionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wheelCommitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const wheelRafRef = useRef<number | null>(null);
   const nextFrameSequenceRef = useRef(suppliedFrames.length + 1);
   const frameDragRef = useRef<{ elementKey: string; transform: string } | null>(null);
   const lastBridgeTargetRef = useRef<{
@@ -526,6 +544,12 @@ export function CanvasSurface({
     bounds: Rect;
   } | null>(null);
   const bridgeControllersRef = useRef(new Map<string, IframeBridgeController>());
+  // Cumulative <body> re-anchor shift per freeform frame — shared with the
+  // node-gesture hook so every fit path and undo replay stays consistent.
+  const freeformShiftRef = useRef(new Map<string, Point>());
+  // Last seen document revision per freeform frame — a bump means the iframe
+  // reloaded and its <body> re-anchor transform is gone (see effect below).
+  const frameDocRevisionsRef = useRef(new Map<string, number>());
   const snapshotQueuesRef = useRef(new Map<string, Promise<void>>());
   const snapshotSequenceRef = useRef(new Map<string, number>());
   const refreshSnapshotRef = useRef<(frameId: string) => Promise<void>>(async () => undefined);
@@ -536,8 +560,21 @@ export function CanvasSurface({
 
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
+  // Mount-order callbacks read viewport through a ref so a surface resize
+  // doesn't churn their identity — a changing onBridgeEvent prop re-runs
+  // FrameView's bridge effect and its teardown would detach live iframes.
+  const viewportRef = useRef(viewport);
+  useEffect(() => { viewportRef.current = viewport; }, [viewport]);
   const [bridgeTargets, setBridgeTargets] = useState<Record<string, OverlayBridgeTargetState>>({});
   const [bridgeHierarchies, setBridgeHierarchies] = useState<Record<string, BridgeHierarchySnapshot>>({});
+  // Snapshot replies stream in one task each; merging their two setStates per
+  // reply cost a full CanvasSurface render per snapshot (~150 renders for a
+  // mount wave). They enqueue here and merge once per animation frame.
+  const pendingSnapshotUiRef = useRef<{
+    hierarchies: Record<string, BridgeHierarchySnapshot>;
+    targets: Record<string, OverlayBridgeTargetState>;
+    raf: number | null;
+  }>({ hierarchies: {}, targets: {}, raf: null });
   const [hoveredOverlayTarget, setHoveredOverlayTarget] = useState<OverlayNodeTarget | null>(null);
   const [textEditingNode, setTextEditingNode] = useState<{ frameId: string; nodeId: string } | null>(null);
   const [sidebarHoveredNode, setSidebarHoveredNode] = useState<{ frameId: string; nodeId: string } | null>(null);
@@ -549,7 +586,12 @@ export function CanvasSurface({
   const interactionModeRef = useRef<NodeInteractionMode>(interactionMode);
   useEffect(() => { interactionModeRef.current = interactionMode; }, [interactionMode]);
   const hoverRafRef = useRef<number | null>(null);
-  const pendingHoverRef = useRef<{ frameId: string; target: BridgeElementTarget } | null | undefined>(undefined);
+  const pendingHoverRef = useRef<{
+    frameId: string;
+    target: BridgeElementTarget | null;
+    iframe: HTMLIFrameElement;
+    point: Point;
+  } | null | undefined>(undefined);
   const [spacePressed, setSpacePressed] = useState(false);
   const [isFrameMenuOpen, setIsFrameMenuOpen] = useState(false);
   const [isShaderMenuOpen, setIsShaderMenuOpen] = useState(false);
@@ -644,8 +686,255 @@ export function CanvasSurface({
   shapeRadiusRef.current = shapeRadius;
   const creationMode = isCreationTool(activeTool);
 
+  // Frame mounting is keep-alive for interacted frames: an iframe mounts the
+  // first time its frame enters the viewport (plus overscan), and frames the
+  // user selects, draws in, or drags are pinned so live DOM edits and bridge
+  // state are never lost to an unload. Purely visibility-driven mounts stay
+  // unpinned — they hold no edits, so past MAX_MOUNTED_FRAMES the farthest
+  // ones are evicted back to placeholders. Never-mounted frames render a
+  // lightweight placeholder — this is what lets a canvas with hundreds of
+  // frames open instantly, while content-visibility keeps already-mounted
+  // off-screen frames nearly free to composite.
+  const mountedFrameIdsRef = useRef(new Set<string>());
+  // Frames mounted by an interaction (selection, creation, drag) are pinned —
+  // they may hold live DOM edits and are never evicted. Visibility-scan mounts
+  // are unpinned and evict farthest-off-screen first past MAX_MOUNTED_FRAMES.
+  const pinnedFrameIdsRef = useRef(new Set<string>());
+  // Frames holding DOM edits that exist only inside the iframe — evicting one
+  // would destroy work the srcDoc doesn't contain. Mutating bridge commands
+  // mark their frame via markFrameDirty; a dirty frame keeps its mount pin
+  // until its document unloads.
+  const dirtyFrameIdsRef = useRef(new Set<string>());
+  const [liveFrameIds, setLiveFrameIds] = useState<ReadonlySet<string>>(() => new Set());
+  const pendingMountIdsRef = useRef<string[]>([]);
+  const queuedMountIdsRef = useRef(new Set<string>());
+  // Mounts that have been granted a slot but haven't reported their first
+  // bridge snapshot yet — bounded by MAX_INFLIGHT_MOUNTS so iframe parse /
+  // runtime / font costs serialize instead of stacking into one long freeze.
+  // Each entry is a failsafe timer that releases the slot if the frame never
+  // reports ready.
+  const inFlightMountsRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const mountPumpRef = useRef<{ kind: "idle" | "timeout"; id: number } | null>(null);
+  // Filled after scheduleVisibilityScan is defined — a stale detach (fired
+  // from an unmounted FrameView's deferred cleanup) can land after the frame
+  // was already re-mounted (delete → undo inside the timer window) and wipes
+  // the fresh bookkeeping; the rescan remounts a frame that still exists.
+  const rescanAfterDetachRef = useRef<(() => void) | null>(null);
+
+  const cancelMountPump = useCallback(() => {
+    const handle = mountPumpRef.current;
+    if (handle === null) return;
+    mountPumpRef.current = null;
+    if (handle.kind === "idle" && typeof window.cancelIdleCallback === "function") {
+      window.cancelIdleCallback(handle.id);
+    } else {
+      window.clearTimeout(handle.id);
+    }
+  }, []);
+
+  // Clears every mount-related ref — used on project switches/replaces where
+  // the frame set changes wholesale.
+  const resetMountRefs = useCallback(() => {
+    cancelMountPump();
+    pendingMountIdsRef.current = [];
+    queuedMountIdsRef.current.clear();
+    for (const timer of inFlightMountsRef.current.values()) window.clearTimeout(timer);
+    inFlightMountsRef.current.clear();
+    mountedFrameIdsRef.current.clear();
+    pinnedFrameIdsRef.current.clear();
+    dirtyFrameIdsRef.current.clear();
+    // A wholesale frame-set swap kills any in-flight text edit too — the set
+    // gates the top-level keyboard handler, so a stale entry would lock
+    // canvas shortcuts for the rest of the session.
+    frameTextEditRef.current.clear();
+    setTextEditingNode(null);
+    // Shift/revision trackers are per-mount-session state too — frame ids can
+    // recur across projects ("frame-1"), and a stale shift would double-apply
+    // to an unrelated frame with the same id.
+    freeformShiftRef.current.clear();
+    frameDocRevisionsRef.current.clear();
+  }, [cancelMountPump]);
+
+  const scheduleMountPump = useCallback((pump: () => void) => {
+    if (mountPumpRef.current !== null) return;
+    // Idle-scheduled so mount work always yields to input and rendering.
+    if (typeof window.requestIdleCallback === "function") {
+      mountPumpRef.current = { kind: "idle", id: window.requestIdleCallback(pump, { timeout: 150 }) };
+    } else {
+      mountPumpRef.current = { kind: "timeout", id: window.setTimeout(pump, 24) };
+    }
+  }, []);
+
+  // Distance from a frame's center to the viewport center — the swap/eviction
+  // ordering key. Unknown frames sort as infinitely far.
+  const frameDistanceSq = useCallback((id: string) => {
+    const frame = editorStore.getState().frames[id];
+    if (!frame) return Number.POSITIVE_INFINITY;
+    const rect = getVisibleWorldRect(cameraRef.current, viewportRef.current, 0);
+    const dx = frame.x + frame.width / 2 - (rect.x + rect.width / 2);
+    const dy = frame.y + frame.height / 2 - (rect.y + rect.height / 2);
+    return dx * dx + dy * dy;
+  }, [editorStore]);
+
+  const releaseInFlightMount = useCallback((id: string) => {
+    const timer = inFlightMountsRef.current.get(id);
+    if (timer === undefined) return;
+    window.clearTimeout(timer);
+    inFlightMountsRef.current.delete(id);
+  }, []);
+
+  // Drops the farthest-from-view unpinned mounts when over cap. Returns true
+  // when anything changed so callers can flush one setLiveFrameIds.
+  const evictOverflowMounts = useCallback(() => {
+    const mounted = mountedFrameIdsRef.current;
+    if (mounted.size <= MAX_MOUNTED_FRAMES) return false;
+    let evicted = false;
+    for (const { id } of mountEvictionCandidates(mounted, pinnedFrameIdsRef.current, frameDistanceSq)) {
+      if (mounted.size <= MAX_MOUNTED_FRAMES) break;
+      mounted.delete(id);
+      releaseInFlightMount(id);
+      evicted = true;
+    }
+    return evicted;
+  }, [frameDistanceSq, releaseInFlightMount]);
+
+  const grantMount = useCallback((id: string, options?: { force?: boolean }) => {
+    const mounted = mountedFrameIdsRef.current;
+    if (mounted.has(id)) return true;
+    // A queued id can outlive its frame — a delete landing between the scan
+    // and the grant must not mint a phantom mount (and its failsafe timer).
+    if (!editorStore.getState().frames[id]) return false;
+    if (mounted.size >= MAX_MOUNTED_FRAMES) {
+      // At cap a scan mount only proceeds by displacing a strictly farther
+      // unpinned mount — otherwise the iframe cost is pure churn. Interaction
+      // mounts are forced: the user just pointed at this frame, it must load.
+      const [farthest] = mountEvictionCandidates(mounted, pinnedFrameIdsRef.current, frameDistanceSq);
+      if (farthest && (options?.force || frameDistanceSq(id) < farthest.distanceSq)) {
+        mounted.delete(farthest.id);
+        releaseInFlightMount(farthest.id);
+      } else if (!options?.force) {
+        return false;
+      }
+      // Forced with nothing evictable (all pinned) exceeds the cap — user
+      // intent wins over the budget.
+    }
+    mounted.add(id);
+    inFlightMountsRef.current.set(id, setTimeout(() => {
+      inFlightMountsRef.current.delete(id);
+      scheduleMountPumpRef.current?.();
+    }, MOUNT_READY_TIMEOUT_MS));
+    return true;
+  }, [editorStore, frameDistanceSq, releaseInFlightMount]);
+
+  // A mutating bridge command landed (or is in flight) on this frame — its
+  // document now carries DOM edits the srcDoc lacks, so it must stay mounted.
+  const markFrameDirty = useCallback((frameId: string) => {
+    dirtyFrameIdsRef.current.add(frameId);
+    pinnedFrameIdsRef.current.add(frameId);
+  }, []);
+
+  // Called when a mounted frame completes bridge init (first snapshot) — frees
+  // an in-flight slot so the next queued frame can load.
+  const markFrameInitialized = useCallback((id: string) => {
+    if (!inFlightMountsRef.current.has(id)) return;
+    releaseInFlightMount(id);
+    scheduleMountPumpRef.current?.();
+  }, [releaseInFlightMount]);
+
+  // Iframe creation + srcDoc parse is the heaviest per-frame cost the canvas
+  // has. Mount bursts (a pan sweeping new frames into view) are queued,
+  // deduplicated, and drained at most MAX_INFLIGHT_MOUNTS concurrent loads —
+  // and ONLY while idle: a mount inside a pan/zoom gesture steals the frame
+  // the transform update needs. The queue resumes on settle and on each
+  // frame's readiness signal.
+  const flushMountQueue = useCallback(() => {
+    mountPumpRef.current = null;
+    if (interactionModeRef.current !== "idle") return;
+    const pending = pendingMountIdsRef.current;
+    const queued = queuedMountIdsRef.current;
+    const mounted = mountedFrameIdsRef.current;
+    let changed = false;
+    while (pending.length > 0 && inFlightMountsRef.current.size < MAX_INFLIGHT_MOUNTS) {
+      const id = pending.shift()!;
+      queued.delete(id);
+      if (mounted.has(id)) continue;
+      if (grantMount(id)) changed = true;
+      // A denied grant (at cap, not closer) just drops — the next scan
+      // re-queues it if the camera moves it into range.
+    }
+    if (evictOverflowMounts()) changed = true;
+    if (changed) setLiveFrameIds(new Set(mounted));
+    if (pending.length > 0 && inFlightMountsRef.current.size < MAX_INFLIGHT_MOUNTS) {
+      scheduleMountPump(flushMountQueue);
+    }
+    // When the in-flight window is full the pump waits — markFrameInitialized
+    // or a failsafe timer restarts it.
+  }, [evictOverflowMounts, grantMount, scheduleMountPump]);
+
+  // Ref indirection so the failsafe timers (created before the callbacks they
+  // reference) always reach the latest pump.
+  const scheduleMountPumpRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    scheduleMountPumpRef.current = () => {
+      if (pendingMountIdsRef.current.length === 0) return;
+      scheduleMountPump(flushMountQueue);
+    };
+  }, [scheduleMountPump, flushMountQueue]);
+
+  const ensureFramesLive = useCallback((ids: Iterable<string>, options?: { pin?: boolean }) => {
+    const mounted = mountedFrameIdsRef.current;
+    const fresh: string[] = [];
+    for (const id of ids) {
+      if (options?.pin) pinnedFrameIdsRef.current.add(id);
+      if (mounted.has(id)) continue;
+      if (options?.pin) {
+        // A scan-queued frame the user just interacted with is promoted out
+        // of the queue — it mounts like a fresh interaction mount instead of
+        // waiting its turn behind scan work.
+        queuedMountIdsRef.current.delete(id);
+        const pendingIndex = pendingMountIdsRef.current.indexOf(id);
+        if (pendingIndex !== -1) pendingMountIdsRef.current.splice(pendingIndex, 1);
+        fresh.push(id);
+      } else if (!queuedMountIdsRef.current.has(id)) {
+        fresh.push(id);
+      }
+    }
+    if (fresh.length === 0) return;
+    // Interaction mounts (selection, creation, the frame under the pointer)
+    // apply right away — callers reach for the bridge immediately after, and
+    // they must not queue behind a scan backlog the user never asked for.
+    // Visibility-scan mounts ALWAYS queue: an un-gated immediate grant lands
+    // an iframe load mid-gesture (wheel pans idle in 150ms gaps, so scan
+    // pushes during those gaps were mounting synchronously and hitching the
+    // next tick).
+    if (options?.pin && fresh.length <= 4) {
+      for (const id of fresh) grantMount(id, { force: true });
+      evictOverflowMounts();
+      setLiveFrameIds(new Set(mounted));
+      return;
+    }
+    // A pinned burst larger than the immediate grant limit still jumps the
+    // queue — the user is waiting on it ahead of any scan mount.
+    if (options?.pin) pendingMountIdsRef.current.unshift(...fresh);
+    else pendingMountIdsRef.current.push(...fresh);
+    for (const id of fresh) queuedMountIdsRef.current.add(id);
+    if (interactionModeRef.current === "idle") scheduleMountPump(flushMountQueue);
+    // Mid-gesture pushes wait for the settle effect below to restart the pump.
+  }, [evictOverflowMounts, flushMountQueue, grantMount, scheduleMountPump]);
+
+  // The mount pump pauses while a gesture runs — resume draining shortly after
+  // the interaction settles so frames pop in right after the pointer releases.
+  // The delay doubles as a quiet period: wheel pans idle briefly between ticks
+  // and a mount landing mid-stream is exactly the hitch this avoids.
+  useEffect(() => {
+    if (interactionMode !== "idle") return;
+    if (pendingMountIdsRef.current.length === 0 || mountPumpRef.current !== null) return;
+    mountPumpRef.current = { kind: "timeout", id: window.setTimeout(flushMountQueue, 350) };
+  }, [interactionMode, flushMountQueue]);
+
   const setSelectedFrameId = useCallback(
     (frameId: string | null) => {
+      if (frameId) ensureFramesLive([frameId], { pin: true });
       editorStore.execute(selectBriefFrameCommand(null), { history: "skip" });
       editorStore.execute(
         setSelectionCommand({
@@ -657,8 +946,59 @@ export function CanvasSurface({
         { history: "skip" },
       );
     },
-    [editorStore],
+    [editorStore, ensureFramesLive],
   );
+
+  // Selection implies imminent interaction — pin selected frames so they stay
+  // mounted, including programmatic selections (agent pushes, paste) that skip
+  // setSelectedFrameId. When a frame leaves the selection its pin is released
+  // unless it's dirty: without the release every click grows the pin set, and
+  // past ~64 unique selections the cap starves scan mounts entirely — visible
+  // untouched frames would stay placeholders for the rest of the session.
+  useEffect(() => {
+    const pinned = pinnedFrameIdsRef.current;
+    const dirty = dirtyFrameIdsRef.current;
+    const selected = editorState.selection.frameIds;
+    for (const frameId of selected) {
+      if (editorStore.getState().frames[frameId]) ensureFramesLive([frameId], { pin: true });
+    }
+    for (const id of [...pinned]) {
+      // A frame with an open text-edit session keeps its pin even before the
+      // commit marks it dirty — evicting it mid-edit would lose the typing.
+      if (!selected.includes(id) && !dirty.has(id) && !frameTextEditRef.current.has(id)) {
+        pinned.delete(id);
+      }
+    }
+  }, [editorState.selection, editorStore, ensureFramesLive]);
+
+  // A document revision bump means the srcDoc/mode changed and the iframe
+  // reloads (replaceHtml, agent push, token rename rewrite). The fresh
+  // document carries none of the old document's live state — no <body>
+  // transform, no DOM edits, no text-edit session — so trackers that mirror
+  // live state would desync (double-applied shifts, a dirty flag pinning an
+  // unloaded edit, a stale text-edit flag locking every canvas shortcut).
+  useEffect(() => {
+    const seen = frameDocRevisionsRef.current;
+    const live = new Set<string>();
+    for (const frame of Object.values(editorState.frames)) {
+      live.add(frame.id);
+      const revision = editorState.documents[frame.documentId]?.revision ?? 0;
+      const last = seen.get(frame.id);
+      if (last !== undefined && last !== revision) {
+        freeformShiftRef.current.delete(frame.id);
+        dirtyFrameIdsRef.current.delete(frame.id);
+        frameTextEditRef.current.delete(frame.id);
+        setTextEditingNode((current) => (current?.frameId === frame.id ? null : current));
+        // The pin mirrored the just-cleared dirty/edit state — release it now
+        // unless the selection independently keeps this frame mounted.
+        if (!editorState.selection.frameIds.includes(frame.id)) {
+          pinnedFrameIdsRef.current.delete(frame.id);
+        }
+      }
+      seen.set(frame.id, revision);
+    }
+    for (const id of [...seen.keys()]) if (!live.has(id)) seen.delete(id);
+  }, [editorState.frames, editorState.documents, editorState.selection.frameIds]);
 
   const {
     selectBriefFrame,
@@ -778,6 +1118,8 @@ export function CanvasSurface({
           snapshotSequenceRef.current.clear();
           setBridgeTargets({});
           setBridgeHierarchies({});
+          pendingSnapshotUiRef.current.hierarchies = {};
+          pendingSnapshotUiRef.current.targets = {};
         } catch {}
       }
       setShowLakeOverlay(false);
@@ -832,11 +1174,14 @@ export function CanvasSurface({
         clearComments();
         setShaderElements([]);
         setSelectedShaderElementId(null);
+        resetMountRefs();
         bridgeControllersRef.current.clear();
         snapshotQueuesRef.current.clear();
         snapshotSequenceRef.current.clear();
         setBridgeTargets({});
         setBridgeHierarchies({});
+        pendingSnapshotUiRef.current.hierarchies = {};
+        pendingSnapshotUiRef.current.targets = {};
         editorStore.replaceState(next, { label: `Open ${rec.name}` });
         setActiveProjectId(id);
         setActiveProjectIdState(id);
@@ -883,7 +1228,7 @@ export function CanvasSurface({
         });
       }
     },
-    [clearComments, editorStore, refreshLocalProjects],
+    [clearComments, editorStore, refreshLocalProjects, resetMountRefs],
   );
 
   const handleDeleteLakeProject = useCallback(
@@ -907,6 +1252,8 @@ export function CanvasSurface({
         bridgeControllersRef.current.clear();
         setBridgeTargets({});
         setBridgeHierarchies({});
+        pendingSnapshotUiRef.current.hierarchies = {};
+        pendingSnapshotUiRef.current.targets = {};
         showPersistenceFeedback({ kind: "success", message: "Project deleted. Returned to home." });
       } else {
         showPersistenceFeedback({ kind: "success", message: "Project deleted." });
@@ -1087,6 +1434,8 @@ export function CanvasSurface({
         snapshotSequenceRef.current.clear();
         setBridgeTargets({});
         setBridgeHierarchies({});
+        pendingSnapshotUiRef.current.hierarchies = {};
+        pendingSnapshotUiRef.current.targets = {};
         setPersistenceVersion((current) => current + 1);
         showPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
         if (shouldUseLocalMemory) {
@@ -1145,12 +1494,26 @@ export function CanvasSurface({
   }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
 
 
+  // Agent bridge: the Vite plugin (vite-plugin-canvas-agent.ts) exposes a
+  // loopback inbox that local Claude/Codex sessions push HTML/CSS into. Runs
+  // on dev servers automatically; ?agent=1 opts in on preview builds.
+  useEffect(() => {
+    const enabled =
+      import.meta.env.DEV ||
+      new URLSearchParams(window.location.search).has("agent");
+    if (!enabled) return;
+    return startAgentBridge(editorStore);
+  }, [editorStore]);
+
   // Continuous memory autosave — every meaningful editor change is persisted to this device
   useEffect(() => {
     if (!shouldUseLocalMemory) return;
     const schedule = () => {
       if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
       autosaveTimerRef.current = setTimeout(() => {
+        // Serialization + localStorage write is expensive on large projects —
+        // run it at idle time so it can't steal a frame from interactions.
+        const run = () => {
         try {
           const state = editorStore.getState();
           const isEmpty =
@@ -1212,6 +1575,12 @@ export function CanvasSurface({
           autosaveQuotaWarnedRef.current = false;
           setLocalProjects(without.map(({ data: _d, ...rest }) => rest));
         } catch {}
+        };
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(run, { timeout: 2000 });
+        } else {
+          run();
+        }
       }, 650);
     };
     const unsub = editorStore.subscribe(schedule);
@@ -1265,6 +1634,8 @@ export function CanvasSurface({
             snapshotSequenceRef.current.clear();
             setBridgeTargets({});
             setBridgeHierarchies({});
+            pendingSnapshotUiRef.current.hierarchies = {};
+            pendingSnapshotUiRef.current.targets = {};
             editorStore.replaceState(next, { label: `Navigate to ${rec.name}` });
             setActiveProjectId(nextId);
             setActiveProjectIdState(nextId);
@@ -1305,25 +1676,71 @@ export function CanvasSurface({
     return () => window.removeEventListener("popstate", onPopState);
   }, [shouldUseLocalMemory, editorStore, clearComments, refreshLocalProjects]);
 
+  // Bridge-reported bounds are measured inside the (possibly shifted) <body>:
+  // rendered = canonical - shift. Stored targets are normalized into the
+  // body's unshifted coordinate space (+shift on intake) so toOverlayTarget
+  // only ever subtracts the live shift and reports true world bounds.
+  const shiftBridgeTarget = useCallback(
+    (frameId: string, target: BridgeElementTarget): BridgeElementTarget => {
+      const shift = freeformShiftRef.current.get(frameId);
+      if (!shift || (shift.x === 0 && shift.y === 0)) return target;
+      if (!editorStore.getState().frames[frameId]?.freeform) return target;
+      return {
+        ...target,
+        bounds: {
+          ...target.bounds,
+          x: target.bounds.x + shift.x,
+          y: target.bounds.y + shift.y,
+        },
+      };
+    },
+    [editorStore],
+  );
+
   const toOverlayTarget = useCallback(
     (entry: OverlayBridgeTargetState): OverlayNodeTarget | null => {
       const frame = editorStore.getState().frames[entry.frameId];
       if (!frame) return null;
+      const shift = frame.freeform
+        ? freeformShiftRef.current.get(entry.frameId)
+        : undefined;
       const transform = entry.inspection?.inlineStyle.transform ?? entry.inspection?.computedStyle.transform;
       const parsedRotation = transform ? parseTransform(transform)?.rotation ?? 0 : 0;
+      const bounds = {
+        x: frame.x + entry.target.bounds.x - (shift?.x ?? 0),
+        y: frame.y + entry.target.bounds.y - (shift?.y ?? 0),
+        width: entry.target.bounds.width,
+        height: entry.target.bounds.height,
+      };
+      // The measured AABB rotated by `rotation` would double-apply the angle —
+      // reconstruct the unrotated rect (same center, laid-out size) so the
+      // overlay can paint the element's real box.
+      let canonicalBounds: Rect | undefined;
+      if (Math.abs(parsedRotation) > 0.01) {
+        const width = cssPixelValue(
+          entry.inspection?.inlineStyle.width ?? entry.inspection?.computedStyle.width,
+        );
+        const height = cssPixelValue(
+          entry.inspection?.inlineStyle.height ?? entry.inspection?.computedStyle.height,
+        );
+        if (width !== null && height !== null && width > 0 && height > 0) {
+          canonicalBounds = {
+            x: bounds.x + bounds.width / 2 - width / 2,
+            y: bounds.y + bounds.height / 2 - height / 2,
+            width,
+            height,
+          };
+        }
+      }
       return {
         frameId: entry.frameId,
         nodeId: entry.target.elementId,
         tagName: entry.target.tagName,
         name: entry.target.name,
-        bounds: {
-          x: frame.x + entry.target.bounds.x,
-          y: frame.y + entry.target.bounds.y,
-          width: entry.target.bounds.width,
-          height: entry.target.bounds.height,
-        },
+        bounds,
         locked: editorStore.getState().nodes[entry.target.elementId]?.locked ?? entry.target.locked,
         rotation: parsedRotation || undefined,
+        canonicalBounds,
       };
     },
     [editorStore],
@@ -1369,6 +1786,7 @@ export function CanvasSurface({
   const beginCreationPointer = useCallback((frameId: string, point: Point, pointerId: number) => {
     const tool = activeToolRef.current;
     if (!isCreationTool(tool)) return;
+    ensureFramesLive([frameId], { pin: true });
     surfaceRef.current?.focus({ preventScroll: true });
     setCreationError(null);
     setInteractionMode("creating");
@@ -1385,7 +1803,7 @@ export function CanvasSurface({
       start: point,
       last: point,
     };
-  }, []);
+  }, [ensureFramesLive]);
 
   const moveCreationPointer = useCallback((frameId: string, point: Point, pointerId: number) => {
     const operation = creationRef.current;
@@ -1440,6 +1858,26 @@ export function CanvasSurface({
     setInteractionMode("idle");
   }, []);
 
+  const buildBridgeEventContext = useCallback((iframeEl: HTMLIFrameElement, surfaceEl: HTMLElement) => {
+    const surfaceRect = surfaceRectRef.current ?? surfaceEl.getBoundingClientRect();
+    const iframeRect = iframeEl.getBoundingClientRect();
+    return {
+      iframeRect: {
+        x: iframeRect.x,
+        y: iframeRect.y,
+        width: iframeRect.width,
+        height: iframeRect.height,
+      },
+      surfaceRect: {
+        x: surfaceRect.x,
+        y: surfaceRect.y,
+        width: surfaceRect.width,
+        height: surfaceRect.height,
+      },
+      camera: cameraRef.current,
+    };
+  }, []);
+
   const handleBridgeEvent = useCallback(
     (frameId: string, message: BridgeEventMessage, iframe: HTMLIFrameElement) => {
       const surface = surfaceRef.current;
@@ -1448,6 +1886,9 @@ export function CanvasSurface({
 
       if (message.event === "text-edit-start") {
         frameTextEditRef.current.add(frameId);
+        // An open edit session is in-flight user work — keep the frame
+        // mounted until it commits or cancels (the commit marks it dirty).
+        pinnedFrameIdsRef.current.add(frameId);
         setTextEditingNode({ frameId, nodeId: message.target?.elementId ?? "" });
       } else if (message.event === "text-commit" || message.event === "text-cancel") {
         frameTextEditRef.current.delete(frameId);
@@ -1458,6 +1899,10 @@ export function CanvasSurface({
       const currentShape = activeShapeRef.current;
       const isCreationToolActive = isCreationTool(currentTool);
       if (message.event === "pointerdown" && isCreationToolActive) {
+        // The creation layer normally intercepts this press, but wherever it
+        // reaches the iframe the same rule holds: creation edits live DOM, so
+        // the frame must be pinned against eviction like beginCreationPointer.
+        ensureFramesLive([frameId], { pin: true });
         if (currentTool === "comment") {
           addCommentRef.current(frameId, message.point);
         } else {
@@ -1568,23 +2013,53 @@ export function CanvasSurface({
         return;
       }
 
-      const surfaceRect = surfaceRectRef.current ?? surface.getBoundingClientRect();
-      const iframeRect = iframe.getBoundingClientRect();
-      const context = {
-        iframeRect: {
-          x: iframeRect.x,
-          y: iframeRect.y,
-          width: iframeRect.width,
-          height: iframeRect.height,
-        },
-        surfaceRect: {
-          x: surfaceRect.x,
-          y: surfaceRect.y,
-          width: surfaceRect.width,
-          height: surfaceRect.height,
-        },
-        camera: cameraRef.current,
-      };
+      // Hover is the highest-frequency bridge event — stash it and do the
+      // layout reads (getBoundingClientRect) inside one rAF batch instead of
+      // forcing sync layout on every message.
+      if (message.event === "hover") {
+        pendingHoverRef.current = { frameId, target: message.target, iframe, point: message.point };
+        if (hoverRafRef.current === null) {
+          hoverRafRef.current = requestAnimationFrame(() => {
+            hoverRafRef.current = null;
+            const pending = pendingHoverRef.current;
+            pendingHoverRef.current = undefined;
+            if (pending == null) return;
+            const pendingTarget = pending.target;
+            if (!pendingTarget) {
+              lastBridgeTargetRef.current = null;
+              setHoveredOverlayTarget(null);
+              return;
+            }
+            const context = buildBridgeEventContext(pending.iframe, surface);
+            const mappedPoint = mapIframePointToCanvas(pending.point, context);
+            lastBridgeTargetRef.current = {
+              frameId: pending.frameId,
+              elementId: pendingTarget.elementId,
+              screen: mappedPoint.screen,
+              world: mappedPoint.world,
+              bounds: mapIframeRectToCanvas(pendingTarget.bounds, context),
+            };
+            const shifted = shiftBridgeTarget(pending.frameId, pendingTarget);
+            setHoveredOverlayTarget(
+              toOverlayTarget({ frameId: pending.frameId, target: shifted, inspection: null }),
+            );
+            setBridgeTargets((current) => {
+              const key = targetStateKey(pending.frameId, pendingTarget.elementId);
+              return {
+                ...current,
+                [key]: {
+                  frameId: pending.frameId,
+                  target: shifted,
+                  inspection: current[key]?.inspection ?? null,
+                },
+              };
+            });
+          });
+        }
+        return;
+      }
+
+      const context = buildBridgeEventContext(iframe, surface);
 
       if (message.event !== "pointermove" && message.target) {
         const mappedPoint = mapIframePointToCanvas(message.point, context);
@@ -1595,60 +2070,19 @@ export function CanvasSurface({
           world: mappedPoint.world,
           bounds: mapIframeRectToCanvas(message.target.bounds, context),
         };
-        // Batch bridge target updates — hover is high frequency, avoid React thrash
-        if (message.event === "hover") {
-          pendingHoverRef.current = { frameId, target: message.target };
-          if (hoverRafRef.current === null) {
-            hoverRafRef.current = requestAnimationFrame(() => {
-              hoverRafRef.current = null;
-              const pending = pendingHoverRef.current;
-              pendingHoverRef.current = undefined;
-              if (pending !== undefined) {
-                setHoveredOverlayTarget(
-                  pending ? toOverlayTarget({ frameId: pending.frameId, target: pending.target, inspection: null }) : null,
-                );
-                if (pending) {
-                  setBridgeTargets((current) => {
-                    const key = targetStateKey(pending.frameId, pending.target.elementId);
-                    return {
-                      ...current,
-                      [key]: {
-                        frameId: pending.frameId,
-                        target: pending.target,
-                        inspection: current[key]?.inspection ?? null,
-                      },
-                    };
-                  });
-                }
-              }
-            });
-          }
-          return;
-        }
         setBridgeTargets((current) => {
           const key = targetStateKey(frameId, message.target!.elementId);
           return {
             ...current,
             [key]: {
               frameId,
-              target: message.target!,
+              target: shiftBridgeTarget(frameId, message.target!),
               inspection: current[key]?.inspection ?? null,
             },
           };
         });
       } else if (message.event !== "pointermove") {
         lastBridgeTargetRef.current = null;
-        if (message.event === "hover") {
-          pendingHoverRef.current = null;
-          if (hoverRafRef.current === null) {
-            hoverRafRef.current = requestAnimationFrame(() => {
-              hoverRafRef.current = null;
-              setHoveredOverlayTarget(null);
-            });
-          } else {
-            pendingHoverRef.current = null;
-          }
-        }
       }
 
       if (message.event !== "select" || !message.target) return;
@@ -1694,25 +2128,29 @@ export function CanvasSurface({
         { history: "skip" },
       );
     },
-    [bridgeControllersRef, editorStore, toOverlayTarget],
+    [bridgeControllersRef, buildBridgeEventContext, editorStore, ensureFramesLive, shiftBridgeTarget, toOverlayTarget],
   );
 
   const handleBridgeInspection = useCallback(
     (frameId: string, inspection: BridgeInspection | null) => {
       if (!inspection) return;
+      const normalized: BridgeInspection = {
+        ...inspection,
+        target: shiftBridgeTarget(frameId, inspection.target),
+      };
       setBridgeTargets((current) => {
-        const key = targetStateKey(frameId, inspection.target.elementId);
+        const key = targetStateKey(frameId, normalized.target.elementId);
         return {
           ...current,
           [key]: {
             frameId,
-            target: inspection.target,
-            inspection,
+            target: normalized.target,
+            inspection: normalized,
           },
         };
       });
     },
-    [],
+    [shiftBridgeTarget],
   );
 
   // Active theme variables for design-mode frames. Wireframe frames ignore
@@ -1844,38 +2282,136 @@ export function CanvasSurface({
         if (requestSequence < previousSequence) return;
         snapshotSequenceRef.current.set(frameId, requestSequence);
       }
+      markFrameInitialized(frameId);
       const frame = editorStore.getState().frames[frameId];
       if (!frame) return;
-      setBridgeHierarchies((current) => ({ ...current, [frameId]: snapshot }));
+      const pendingUi = pendingSnapshotUiRef.current;
+      pendingUi.hierarchies[frameId] = snapshot;
+      if (pendingUi.raf === null) {
+        pendingUi.raf = requestAnimationFrame(() => {
+          pendingUi.raf = null;
+          const hierarchies = pendingSnapshotUiRef.current.hierarchies;
+          const targets = pendingSnapshotUiRef.current.targets;
+          pendingSnapshotUiRef.current.hierarchies = {};
+          pendingSnapshotUiRef.current.targets = {};
+          if (Object.keys(hierarchies).length > 0) {
+            setBridgeHierarchies((current) => ({ ...current, ...hierarchies }));
+          }
+          if (Object.keys(targets).length > 0) {
+            setBridgeTargets((current) => {
+              const merged = { ...current };
+              for (const key of Object.keys(targets)) {
+                merged[key] = { ...targets[key], inspection: current[key]?.inspection ?? null };
+              }
+              return merged;
+            });
+          }
+        });
+      }
+      // Snapshot bounds were measured inside the shifted <body>. The body's
+      // own rect reports the shift live at measure time (its margin is reset
+      // to 0, so bounds.x === -shift), which keeps normalization correct even
+      // when this snapshot was taken before the latest re-anchor landed —
+      // reading shiftRef here would normalize stale bounds with the new
+      // shift and feed the fit below a phantom offset.
+      const bodyTarget = snapshot.nodes.find(
+        (node) => node.tagName.toLowerCase() === "body",
+      );
+      const measureShift = frame.freeform
+        ? bodyTarget
+          ? { x: -bodyTarget.bounds.x, y: -bodyTarget.bounds.y }
+          : freeformShiftRef.current.get(frameId) ?? { x: 0, y: 0 }
+        : { x: 0, y: 0 };
+      // One store transition + one targets merge per snapshot — previously
+      // each node did its own execute (cloning the nodes record) and its own
+      // setBridgeTargets (cloning the targets record), an O(nodes²) ingest.
+      const existingNodes = editorStore.getState().nodes;
+      const upserts: NodeEntity[] = [];
+      const targetPatch: Record<string, OverlayBridgeTargetState> = {};
+      const shifted = measureShift.x !== 0 || measureShift.y !== 0;
       for (const target of snapshot.nodes) {
-        const existingNode = editorStore.getState().nodes[target.elementId];
-        editorStore.execute(
-          {
-            type: "node/upsert",
-            node: {
-              id: target.elementId,
-              documentId: frame.documentId,
-              parentId: target.parentId,
-              kind: "element",
-              name: existingNode?.name ?? target.name,
-              tagName: target.tagName,
-              attributes: existingNode?.attributes ?? (target.role ? { role: target.role } : {}),
-              childIds: target.childIds,
-              locked: existingNode?.locked ?? target.locked,
-              hidden: existingNode?.hidden,
-              frameId,
-            },
-          },
-          { history: "skip" },
-        );
-        setBridgeTargets((current) => ({
-          ...current,
-          [targetStateKey(frameId, target.elementId)]: {
-            frameId,
-            target,
-            inspection: current[targetStateKey(frameId, target.elementId)]?.inspection ?? null,
-          },
-        }));
+        const existingNode = existingNodes[target.elementId];
+        upserts.push({
+          id: target.elementId,
+          documentId: frame.documentId,
+          parentId: target.parentId,
+          kind: "element",
+          name: existingNode?.name ?? target.name,
+          tagName: target.tagName,
+          attributes: existingNode?.attributes ?? (target.role ? { role: target.role } : {}),
+          childIds: target.childIds,
+          locked: existingNode?.locked ?? target.locked,
+          hidden: existingNode?.hidden,
+          frameId,
+        });
+        targetPatch[targetStateKey(frameId, target.elementId)] = {
+          frameId,
+          target: shifted
+            ? {
+                ...target,
+                bounds: {
+                  ...target.bounds,
+                  x: target.bounds.x + measureShift.x,
+                  y: target.bounds.y + measureShift.y,
+                },
+              }
+            : target,
+          inspection: null,
+        };
+      }
+      if (upserts.length > 0) {
+        editorStore.execute({ type: "nodes/upsert-many", nodes: upserts }, { history: "skip" });
+      }
+      // Inspection state is merged at flush time so a handleBridgeInspection
+      // landing between enqueue and flush isn't overwritten with null.
+      Object.assign(pendingUi.targets, targetPatch);
+      // Freeform frames hug their content — the iframe viewport clips whatever
+      // leaves the frame rect, so growth the gesture path didn't predict (text
+      // edits, measured-bounds drift) is fitted here on the freshest bounds.
+      // Content world position is anchor + canonical bounds, where anchor =
+      // frame.x - cumShift stays constant across re-anchors and canonical =
+      // raw + measureShift. That makes the fit invariant to when this
+      // snapshot measured relative to the last body-shift command — a stale
+      // measurement lands on the same union instead of re-applying the delta.
+      if (frame.freeform && !editorStore.hasActiveTransaction()) {
+        const cum = freeformShiftRef.current.get(frameId) ?? { x: 0, y: 0 };
+        const anchor = { x: frame.x - cum.x, y: frame.y - cum.y };
+        const content: Rect[] = [];
+        for (const node of snapshot.nodes) {
+          if (!isFreeformContentNode(node)) continue;
+          content.push({
+            x: anchor.x + node.bounds.x + measureShift.x,
+            y: anchor.y + node.bounds.y + measureShift.y,
+            width: node.bounds.width,
+            height: node.bounds.height,
+          });
+        }
+        const fit = computeFreeformFit(frame, content);
+        if (fit) {
+          for (const command of freeformFrameCommands(frame, fit.rect)) {
+            editorStore.execute(command, { history: "skip" });
+          }
+          if (Math.abs(fit.originDelta.x) >= 0.01 || Math.abs(fit.originDelta.y) >= 0.01) {
+            const controller = bridgeControllersRef.current.get(frameId);
+            if (bodyTarget && controller) {
+              const next = { x: cum.x + fit.originDelta.x, y: cum.y + fit.originDelta.y };
+              freeformShiftRef.current.set(frameId, next);
+              void controller.setInlineStyle({
+                command: "set-inline-style",
+                targetId: bodyTarget.elementId,
+                property: "transform",
+                value: freeformBodyShiftValue({ x: -next.x, y: -next.y }),
+              }).catch(() => {
+                // The DOM never received the shift — roll the tracker back so
+                // the next fit doesn't double-apply the delta. Skip if a later
+                // fit already moved past this value.
+                if (freeformShiftRef.current.get(frameId) === next) {
+                  freeformShiftRef.current.set(frameId, cum);
+                }
+              });
+            }
+          }
+        }
       }
       // A text element baked into a fresh freeform frame enters editing as
       // soon as the bridge can see it — same as a bridge-created text layer.
@@ -1888,28 +2424,76 @@ export function CanvasSurface({
           .catch(() => undefined);
       }
     },
-    [editorStore, snapshotSequenceRef],
+    [editorStore, markFrameInitialized, snapshotSequenceRef],
   );
 
+  // Drops a truly-unloaded frame's mount bookkeeping so detached frames (page
+  // switch, unmount, isLive flip) don't ghost-count against the cap. Pins and
+  // dirty flags die with the document: whatever they protected is unloaded.
+  const handleBridgeDetach = useCallback((frameId: string) => {
+    // Every caller only reports a detach after the iframe really unloaded,
+    // so the tracked <body> re-anchor shift is gone regardless of who owns
+    // the mount bookkeeping — clear it even on a stale report. Same for the
+    // text-edit flag: the edit lived in the document that just unloaded, and
+    // a stale flag would permanently lock the top-level keyboard handler.
+    freeformShiftRef.current.delete(frameId);
+    frameTextEditRef.current.delete(frameId);
+    setTextEditingNode((current) => (current?.frameId === frameId ? null : current));
+    // Deferred unmount reports fire a task late — a frame deleted and restored
+    // inside that window (undo, remount) has already attached a fresh bridge
+    // session. A registered controller means a newer mount owns this frame;
+    // the report is stale and must not wipe bookkeeping it no longer owns.
+    // Legit teardown unregisters its controller before reporting detach.
+    if (bridgeControllersRef.current.has(frameId)) return;
+    mountedFrameIdsRef.current.delete(frameId);
+    pinnedFrameIdsRef.current.delete(frameId);
+    dirtyFrameIdsRef.current.delete(frameId);
+    releaseInFlightMount(frameId);
+    setLiveFrameIds((live) => {
+      if (!live.has(frameId)) return live;
+      const next = new Set(live);
+      next.delete(frameId);
+      return next;
+    });
+    // A slot freed without a ready signal would otherwise wait on the
+    // failsafe — restart the pump so queued mounts don't stall.
+    scheduleMountPumpRef.current?.();
+    // Snapshot merges queued for a just-detached frame must not re-add
+    // its targets after the cleanup below.
+    delete pendingSnapshotUiRef.current.hierarchies[frameId];
+    for (const key of Object.keys(pendingSnapshotUiRef.current.targets)) {
+      if (key.startsWith(`${frameId}:`)) delete pendingSnapshotUiRef.current.targets[key];
+    }
+    snapshotSequenceRef.current.delete(frameId);
+    setBridgeTargets((current) => {
+      if (!Object.keys(current).some((key) => key.startsWith(`${frameId}:`))) return current;
+      return Object.fromEntries(
+        Object.entries(current).filter(([key]) => !key.startsWith(`${frameId}:`)),
+      );
+    });
+    setBridgeHierarchies((current) => {
+      if (!(frameId in current)) return current;
+      const next = { ...current };
+      delete next[frameId];
+      return next;
+    });
+    // If the frame still exists, rescan so a mount lost to any ordering the
+    // ownership check couldn't catch (e.g. a report that fired before the
+    // fresh session registered) is rebuilt — otherwise the frame would sit
+    // on a dead placeholder until the next camera or frame-set change.
+    if (editorStore.getState().frames[frameId]) rescanAfterDetachRef.current?.();
+  }, [editorStore, releaseInFlightMount, snapshotSequenceRef]);
+
+  // Transport-level only: FrameView's bridge effect calls this from its
+  // cleanup on every dependency change, not just when the iframe unloads —
+  // mount bookkeeping lives in handleBridgeDetach, which FrameView invokes
+  // only when its document is actually going away (isLive off / unmount).
   const handleBridgeController = useCallback(
     (frameId: string, controller: IframeBridgeController | null) => {
       if (controller) bridgeControllersRef.current.set(frameId, controller);
-      else {
-        bridgeControllersRef.current.delete(frameId);
-        snapshotSequenceRef.current.delete(frameId);
-        setBridgeTargets((current) =>
-          Object.fromEntries(
-            Object.entries(current).filter(([key]) => !key.startsWith(`${frameId}:`)),
-          ),
-        );
-        setBridgeHierarchies((current) => {
-          const next = { ...current };
-          delete next[frameId];
-          return next;
-        });
-      }
+      else bridgeControllersRef.current.delete(frameId);
     },
-    [snapshotSequenceRef],
+    [],
   );
 
   const refreshBridgeSnapshot = useCallback(async (frameId: string) => {
@@ -2049,7 +2633,7 @@ export function CanvasSurface({
   }): { frameId: string; nodeId: string } => {
     const frameId = createElementId("draw");
     const documentId = `${frameId}-doc`;
-    const nodeId = bridgeNodeIdForElement(options.elementId);
+    const nodeId = bridgeNodeIdForElement(frameId, options.elementId);
     const seed = {
       id: frameId,
       name: options.name,
@@ -2064,7 +2648,12 @@ export function CanvasSurface({
       background: "transparent",
       freeform: true,
     };
-    editorStore.beginTransaction(`Create ${options.name}`);
+    if (editorStore.hasActiveTransaction()) {
+      // The create can't join a foreign transaction — its ops would roll back
+      // with an unrelated edit's undo.
+      throw new Error("another edit is still settling — draw again in a moment");
+    }
+    const txToken = editorStore.beginTransaction(`Create ${options.name}`);
     try {
       editorStore.execute(selectBriefFrameCommand(null), { history: "skip" });
       editorStore.execute(createFrameCommand(seed), { history: "skip" });
@@ -2091,14 +2680,17 @@ export function CanvasSurface({
         primaryFrameId: frameId,
         primaryNodeId: nodeId,
       }), { history: "skip" });
-      editorStore.commitTransaction();
+      editorStore.commitTransaction(undefined, txToken);
     } catch (error) {
-      if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction();
+      if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
       throw error;
     }
     setCreationError(null);
+    // The fresh frame must mount now — the text flow awaits its first bridge
+    // snapshot, which only exists once the iframe is live.
+    ensureFramesLive([frameId], { pin: true });
     return { frameId, nodeId };
-  }, [editorStore]);
+  }, [editorStore, ensureFramesLive]);
 
   const finishCanvasCreation = useCallback(
     (operation: Extract<PointerOperation, { type: "canvas-create" }>) => {
@@ -2337,15 +2929,25 @@ export function CanvasSurface({
         .then(() => refreshSnapshotRef.current(drag.frameId))
         .catch(() => undefined);
     };
-    editorStore.beginTransaction("Adjust corner radius");
+    // A foreign transaction already open means the drag's undo step can't
+    // anchor cleanly — the previews already painted, so skipping just drops
+    // the history entry rather than throwing mid-commit.
+    if (editorStore.hasActiveTransaction()) return;
+    const txToken = editorStore.beginTransaction("Adjust corner radius");
     const committed = editorStore.commitTransaction({
       undo: () => apply(drag.previousRadius),
       redo: () => apply(drag.lastRadius),
-    });
-    if (!committed) editorStore.rollbackTransaction();
+    }, txToken);
+    if (!committed && editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
   }, [bridgeControllersRef, bridgeTargets, editorStore, flushRadiusSend]);
 
-  addCommentRef.current = addComment;
+  addCommentRef.current = useCallback(
+    (frameId: string, point: Point) => {
+      ensureFramesLive([frameId], { pin: true });
+      addComment(frameId, point);
+    },
+    [addComment, ensureFramesLive],
+  );
 
   const handleImageFile = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -2572,21 +3174,37 @@ export function CanvasSurface({
     async (
       changes: readonly { frameId: string; targetId: string; property: SafeInlineStyleProperty; value: string | null }[],
       label: string,
-      mutateState?: () => void,
+      mutateState?: () => unknown,
     ) => {
       const applicable = changes.filter(({ frameId }) => bridgeControllersRef.current.has(frameId));
       if (applicable.length === 0) return;
       // Skip edits that would not change anything so blur/commit on untouched
-      // fields never pushes no-op entries onto the undo stack.
+      // fields never pushes no-op entries onto the undo stack. A clear
+      // (value === null) is only skippable when an inspection proves the
+      // property is unset — uninspected targets can carry the property in the
+      // live DOM (the freeform <body> re-anchor transform is never inspected),
+      // and dropping the clear desyncs the DOM from the shift tracker.
       const meaningful = applicable.filter(({ frameId, targetId, property, value }) => {
         const entry = bridgeTargets[targetStateKey(frameId, targetId)];
         const current = entry?.inspection?.inlineStyle[property];
-        if (value === null) return current !== undefined && current !== "";
+        if (value === null) {
+          // No inspection (or no snapshot at all) means the live DOM may still
+          // carry the property — the clear must be sent to know.
+          if (entry == null || entry.inspection == null) return true;
+          return current !== undefined && current !== "";
+        }
         return value !== current;
       });
       if (meaningful.length === 0) return;
-      editorStore.beginTransaction(label);
-      mutateState?.();
+      // A second edit while a transaction awaits its bridge acks would throw —
+      // the batch is dropped rather than half-applied into someone else's undo.
+      if (editorStore.hasActiveTransaction()) return;
+      const txToken = editorStore.beginTransaction(label);
+      // mutateState may touch refs outside the store (freeformShiftRef); when
+      // it returns a function, that callback restores them if the bridge
+      // edits below fail.
+      const mutated = mutateState?.();
+      const revertState = typeof mutated === "function" ? (mutated as () => void) : undefined;
       const applied: Array<{ frameId: string; command: Extract<import("../bridge/protocol").BridgeCommand, { command: "set-inline-style" }>; undo: Extract<import("../bridge/protocol").BridgeUndoCommand, { command: "set-inline-style" }> }> = [];
       try {
         for (const change of meaningful) {
@@ -2602,7 +3220,8 @@ export function CanvasSurface({
         for (const appliedChange of [...applied].reverse()) {
           await bridgeControllersRef.current.get(appliedChange.frameId)?.setInlineStyle(appliedChange.undo).catch(() => undefined);
         }
-        editorStore.rollbackTransaction();
+        revertState?.();
+        if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
         return;
       }
       const affectedFrameIds = Array.from(new Set(applied.map(({ frameId }) => frameId)));
@@ -2613,13 +3232,20 @@ export function CanvasSurface({
         const requests = applied.map(({ frameId, command, undo }) => {
           const next = direction === "undo" ? undo : command;
           applyLocalBridgeStyle(frameId, next.targetId, next.property, next.value);
+          if (next.property === "transform"
+            && editorStore.getState().frames[frameId]?.freeform
+            && bridgeTargets[targetStateKey(frameId, next.targetId)]?.target.tagName.toLowerCase() === "body") {
+            freeformShiftRef.current.set(frameId, freeformBodyShiftFromValue(next.value));
+          }
           return bridgeControllersRef.current.get(frameId)?.setInlineStyle(next);
         });
         void Promise.all(requests)
           .then(() => Promise.all(affectedFrameIds.map((frameId) => refreshBridgeSnapshot(frameId).catch(() => undefined))))
           .catch(() => undefined);
       };
-      if (!editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") })) return;
+      if (editorStore.hasActiveTransaction()) {
+        editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") }, txToken);
+      }
       void refreshAffectedFrames();
     },
     [applyLocalBridgeStyle, bridgeControllersRef, bridgeTargets, editorStore, refreshBridgeSnapshot],
@@ -2635,7 +3261,10 @@ export function CanvasSurface({
     async (actions: readonly ShapeEffectAction[], label: string) => {
       const applicable = actions.filter((action) => bridgeControllersRef.current.has(action.frameId));
       if (applicable.length === 0) return;
-      editorStore.beginTransaction(label);
+      // Same contention rule as runBridgeStyleEdit — a transaction awaiting
+      // bridge acks can't host a second batch.
+      if (editorStore.hasActiveTransaction()) return;
+      const txToken = editorStore.beginTransaction(label);
       const applied: Array<{ frameId: string; undo: BridgeUndoCommand; redo: BridgeCommand }> = [];
       try {
         for (const action of applicable) {
@@ -2657,7 +3286,7 @@ export function CanvasSurface({
           if (undo.command === "set-shape-glass") await controller.setShapeGlass(undo).catch(() => undefined);
           else if (undo.command === "set-shape-fill") await controller.setShapeFill(undo).catch(() => undefined);
         }
-        editorStore.rollbackTransaction();
+        if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
         return;
       }
       const affectedFrameIds = Array.from(new Set(applied.map(({ frameId }) => frameId)));
@@ -2677,7 +3306,9 @@ export function CanvasSurface({
           .then(() => Promise.all(affectedFrameIds.map((frameId) => refreshBridgeSnapshot(frameId).catch(() => undefined))))
           .catch(() => undefined);
       };
-      if (!editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") })) return;
+      if (editorStore.hasActiveTransaction()) {
+        editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") }, txToken);
+      }
       void refreshAffectedFrames();
     },
     [bridgeControllersRef, editorStore, refreshBridgeSnapshot],
@@ -2954,10 +3585,11 @@ export function CanvasSurface({
         .then(() => Promise.all(affectedFrameIds.map((frameId) => refreshSnapshotRef.current(frameId).catch(() => undefined))))
         .catch(() => undefined);
     };
-    editorStore.beginTransaction(label);
-    const committed = editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") });
+    if (editorStore.hasActiveTransaction()) return;
+    const txToken = editorStore.beginTransaction(label);
+    const committed = editorStore.commitTransaction({ undo: () => replay("undo"), redo: () => replay("redo") }, txToken);
     if (!committed) {
-      editorStore.rollbackTransaction();
+      if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
       return;
     }
     // Sync the inspected state once so the panel shows the landed level
@@ -2998,14 +3630,77 @@ export function CanvasSurface({
     void controller.inspect(nodeId).then((inspection) => {
       if (!inspection) return;
       handleBridgeInspection(frameId, inspection);
+      const frame = editorStore.getState().frames[frameId];
+      const shift = frame?.freeform
+        ? freeformShiftRef.current.get(frameId) ?? { x: 0, y: 0 }
+        : { x: 0, y: 0 };
       const currentTransform = inspection.inlineStyle.transform ?? inspection.computedStyle.transform;
+      // The committed position lives in canonical doc space (the same space
+      // the X/Y fields display); the live inspection bounds are measured in
+      // the shifted body — the translate delta bridges the two.
       const value = prependTranslationTransform(currentTransform, {
-        x: position.x - inspection.target.bounds.x,
-        y: position.y - inspection.target.bounds.y,
+        x: position.x - shift.x - inspection.target.bounds.x,
+        y: position.y - shift.y - inspection.target.bounds.y,
       });
-      void runBridgeStyleEdit([{ frameId, targetId: nodeId, property: "transform", value }], "Move layer");
+      const changes: { frameId: string; targetId: string; property: SafeInlineStyleProperty; value: string | null }[] = [
+        { frameId, targetId: nodeId, property: "transform", value },
+      ];
+      let mutateState: (() => unknown) | undefined;
+      if (frame?.freeform) {
+        const content: Rect[] = [];
+        for (const other of Object.values(bridgeTargets)) {
+          if (other.frameId !== frameId || !isFreeformContentNode(other.target)) continue;
+          if (other.target.elementId === nodeId) {
+            content.push({
+              x: frame.x + position.x - shift.x,
+              y: frame.y + position.y - shift.y,
+              width: inspection.target.bounds.width,
+              height: inspection.target.bounds.height,
+            });
+          } else {
+            const overlay = toOverlayTarget(other);
+            if (overlay) content.push(overlay.bounds);
+          }
+        }
+        const fit = computeFreeformFit(frame, content);
+        if (fit) {
+          const delta = fit.originDelta;
+          const previous = freeformShiftRef.current.get(frameId) ?? { x: 0, y: 0 };
+          const body = Object.values(bridgeTargets).find(
+            (candidate) => candidate.frameId === frameId && candidate.target.tagName.toLowerCase() === "body",
+          );
+          // The shift tracker must only advance when the compensating body
+          // transform was actually queued — otherwise the tracker claims a
+          // shift the live DOM never received and every later fit/overlay on
+          // this frame desyncs by that delta.
+          const shiftQueued = Boolean(body) && (Math.abs(delta.x) >= 0.01 || Math.abs(delta.y) >= 0.01);
+          if (body && shiftQueued) {
+            changes.push({
+              frameId,
+              targetId: body.target.elementId,
+              property: "transform",
+              value: freeformBodyShiftValue({ x: -(previous.x + delta.x), y: -(previous.y + delta.y) }),
+            });
+          }
+          mutateState = () => {
+            for (const command of freeformFrameCommands(frame, fit.rect)) {
+              editorStore.execute(command);
+            }
+            if (shiftQueued) {
+              freeformShiftRef.current.set(frameId, { x: previous.x + delta.x, y: previous.y + delta.y });
+            }
+            // The store rollback restores the frame rect, but the shift
+            // tracker lives outside it — restore it too or the next fit and
+            // every overlay bound on this frame desyncs by the failed delta.
+            return () => {
+              freeformShiftRef.current.set(frameId, previous);
+            };
+          };
+        }
+      }
+      void runBridgeStyleEdit(changes, "Move layer", mutateState);
     }).catch(() => undefined);
-  }, [bridgeControllersRef, bridgeTargets, handleBridgeInspection, runBridgeStyleEdit]);
+  }, [bridgeControllersRef, bridgeTargets, editorStore, handleBridgeInspection, runBridgeStyleEdit, toOverlayTarget]);
 
   const updateFrameFromPanel = useCallback((frameId: string, patch: { width?: number; height?: number; background?: string; name?: string }) => {
     editorStore.execute({ type: "frame/update", frameId, patch });
@@ -3020,6 +3715,7 @@ export function CanvasSurface({
     beginNodeGesture,
     cancelNodeGesture,
     endNodeGesture,
+    isNodeGestureActive,
     moveNodeGesture,
     selectedOverlayTargets,
   } = useNodeOverlayGestures({
@@ -3033,6 +3729,7 @@ export function CanvasSurface({
     selection: editorState.selection,
     toOverlayTarget,
     setInteractionMode,
+    freeformShiftRef,
   });
 
   const sidebarHoveredOverlayTarget = useMemo(() => {
@@ -3040,6 +3737,21 @@ export function CanvasSurface({
     const entry = bridgeTargets[targetStateKey(sidebarHoveredNode.frameId, sidebarHoveredNode.nodeId)];
     return entry ? toOverlayTarget(entry) : null;
   }, [bridgeTargets, editorState.frames, sidebarHoveredNode, toOverlayTarget]);
+
+  // Stable callbacks/objects so memoized LayerRows skip unrelated renders —
+  // inline closures here would change identity on every surface render.
+  const handleSidebarHoverNode = useCallback((frameId: string, nodeId: string) => {
+    setSidebarHoveredNode({ frameId, nodeId });
+  }, []);
+  const handleSidebarHoverNodeEnd = useCallback(() => {
+    setSidebarHoveredNode(null);
+  }, []);
+  const hoveredLayerNode = useMemo(
+    () => hoveredOverlayTarget
+      ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId }
+      : null,
+    [hoveredOverlayTarget],
+  );
 
   // While a text layer is being edited inline, its box chrome disappears —
   // Figma-style, only the caret shows until the edit commits.
@@ -3179,10 +3891,105 @@ export function CanvasSurface({
     setSelectedShaderElementId((current) => (current === elementId ? null : current));
   }, []);
 
-  // User request: frames must stay loaded even when dragged out of camera view
-  // Previously only ~12 nearest frames were live (virtualization) — off-screen frames showed placeholder and reloaded text on return
-  // Now keep all frames live so text/elements never unload
-  const liveFrameIdSet = useMemo(() => new Set(frames.map((f) => f.id)), [frames]);
+  const scanVisibleFrames = useCallback((cam: Camera) => {
+    const state = editorStore.getState();
+    const mounted = mountedFrameIdsRef.current;
+    let pruned = false;
+    for (const id of mounted) {
+      if (!state.frames[id]) {
+        mounted.delete(id);
+        pruned = true;
+      }
+    }
+    for (const id of pinnedFrameIdsRef.current) {
+      if (!state.frames[id]) pinnedFrameIdsRef.current.delete(id);
+    }
+    for (const id of dirtyFrameIdsRef.current) {
+      if (!state.frames[id]) dirtyFrameIdsRef.current.delete(id);
+    }
+    const ids: string[] = [];
+    if (viewport.width > 0 && viewport.height > 0) {
+      const visible = getVisibleWorldRect(cam, viewport);
+      const center = { x: visible.x + visible.width / 2, y: visible.y + visible.height / 2 };
+      for (const frame of Object.values(state.frames)) {
+        if (state.activePageId !== null && frame.pageId !== state.activePageId) continue;
+        if (mounted.has(frame.id)) continue;
+        if (rectsIntersect(frame, visible)) ids.push(frame.id);
+      }
+      // Nearest-to-centre first — the frames the user is looking at mount
+      // before the overscan edge does.
+      const rank = (id: string) => {
+        const frame = state.frames[id];
+        const dx = frame.x + frame.width / 2 - center.x;
+        const dy = frame.y + frame.height / 2 - center.y;
+        return dx * dx + dy * dy;
+      };
+      ids.sort((a, b) => rank(a) - rank(b));
+      const primary = state.selection.primaryFrameId;
+      if (primary && !mounted.has(primary) && state.frames[primary]) ids.unshift(primary);
+    }
+    // Drop stale queued mounts — deleted frames, and unpinned scan mounts
+    // that have since left the view — so the pump always works on what the
+    // camera is looking at instead of draining a backlog a pan left behind.
+    // Only prune by view when the viewport is measurable: with a zero-size
+    // viewport `ids` is empty for lack of data, not because nothing is in
+    // view, and pruning there would kill legit queued mounts.
+    const measurable = viewport.width > 0 && viewport.height > 0;
+    const hits = new Set(ids);
+    const pending = pendingMountIdsRef.current;
+    const queued = queuedMountIdsRef.current;
+    const pinned = pinnedFrameIdsRef.current;
+    let write = 0;
+    for (const id of pending) {
+      if (state.frames[id] && (!measurable || hits.has(id) || pinned.has(id))) pending[write++] = id;
+      else queued.delete(id);
+    }
+    pending.length = write;
+    if (ids.length > 0) ensureFramesLive(ids);
+    else if (pruned) setLiveFrameIds(new Set(mounted));
+  }, [editorStore, ensureFramesLive, viewport]);
+
+  // rAF-throttled visibility scan used while panning/zooming — the committed
+  // camera state lags the imperative transform for the whole gesture, so
+  // without this frames entering view would stay placeholders until release.
+  // The rAF callback must run the LATEST scanVisibleFrames: a closure captured
+  // at schedule time can carry a stale viewport (e.g. 0 before the first
+  // measure), which computes an empty id set and prunes legit queued mounts.
+  const scanVisibleFramesRef = useRef(scanVisibleFrames);
+  scanVisibleFramesRef.current = scanVisibleFrames;
+  const visibilityScanRafRef = useRef<number | null>(null);
+  const scheduleVisibilityScan = useCallback(() => {
+    if (visibilityScanRafRef.current !== null) return;
+    visibilityScanRafRef.current = requestAnimationFrame(() => {
+      visibilityScanRafRef.current = null;
+      scanVisibleFramesRef.current(cameraRef.current);
+    });
+  }, []);
+  // Back-reference for handleBridgeDetach (declared above this callback):
+  // lets a stale detach re-scan frames that were remounted before it fired.
+  rescanAfterDetachRef.current = scheduleVisibilityScan;
+
+  // Rescan when the camera, the frame set, or the active page changes —
+  // frames created while the camera is still (agent pushes, paste, undo,
+  // page switches) must mount without waiting for the next pan.
+  useEffect(() => {
+    scanVisibleFrames(camera);
+  }, [camera, editorState.frames, editorState.activePageId, scanVisibleFrames]);
+
+  // A project switch remounts the world (persistenceVersion keys every frame)
+  // — drop mounts belonging to the previous project, then mount what is
+  // actually in view instead of eagerly loading every frame in the file.
+  // Gated on the version changing: scanVisibleFrames is recreated whenever the
+  // viewport resizes, and resetting on that churn would unload every live
+  // iframe — destroying DOM edits the srcDoc doesn't contain.
+  const appliedPersistenceRef = useRef(persistenceVersion);
+  useEffect(() => {
+    if (appliedPersistenceRef.current === persistenceVersion) return;
+    appliedPersistenceRef.current = persistenceVersion;
+    resetMountRefs();
+    setLiveFrameIds(new Set());
+    scanVisibleFrames(cameraRef.current);
+  }, [persistenceVersion, scanVisibleFrames, resetMountRefs]);
 
   useEffect(() => {
     cameraRef.current = camera;
@@ -3255,6 +4062,7 @@ export function CanvasSurface({
 
   const selectNode = useCallback((frameId: string, nodeId: string, shiftKey: boolean) => {
     setSelectedShaderElementId(null);
+    ensureFramesLive([frameId], { pin: true });
     const current = editorStore.getState().selection;
     const alreadySelected = current.nodeIds.includes(nodeId);
     const nodeIds = shiftKey
@@ -3282,7 +4090,7 @@ export function CanvasSurface({
     }
     const controller = bridgeControllersRef.current.get(frameId);
     if (controller) void controller.inspect(nodeId).then((inspection) => { if (inspection) handleBridgeInspection(frameId, inspection); }).catch(() => undefined);
-  }, [bridgeControllersRef, bridgeHierarchies, editorStore, handleBridgeInspection, updateCamera, viewport]);
+  }, [bridgeControllersRef, bridgeHierarchies, editorStore, ensureFramesLive, handleBridgeInspection, updateCamera, viewport]);
 
   useEffect(() => {
     if (
@@ -3351,11 +4159,15 @@ export function CanvasSurface({
         }),
         pageId: editorState.activePageId ?? "page-1",
       };
-      editorStore.beginTransaction("Add frame");
+      // Creating inside a foreign open transaction would fuse the frame add
+      // with an unrelated undo step — drop the click instead of corrupting
+      // history boundaries.
+      if (editorStore.hasActiveTransaction()) return;
+      const txToken = editorStore.beginTransaction("Add frame");
       editorStore.execute(createFrameCommand(frame), { history: "skip" });
       setSelectedFrameId(frame.id);
       editorStore.execute(setActiveToolCommand("select"), { history: "skip" });
-      editorStore.commitTransaction();
+      editorStore.commitTransaction(undefined, txToken);
       setIsFrameMenuOpen(false);
       updateCamera(fitRect(frame, usableViewport, cameraFitPadding(usableViewport)));
     },
@@ -3511,8 +4323,12 @@ export function CanvasSurface({
       }
       const currentTool = normalizeActiveTool(editorStore.getState().activeTool);
       const panning = spacePressedRef.current || currentTool === "hand";
-      // Other tools keep the plain click so it can still select the frame.
+      // Non-select tools don't start a frame move — the press falls through
+      // to the frame's own layers (the creation layer once live). A cold
+      // frame must still mount here — creation gestures inside it need the
+      // live bridge, and this pointerdown is the trigger that wakes it.
       if (!panning && currentTool !== "select") {
+        ensureFramesLive([frameId], { pin: true });
         return;
       }
       event.preventDefault();
@@ -3531,7 +4347,11 @@ export function CanvasSurface({
       const start = getCachedPointerPosition(event);
       const frame = editorStore.getState().frames[frameId];
       setSelectedFrameId(frameId);
-      editorStore.beginTransaction(`Move ${frameId}`);
+      // An open transaction (e.g. a bridge edit awaiting acks) can't take a
+      // second gesture — beginning one throws mid-pointerdown and strands the
+      // half-started drag. The click still selects; the drag just no-ops.
+      if (editorStore.hasActiveTransaction()) return;
+      const txToken = editorStore.beginTransaction(`Move ${frameId}`);
       pointerRef.current = {
         type: "move-frame",
         pointerId: event.pointerId,
@@ -3539,10 +4359,11 @@ export function CanvasSurface({
         frameId,
         start,
         frameStart: frame ? { x: frame.x, y: frame.y } : { x: 0, y: 0 },
+        txToken,
       };
       setInteractionMode("moving-frame");
     },
-    [editorStore, setSelectedFrameId, getCachedPointerPosition],
+    [editorStore, setSelectedFrameId, getCachedPointerPosition, ensureFramesLive],
   );
 
   const beginBriefFramePointer = useCallback(
@@ -3568,7 +4389,8 @@ export function CanvasSurface({
       const start = getCachedPointerPosition(event);
       const currentBriefFrame = editorStore.getState().session.briefFrame;
       selectBriefFrame(briefFrameId);
-      editorStore.beginTransaction(`Move ${briefFrameId}`);
+      if (editorStore.hasActiveTransaction()) return;
+      const txToken = editorStore.beginTransaction(`Move ${briefFrameId}`);
       pointerRef.current = {
         type: "move-brief-frame",
         pointerId: event.pointerId,
@@ -3576,6 +4398,7 @@ export function CanvasSurface({
         briefFrameId,
         start,
         briefStart: currentBriefFrame ? { x: currentBriefFrame.x, y: currentBriefFrame.y } : { x: 0, y: 0 },
+        txToken,
       };
       setInteractionMode("moving-frame");
     },
@@ -3758,6 +4581,7 @@ export function CanvasSurface({
         cameraRef.current = nextCamera;
         worldRef.current.style.transform = cameraTransform(nextCamera);
       }
+      scheduleVisibilityScan();
       return;
     }
 
@@ -3777,7 +4601,7 @@ export function CanvasSurface({
     }
     if ((operation?.type === "move-frame" || operation?.type === "move-brief-frame") && editorStore.hasActiveTransaction()) {
       finalizeFrameDrag(operation);
-      editorStore.commitTransaction();
+      editorStore.commitTransaction(undefined, operation.txToken);
     }
     if (operation?.type === "canvas-create") {
       setCanvasCreationPreview(null);
@@ -3818,6 +4642,13 @@ export function CanvasSurface({
     if (isCanvasControlTarget(event.target)) {
       return;
     }
+    // A wheel/pinch during a pointer or node drag would mutate cameraRef under
+    // the gesture's fixed startWorld — the element jumps and the corrupted
+    // position commits. The active gesture owns the camera until it ends.
+    if (pointerRef.current !== null || isNodeGestureActive()) {
+      event.preventDefault();
+      return;
+    }
     const targetEl = event.target as Element | null;
     if (targetEl && !event.ctrlKey && !event.metaKey) {
       const scrollable = targetEl.closest(".sidebar-panel-content, .properties-scroll, .figma-lake-body, .figma-lake, .project-lake") as HTMLElement | null;
@@ -3849,10 +4680,6 @@ export function CanvasSurface({
       if (worldRef.current) {
         worldRef.current.style.transform = cameraTransform(nextCamera);
       }
-      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
-      wheelRafRef.current = requestAnimationFrame(() => {
-        wheelRafRef.current = null;
-      });
       setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
     } else {
       const nextCamera = panCamera(cameraRef.current, { x: -deltaX, y: -deltaY });
@@ -3863,14 +4690,20 @@ export function CanvasSurface({
       setInteractionMode(prev => prev === "panning" ? prev : "panning");
     }
 
+    // The world transform is applied imperatively above; the React camera
+    // commit only needs to happen once the gesture actually pauses. Committing
+    // per wheel tick rendered the whole frame tree mid-gesture — at 1k frames
+    // that's the difference between a smooth pan and a stutter. The delay is
+    // just past CAMERA_SETTLE_MS so the commit lands as interaction goes idle.
     if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
     wheelCommitTimeoutRef.current = setTimeout(() => {
       setCamera(cameraRef.current);
       wheelCommitTimeoutRef.current = null;
-    }, 40);
+    }, CAMERA_SETTLE_MS + 20);
 
+    scheduleVisibilityScan();
     settleInteraction();
-  }, [settleInteraction, getCachedPointerPosition]);
+  }, [settleInteraction, getCachedPointerPosition, isNodeGestureActive, scheduleVisibilityScan]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -3878,7 +4711,6 @@ export function CanvasSurface({
     surface.addEventListener("wheel", handleWheel, { passive: false });
     return () => {
       surface.removeEventListener("wheel", handleWheel);
-      if (wheelRafRef.current !== null) cancelAnimationFrame(wheelRafRef.current);
       if (wheelCommitTimeoutRef.current) {
         clearTimeout(wheelCommitTimeoutRef.current);
         wheelCommitTimeoutRef.current = null;
@@ -3900,7 +4732,7 @@ export function CanvasSurface({
         element.style.transform = `translate3d(${position.x}px, ${position.y}px, 0)`;
       }
       if (editorStore.hasActiveTransaction()) {
-        editorStore.rollbackTransaction();
+        editorStore.rollbackTransaction(operation.txToken);
       }
     }
     frameDragRef.current = null;
@@ -4104,6 +4936,17 @@ export function CanvasSurface({
       hoverRafRef.current = null;
     }
     pendingHoverRef.current = undefined;
+    cancelMountPump();
+    for (const timer of inFlightMountsRef.current.values()) window.clearTimeout(timer);
+    inFlightMountsRef.current.clear();
+    if (visibilityScanRafRef.current !== null) {
+      cancelAnimationFrame(visibilityScanRafRef.current);
+      visibilityScanRafRef.current = null;
+    }
+    if (pendingSnapshotUiRef.current.raf !== null) {
+      cancelAnimationFrame(pendingSnapshotUiRef.current.raf);
+      pendingSnapshotUiRef.current.raf = null;
+    }
   }, []);
 
   const guardIframes = (interactionMode !== "idle" && interactionMode !== "creating") || spacePressed;
@@ -4113,7 +4956,7 @@ export function CanvasSurface({
     : null;
   const selectedCommentAnchor = selectedComment
     ? (() => {
-        const frame = frames.find((entry) => entry.id === selectedComment.frameId);
+        const frame = frameById.get(selectedComment.frameId);
         if (!frame) return null;
         return worldToScreen(
           { x: frame.x + selectedComment.point.x, y: frame.y + selectedComment.point.y },
@@ -4127,7 +4970,7 @@ export function CanvasSurface({
       : null;
   const hoveredCommentAnchor = hoveredComment
     ? (() => {
-        const frame = frames.find((entry) => entry.id === hoveredComment.frameId);
+        const frame = frameById.get(hoveredComment.frameId);
         if (!frame) return null;
         return worldToScreen(
           { x: frame.x + hoveredComment.point.x, y: frame.y + hoveredComment.point.y },
@@ -4182,7 +5025,7 @@ export function CanvasSurface({
           <FrameView
             key={`${frame.id}-${persistenceVersion}`}
             frame={frame}
-            isLive={liveFrameIdSet.has(frame.id)}
+            isLive={liveFrameIds.has(frame.id)}
             isSelected={frame.id === selectedFrameId}
             isPanTool={activeTool === "hand" || spacePressed}
             onSelect={setSelectedFrameId}
@@ -4192,6 +5035,8 @@ export function CanvasSurface({
             onBridgeInspection={handleBridgeInspection}
             onBridgeSnapshot={handleBridgeSnapshot}
             onBridgeController={handleBridgeController}
+            onBridgeDetach={handleBridgeDetach}
+            onBridgeMutation={markFrameDirty}
             isCreationMode={creationMode}
             creationShape={activeTool === "rectangle" ? activeShape : null}
             creationRadius={activeTool === "rectangle" ? shapeRadius : 0}
@@ -4250,7 +5095,7 @@ export function CanvasSurface({
           onTextEditStart={startTextEdit}
         />
         {comments.map((comment) => {
-          const frame = frames.find((entry) => entry.id === comment.frameId);
+          const frame = frameById.get(comment.frameId);
           if (!frame) return null;
           return (
             <button
@@ -4414,7 +5259,6 @@ export function CanvasSurface({
           onDelete={handleDeleteLakeProject}
           onDuplicate={handleDuplicateLakeProject}
           onRename={handleRenameLakeProject}
-          onStartBlank={() => startBrainstorming("blank")}
         />
       ) : shouldUseLocalMemory && routeProjectId !== null && !routeNotFound ? null : isEmptyState ? (
         <EmptyCanvasState onStartBrainstorming={() => startBrainstorming()} />
@@ -4567,9 +5411,9 @@ export function CanvasSurface({
             onRenameNode={renameNode}
             onToggleNodeLock={toggleNodeLock}
             onToggleNodeHidden={toggleNodeHidden}
-            onHoverNode={(frameId, nodeId) => setSidebarHoveredNode({ frameId, nodeId })}
-            onHoverNodeEnd={() => setSidebarHoveredNode(null)}
-            hoveredLayerNode={hoveredOverlayTarget ? { frameId: hoveredOverlayTarget.frameId, nodeId: hoveredOverlayTarget.nodeId } : null}
+            onHoverNode={handleSidebarHoverNode}
+            onHoverNodeEnd={handleSidebarHoverNodeEnd}
+            hoveredLayerNode={hoveredLayerNode}
             shaderElements={shaderElements}
             selectedShaderElementId={selectedShaderElementId}
             onSelectShaderElement={selectShaderElement}
@@ -4623,7 +5467,7 @@ export function CanvasSurface({
         <span><kbd>0</kbd> fit all</span>
       </div>
       <div className="sr-only" role="status" aria-live="polite">
-        {frames.length} frames, {liveFrameIdSet.size} live, {Math.round(camera.zoom * 100)}% zoom
+        {frames.length} frames, {liveFrameIds.size} live, {Math.round(camera.zoom * 100)}% zoom
       </div>
     </main>
   );

@@ -1,30 +1,6 @@
 import { describe, it, expect } from "vitest";
-import type { Camera, CanvasFrame, Size } from "./types";
-import {
-  getVisibleWorldRect,
-  rectsIntersect,
-  rankVisibleFrames,
-} from "./virtualization";
-
-function frame(
-  id: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): CanvasFrame {
-  return {
-    id,
-    x,
-    y,
-    width,
-    height,
-    name: id,
-    documentId: "doc1",
-    srcDoc: "",
-    background: "#fff",
-  };
-}
+import type { Camera, Size } from "./types";
+import { getVisibleWorldRect, mountEvictionCandidates, rectsIntersect } from "./virtualization";
 
 const viewport: Size = { width: 800, height: 600 };
 
@@ -119,168 +95,50 @@ describe("rectsIntersect", () => {
   });
 });
 
-describe("rankVisibleFrames", () => {
-  const camera: Camera = { x: 0, y: 0, zoom: 1 };
+describe("mountEvictionCandidates", () => {
+  const distanceSq = (distances: Record<string, number>) => (id: string) => distances[id] ?? 0;
 
-  it("returns live frames in the visible area and cold frames outside", () => {
-    const frames = [
-      frame("a", 100, 100, 50, 50),
-      frame("b", 1000, 1000, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-    });
-    expect(result.liveFrameIds).toContain("a");
-    expect(result.liveFrameIds).not.toContain("b");
-    expect(result.coldFrameIds).toContain("b");
-  });
-
-  it("ranks visible frames closest to viewport center first", () => {
-    const frames = [
-      frame("far", 500, 0, 50, 50),
-      frame("near", 200, 150, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-    });
-    expect(result.liveFrameIds[0]).toBe("near");
-    expect(result.liveFrameIds[1]).toBe("far");
-  });
-
-  it("breaks ties deterministically by id", () => {
-    const frames = [
-      frame("b", 100, 100, 50, 50),
-      frame("a", 100, 100, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-    });
-    expect(result.liveFrameIds[0]).toBe("a");
-    expect(result.liveFrameIds[1]).toBe("b");
-  });
-
-  it("caps live frames at maxLiveFrames", () => {
-    const frames = Array.from({ length: 20 }, (_, i) =>
-      frame(`f${i}`, i * 30, i * 30, 20, 20),
+  it("orders unpinned mounts farthest-first", () => {
+    const candidates = mountEvictionCandidates(
+      ["a", "b", "c"],
+      new Set<string>(),
+      distanceSq({ a: 1, b: 9, c: 4 }),
     );
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 5,
-    });
-    expect(result.liveFrameIds.length).toBe(5);
-    expect(result.coldFrameIds.length).toBe(15);
+    expect(candidates.map((candidate) => candidate.id)).toEqual(["b", "c", "a"]);
   });
 
-  it("includes pinned frame as live even when offscreen", () => {
-    const frames = [frame("pinned", 9999, 9999, 10, 10)];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-      pinnedFrameId: "pinned",
-    });
-    expect(result.liveFrameIds).toContain("pinned");
-    expect(result.coldFrameIds).not.toContain("pinned");
-  });
-
-  it("does not duplicate pinned frame when pinned is also visible", () => {
-    const frames = [
-      frame("pinned", 100, 100, 50, 50),
-      frame("a", 200, 200, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-      pinnedFrameId: "pinned",
-    });
-    expect(result.liveFrameIds.filter((id) => id === "pinned").length).toBe(1);
-  });
-
-  it("ranks pinned frame first when visible", () => {
-    const frames = [
-      frame("near", 100, 100, 50, 50),
-      frame("pinned", 400, 0, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-      pinnedFrameId: "pinned",
-    });
-    expect(result.liveFrameIds[0]).toBe("pinned");
-    expect(result.liveFrameIds[1]).toBe("near");
-  });
-
-  it("includes pinned frame even when it would exceed maxLiveFrames", () => {
-    const frames = [
-      frame("pinned", 100, 100, 50, 50),
-      frame("a", 200, 200, 50, 50),
-      frame("b", 300, 300, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 2,
-      pinnedFrameId: "pinned",
-    });
-    expect(result.liveFrameIds).toContain("pinned");
-    expect(result.liveFrameIds.length).toBe(3);
-  });
-
-  it("handles frames with negative world coordinates", () => {
-    const frames = [frame("neg", -80, -80, 50, 50)];
-    const cameraNeg: Camera = { x: -100, y: -100, zoom: 1 };
-    const result = rankVisibleFrames({
-      frames,
-      camera: cameraNeg,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 12,
-    });
-    expect(result.liveFrameIds).toContain("neg");
-  });
-
-  it("coldFrameIds contains both visible-not-live and non-visible frames", () => {
-    const frames = [
-      frame("visible-close", 350, 250, 50, 50),
-      frame("visible-far", 500, 500, 50, 50),
-      frame("offscreen", 9999, 9999, 50, 50),
-    ];
-    const result = rankVisibleFrames({
-      frames,
-      camera,
-      viewport,
-      overscanScreenPx: 0,
-      maxLiveFrames: 1,
-    });
-    expect(result.liveFrameIds).toEqual(["visible-close"]);
-    expect(result.coldFrameIds).toEqual(
-      expect.arrayContaining(["visible-far", "offscreen"]),
+  it("excludes pinned mounts no matter how far they are", () => {
+    const candidates = mountEvictionCandidates(
+      ["a", "b", "c"],
+      new Set(["b"]),
+      distanceSq({ a: 1, b: 100, c: 4 }),
     );
-    expect(result.coldFrameIds.length).toBe(2);
+    expect(candidates.map((candidate) => candidate.id)).toEqual(["c", "a"]);
+  });
+
+  it("returns an empty list when every mount is pinned", () => {
+    expect(mountEvictionCandidates(["a", "b"], new Set(["a", "b"]), () => 5)).toEqual([]);
+  });
+
+  it("evicts from the front until the mount cap holds, keeping pins", () => {
+    const mounted = new Set(["a", "b", "c", "d"]);
+    const pinned = new Set(["d"]);
+    const cap = 2;
+    for (const { id } of mountEvictionCandidates(mounted, pinned, distanceSq({ a: 1, b: 9, c: 4 }))) {
+      if (mounted.size <= cap) break;
+      mounted.delete(id);
+    }
+    expect([...mounted].sort()).toEqual(["a", "d"]);
+  });
+
+  it("exposes the displacement target an at-cap scan mount must beat", () => {
+    const [farthest] = mountEvictionCandidates(
+      ["near", "far"],
+      new Set<string>(),
+      distanceSq({ near: 4, far: 25 }),
+    );
+    // A scan grant only displaces when strictly closer than this distance.
+    expect(farthest.id).toBe("far");
+    expect(farthest.distanceSq).toBe(25);
   });
 });

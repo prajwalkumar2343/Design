@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   CUSTOM_SHADER_IDS,
   PAPER_SHADER_IDS,
@@ -68,6 +68,24 @@ describe("detectPaperShaderSupport", () => {
       supported: false,
       reason: "webgl2-unavailable",
     });
+  });
+
+  it("probes the real canvas only once after support is confirmed", async () => {
+    vi.resetModules();
+    const { detectPaperShaderSupport: detect } = await import("./registry");
+    const getContext = vi.fn(() => ({
+      getExtension: () => ({ loseContext: () => undefined }),
+    }));
+    const createElement = vi
+      .spyOn(document, "createElement")
+      .mockReturnValue({ getContext } as unknown as HTMLCanvasElement);
+    try {
+      expect(detect()).toEqual({ supported: true });
+      expect(detect()).toEqual({ supported: true });
+      expect(getContext).toHaveBeenCalledTimes(1);
+    } finally {
+      createElement.mockRestore();
+    }
   });
 });
 

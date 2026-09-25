@@ -6,6 +6,7 @@ import {
   PAPER_SHADER_DEFINITIONS,
   detectPaperShaderSupport,
   getShaderMountProps,
+  isCustomShaderId,
   loadPaperShader,
   type ShaderId,
 } from "../shaders";
@@ -139,7 +140,7 @@ function LiveShaderPreview({ shaderId }: { shaderId: ShaderId }) {
     loadPaperShader(shaderId)
       .then((loaded) => {
         if (!alive) return;
-        if (detectPaperShaderSupport().supported) {
+        if (isCustomShaderId(shaderId) || detectPaperShaderSupport().supported) {
           setShaderComponent(() => loaded.Component as ComponentType<{ width?: string; height?: string }>);
         } else {
           setFailed(true);

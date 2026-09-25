@@ -166,6 +166,7 @@ import {
 import {
   createCanvasShaderElement,
   detectPaperShaderSupport,
+  isPaperShaderId,
   maxShaderElementRadius,
   SHADER_ELEMENT_DEFAULT_RADIUS,
   type CanvasShaderElement,
@@ -3891,7 +3892,7 @@ export function CanvasSurface({
 
   const addShaderElement = useCallback(
     (shaderId: ShaderId) => {
-      if (!detectPaperShaderSupport().supported) {
+      if (isPaperShaderId(shaderId) && !detectPaperShaderSupport().supported) {
         setCreationError("This browser cannot render shaders. WebGL2 is required.");
         return;
       }

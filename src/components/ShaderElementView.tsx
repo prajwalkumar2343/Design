@@ -5,6 +5,7 @@ import {
   clampShaderElementSize,
   detectPaperShaderSupport,
   getShaderMountProps,
+  isCustomShaderId,
   loadPaperShader,
   SHADER_ELEMENT_RADIUS_INSET,
   type CanvasShaderElement,
@@ -40,7 +41,7 @@ function useLoadedShaderComponent(shaderId: CanvasShaderElement["shaderId"]) {
     loadPaperShader(shaderId)
       .then((loaded) => {
         if (!alive) return;
-        if (detectPaperShaderSupport().supported) {
+        if (isCustomShaderId(shaderId) || detectPaperShaderSupport().supported) {
           setComponent(() => loaded.Component as SizedShaderComponent);
         } else {
           setFailed(true);

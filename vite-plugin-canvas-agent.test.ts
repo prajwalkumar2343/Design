@@ -34,10 +34,10 @@ function fakeReq(overrides: Partial<FakeReq> = {}): FakeReq {
   return {
     url: "/__canvas-agent/ping",
     method: "GET",
-    headers: {},
     socket: { remoteAddress: "127.0.0.1" },
     on: () => undefined,
     ...overrides,
+    headers: { host: "127.0.0.1:5173", ...overrides.headers },
   };
 }
 
@@ -155,11 +155,33 @@ describe("canvas-agent bridge middleware", () => {
     expect(res.statusCode).toBe(403);
   });
 
-  it("accepts a loopback Origin header", () => {
+  it("rejects a loopback Origin served by a different port", () => {
     const handler = createHandler();
     const res = fakeRes();
     handler(
       fakeReq({ headers: { origin: "http://localhost:4173" } }),
+      res,
+      () => undefined,
+    );
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("rejects same-site (cross-port) browser fetches", () => {
+    const handler = createHandler();
+    const res = fakeRes();
+    handler(
+      fakeReq({ headers: { "sec-fetch-site": "same-site" } }),
+      res,
+      () => undefined,
+    );
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("accepts an Origin matching this server's host and port", () => {
+    const handler = createHandler();
+    const res = fakeRes();
+    handler(
+      fakeReq({ headers: { origin: "http://127.0.0.1:5173" } }),
       res,
       () => undefined,
     );
@@ -180,5 +202,42 @@ describe("canvas-agent bridge middleware", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     const payload = JSON.parse(res.body) as { result?: { error?: { code?: string } } };
     expect(payload.result?.error?.code).toBe("op-dropped");
+  });
+
+  it("claims inbox ops for the first consumer and hides them from other tabs", async () => {
+    const handler = createHandler();
+    handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const first = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), first, () => undefined);
+    expect((JSON.parse(first.body) as { ops: unknown[] }).ops).toHaveLength(1);
+
+    const otherTab = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-b" }), otherTab, () => undefined);
+    expect((JSON.parse(otherTab.body) as { ops: unknown[] }).ops).toHaveLength(0);
+
+    // The owning consumer still sees its own ops when re-polling.
+    const again = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/inbox?after=0&consumer=tab-a" }), again, () => undefined);
+    expect((JSON.parse(again.body) as { ops: unknown[] }).ops).toHaveLength(1);
+  });
+
+  it("echoes the consumer id that posted a result", async () => {
+    const handler = createHandler();
+    handler(fakePostReq("/__canvas-agent/op", { op: "list" }), fakeRes(), () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    handler(
+      fakePostReq("/__canvas-agent/result", { seq: 1, result: { ok: true }, consumer: "tab-a" }),
+      fakeRes(),
+      () => undefined,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const res = fakeRes();
+    handler(fakeReq({ url: "/__canvas-agent/result?seq=1&timeout=25" }), res, () => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const payload = JSON.parse(res.body) as { consumer?: string };
+    expect(payload.consumer).toBe("tab-a");
   });
 });

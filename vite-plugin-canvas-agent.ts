@@ -15,6 +15,12 @@ const MAX_RESULT_WAIT_MS = 30_000;
 interface InboxEntry {
   seq: number;
   op: unknown;
+  /**
+   * Consumer id of the poller this op was first served to. Ops are
+   * single-consumer: a second tab polling the same inbox sees only ops
+   * nobody claimed, so two tabs can't both apply the same push/remove.
+   */
+  deliveredTo?: string;
 }
 
 interface ResultWaiter {
@@ -44,23 +50,23 @@ function isLoopback(req: IncomingMessage): boolean {
   );
 }
 
-const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
-
 /**
  * The socket check alone cannot stop drive-by writes: any web page open in
  * the user's browser can POST to a loopback server (a "simple" text/plain
  * request skips CORS preflight), and the remote address is still 127.0.0.1.
- * Browsers attach Sec-Fetch-Site to every request — including simple ones —
- * so a cross-site page is always distinguishable from the app's own same-
- * origin fetches. Origin is a second signal for clients that send it.
- * Non-browser agents (push-design.mjs) send neither header and stay allowed.
+ * Browsers attach Sec-Fetch-Site to every request — including simple ones.
+ * Only `same-origin` (the app's own fetches) and `none` (direct nav) pass:
+ * `same-site` covers cross-port loopback pages, which share the site but
+ * were never served by this bridge. When an Origin header is present it
+ * must equal this server's own origin — ports included — so a page hosted
+ * by a different loopback server cannot drive the bridge. Non-browser
+ * agents (push-design.mjs) send neither header and stay allowed.
  */
 function isSameSiteClient(req: IncomingMessage): boolean {
   const fetchSite = req.headers["sec-fetch-site"];
   if (
     typeof fetchSite === "string" &&
     fetchSite !== "same-origin" &&
-    fetchSite !== "same-site" &&
     fetchSite !== "none"
   ) {
     return false;
@@ -69,7 +75,7 @@ function isSameSiteClient(req: IncomingMessage): boolean {
   if (typeof origin === "string") {
     if (origin === "null") return false;
     try {
-      if (!LOOPBACK_HOSTNAMES.has(new URL(origin).hostname)) return false;
+      if (new URL(origin).host !== req.headers.host) return false;
     } catch {
       return false;
     }
@@ -113,18 +119,18 @@ export function canvasAgentBridge(): Plugin {
   const bootId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let seq = 0;
   const inbox: InboxEntry[] = [];
-  const results = new Map<number, unknown>();
+  const results = new Map<number, { result: unknown; consumer?: string }>();
   // Seqs evicted from the inbox before the app consumed them — they can never
   // produce a result, so /result resolves them immediately with op-dropped.
   const droppedSeqs = new Set<number>();
   const waiters = new Set<ResultWaiter>();
 
-  const flushWaiters = (finishedSeq: number, result: unknown) => {
+  const flushWaiters = (finishedSeq: number, result: unknown, consumer?: string) => {
     for (const waiter of [...waiters]) {
       if (waiter.seq !== finishedSeq) continue;
       waiters.delete(waiter);
       clearTimeout(waiter.timer);
-      sendJson(waiter.res, 200, { seq: finishedSeq, result });
+      sendJson(waiter.res, 200, { seq: finishedSeq, result, consumer });
     }
   };
 
@@ -176,16 +182,25 @@ export function canvasAgentBridge(): Plugin {
 
     if (req.method === "GET" && path === "/inbox") {
       const after = Number(url.searchParams.get("after") ?? "0");
-      sendJson(res, 200, {
-        ops: inbox.filter((entry) => entry.seq > after),
-        latest: seq,
-        bootId,
-      });
+      const consumer = url.searchParams.get("consumer") ?? "";
+      // Each op belongs to the first poller it was served to; other consumers
+      // (a second tab, a stale preview) never see claimed entries.
+      const ops = inbox.filter(
+        (entry) =>
+          entry.seq > after &&
+          (entry.deliveredTo === undefined || entry.deliveredTo === consumer),
+      );
+      if (consumer) {
+        for (const entry of ops) {
+          entry.deliveredTo ??= consumer;
+        }
+      }
+      sendJson(res, 200, { ops, latest: seq, bootId });
       return;
     }
 
     if (req.method === "POST" && path === "/result") {
-      let body: { seq?: unknown; result?: unknown };
+      let body: { seq?: unknown; result?: unknown; consumer?: unknown };
       try {
         body = JSON.parse(await readBody(req));
       } catch {
@@ -197,11 +212,12 @@ export function canvasAgentBridge(): Plugin {
         sendJson(res, 400, { error: { code: "invalid-seq", message: "Result seq must be a positive integer" } });
         return;
       }
-      results.set(resultSeq, body.result ?? null);
+      const consumer = typeof body.consumer === "string" && body.consumer ? body.consumer : undefined;
+      results.set(resultSeq, { result: body.result ?? null, consumer });
       if (results.size > MAX_RESULTS) {
         results.delete(results.keys().next().value as number);
       }
-      flushWaiters(resultSeq, body.result ?? null);
+      flushWaiters(resultSeq, body.result ?? null, consumer);
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -213,7 +229,8 @@ export function canvasAgentBridge(): Plugin {
         return;
       }
       if (results.has(resultSeq)) {
-        sendJson(res, 200, { seq: resultSeq, result: results.get(resultSeq) });
+        const stored = results.get(resultSeq);
+        sendJson(res, 200, { seq: resultSeq, result: stored?.result, consumer: stored?.consumer });
         return;
       }
       if (droppedSeqs.has(resultSeq)) {

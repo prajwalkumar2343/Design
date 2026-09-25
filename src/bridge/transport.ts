@@ -65,7 +65,32 @@ export interface IframeBridgeController {
 export interface BridgeTransportHandlers {
   onReady?: (message: BridgeReadyMessage) => void;
   onEvent?: (message: BridgeEventMessage) => void;
+  /**
+   * Fires when a DOM-mutating command is dispatched to the frame document.
+   * The canvas uses it to mark the frame dirty — live DOM edits exist only
+   * inside the iframe, so a dirty frame must not be evicted by the mount cap.
+   */
+  onMutatingCommand?: (command: BridgeCommand) => void;
 }
+
+/**
+ * Commands that change the frame document's DOM in ways srcDoc does not
+ * capture. Read commands (inspect/pick), session chrome (start/cancel text
+ * edit), and store-derived pushes (set-token-theme, inject-font-faces —
+ * re-applied on every bridge ready) are intentionally absent.
+ */
+const MUTATING_COMMANDS = new Set<BridgeCommand["command"]>([
+  "set-inline-style",
+  "set-text",
+  "commit-text-edit",
+  "create-element",
+  "delete-element",
+  "restore-element",
+  "duplicate-element",
+  "set-shape-radius",
+  "set-shape-fill",
+  "set-shape-glass",
+]);
 
 const BRIDGE_REQUEST_TIMEOUT_MS = 5000;
 
@@ -91,6 +116,27 @@ export interface IframeBridgeTransportOptions extends BridgeSessionIdentity {
   handlers?: BridgeTransportHandlers;
 }
 
+/**
+ * Shared message routing for all transports on a parent window. One global
+ * "message" listener per window dispatches to the transport registered for
+ * the posting iframe (`event.source`), so each postMessage is O(1) instead of
+ * waking every frame's listener for a channel check.
+ */
+const transportRegistries = new WeakMap<Window, Map<MessageEventSource, IframeBridgeTransport>>();
+
+function registryFor(parentWindow: Window): Map<MessageEventSource, IframeBridgeTransport> {
+  let registry = transportRegistries.get(parentWindow);
+  if (!registry) {
+    const created = new Map<MessageEventSource, IframeBridgeTransport>();
+    registry = created;
+    transportRegistries.set(parentWindow, created);
+    parentWindow.addEventListener("message", (event) => {
+      created.get(event.source as MessageEventSource)?.acceptMessage(event);
+    });
+  }
+  return registry;
+}
+
 export class IframeBridgeTransport {
   private readonly iframe: HTMLIFrameElement;
   private readonly parentWindow: Window;
@@ -100,20 +146,20 @@ export class IframeBridgeTransport {
   private requestSequence = 0;
   private attached = false;
   private disposed = false;
+  private registeredSource: MessageEventSource | null = null;
 
   constructor(options: IframeBridgeTransportOptions) {
     this.iframe = options.iframe;
     this.parentWindow = options.window ?? window;
     this.identity = { channel: options.channel, frameId: options.frameId };
     this.handlers = options.handlers ?? {};
-    this.handleMessage = this.handleMessage.bind(this);
     this.handleLoad = this.handleLoad.bind(this);
   }
 
   attach(): void {
     if (this.attached || this.disposed) return;
     this.attached = true;
-    this.parentWindow.addEventListener("message", this.handleMessage);
+    this.registerSource();
     this.iframe.addEventListener("load", this.handleLoad);
     queueMicrotask(() => this.sendHandshake());
   }
@@ -121,7 +167,7 @@ export class IframeBridgeTransport {
   destroy(): void {
     if (this.disposed) return;
     this.disposed = true;
-    this.parentWindow.removeEventListener("message", this.handleMessage);
+    this.unregisterSource();
     this.iframe.removeEventListener("load", this.handleLoad);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
@@ -242,11 +288,27 @@ export class IframeBridgeTransport {
     return true;
   }
 
-  private handleMessage(event: MessageEvent): void {
-    this.acceptMessage(event);
+  private registerSource(): void {
+    const source = this.iframe.contentWindow;
+    if (!source || source === this.registeredSource) return;
+    this.unregisterSource();
+    registryFor(this.parentWindow).set(source, this);
+    this.registeredSource = source;
+  }
+
+  private unregisterSource(): void {
+    if (this.registeredSource === null) return;
+    const registry = transportRegistries.get(this.parentWindow);
+    if (registry?.get(this.registeredSource) === this) {
+      registry.delete(this.registeredSource);
+    }
+    this.registeredSource = null;
   }
 
   private handleLoad(): void {
+    // A srcDoc reload keeps the same contentWindow, but re-registering keeps
+    // the dispatcher correct even if the browsing context was swapped.
+    this.registerSource();
     this.sendHandshake();
   }
 
@@ -285,6 +347,9 @@ export class IframeBridgeTransport {
   }
 
   private sendCommand(command: BridgeCommand): Promise<BridgeCommandAck> {
+    if (MUTATING_COMMANDS.has(command.command)) {
+      this.handlers.onMutatingCommand?.(command);
+    }
     const requestId = this.nextRequestId();
     return this.request(createBridgeCommand(this.identity, requestId, command), "command").then((message) => {
       if (!message.ok || message.result.kind !== "command") {

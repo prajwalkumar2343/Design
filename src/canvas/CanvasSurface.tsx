@@ -1493,18 +1493,6 @@ export function CanvasSurface({
     }
   }, [clearComments, editorStore, shouldUseLocalMemory, refreshLocalProjects]);
 
-
-  // Agent bridge: the Vite plugin (vite-plugin-canvas-agent.ts) exposes a
-  // loopback inbox that local Claude/Codex sessions push HTML/CSS into. Runs
-  // on dev servers automatically; ?agent=1 opts in on preview builds.
-  useEffect(() => {
-    const enabled =
-      import.meta.env.DEV ||
-      new URLSearchParams(window.location.search).has("agent");
-    if (!enabled) return;
-    return startAgentBridge(editorStore);
-  }, [editorStore]);
-
   // Continuous memory autosave — every meaningful editor change is persisted to this device
   useEffect(() => {
     if (!shouldUseLocalMemory) return;

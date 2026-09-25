@@ -143,4 +143,36 @@ describe("editor store history", () => {
     );
     store.rollbackTransaction();
   });
+
+  it("refuses to commit or roll back a transaction owned by another token", () => {
+    const store = createEditorStore(createEditorStateFromFrameSeeds([frame]));
+
+    const token = store.beginTransaction("Owner's move");
+    store.execute(moveFrameCommand({ frameId: "frame-1", position: { x: 30, y: 40 } }));
+
+    // A stale handle from a finalized gesture must not seal or revert the
+    // transaction that is actually open.
+    const stale = Symbol("stale");
+    expect(store.commitTransaction(undefined, stale)).toBe(false);
+    expect(store.rollbackTransaction(stale)).toBe(false);
+    expect(store.hasActiveTransaction()).toBe(true);
+
+    expect(store.commitTransaction(undefined, token)).toBe(true);
+    expect(store.getHistory().past).toHaveLength(1);
+  });
+
+  it("keeps a foreign token from rolling back once the owner's transaction was sealed", () => {
+    const store = createEditorStore(createEditorStateFromFrameSeeds([frame]));
+
+    const first = store.beginTransaction("First");
+    store.execute(moveFrameCommand({ frameId: "frame-1", position: { x: 30, y: 40 } }));
+    store.commitTransaction(undefined, first);
+
+    const second = store.beginTransaction("Second");
+    // The first operation's late cleanup must not revert the second
+    // transaction that opened after its own was already committed.
+    expect(store.rollbackTransaction(first)).toBe(false);
+    expect(store.hasActiveTransaction()).toBe(true);
+    store.commitTransaction(undefined, second);
+  });
 });

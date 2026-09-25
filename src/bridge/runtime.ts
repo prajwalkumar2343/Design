@@ -96,6 +96,10 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
   const isSafeString = (value, maxLength, allowEmpty = false) =>
     typeof value === "string" && value.length <= maxLength && (allowEmpty || value.length > 0) && !/[\\u0000-\\u001f\\u007f]/.test(value);
+  // Text payloads legitimately carry \\n \\t \\r — everything else in the
+  // C0/DEL range stays rejected.
+  const isTextString = (value, maxLength, allowEmpty = false) =>
+    typeof value === "string" && value.length <= maxLength && (allowEmpty || value.length > 0) && !/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/.test(value);
   const isFiniteNumber = (value) => typeof value === "number" && Number.isFinite(value);
   const isPoint = (value) => isRecord(value) && isFiniteNumber(value.x) && isFiniteNumber(value.y);
   const isEnvelope = (value) =>
@@ -156,7 +160,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return parts.join("/");
   }
 
-  function elementId(element) {
+  // Element ids are frame-scoped so the flat editor node map can hold
+  // structurally identical elements from different documents — every document
+  // otherwise mints the same path:html[1]/data: ids and collides.
+  const ELEMENT_ID_SCOPE = "frm~" + CONFIG.frameId + "~";
+
+  function rawElementId(element) {
     const stableAttribute = element.getAttribute("data-design-element-id");
     if (stableAttribute && isSafeString(stableAttribute, 256)) {
       return "data:" + encodeId(stableAttribute);
@@ -165,6 +174,17 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       return "id:" + encodeId(element.id);
     }
     return "path:" + elementPath(element);
+  }
+
+  function elementId(element) {
+    return ELEMENT_ID_SCOPE + rawElementId(element);
+  }
+
+  /** The document-local form of an element id, or the id itself when unscoped. */
+  function unscopeElementId(targetId) {
+    return typeof targetId === "string" && targetId.indexOf(ELEMENT_ID_SCOPE) === 0
+      ? targetId.slice(ELEMENT_ID_SCOPE.length)
+      : targetId;
   }
 
   /**
@@ -216,13 +236,14 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   }
 
   function findElement(targetId) {
-    if (!isSafeString(targetId, 512)) return null;
+    if (!isSafeString(targetId, 1536)) return null;
+    const localTargetId = unscopeElementId(targetId);
     // Fast paths keep per-frame edits (radius/glass slider drags) off the
     // full-document scan: data:/id: targets resolve in O(1) and only the
     // path: fallback walks the tree.
-    if (targetId.indexOf("data:") === 0) {
+    if (localTargetId.indexOf("data:") === 0) {
       let decoded = null;
-      try { decoded = decodeURIComponent(targetId.slice(5)); } catch { decoded = null; }
+      try { decoded = decodeURIComponent(localTargetId.slice(5)); } catch { decoded = null; }
       if (decoded) {
         if (typeof CSS !== "undefined" && CSS.escape) {
           try {
@@ -237,9 +258,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         }
       }
     }
-    if (targetId.indexOf("id:") === 0) {
+    if (localTargetId.indexOf("id:") === 0) {
       let decoded = null;
-      try { decoded = decodeURIComponent(targetId.slice(3)); } catch { decoded = null; }
+      try { decoded = decodeURIComponent(localTargetId.slice(3)); } catch { decoded = null; }
       if (decoded) {
         const hit = document.getElementById(decoded);
         if (hit) return hit;
@@ -247,7 +268,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
     const elements = document.querySelectorAll("*");
     for (const element of elements) {
-      if (elementId(element) === targetId) return element;
+      if (rawElementId(element) === localTargetId) return element;
     }
     return null;
   }
@@ -1138,8 +1159,10 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   }
 
   function createElementFromSpec(spec) {
+    // spec.elementId is the raw data-design-element-id attribute value; the
+    // derived identity is data:<encoded> — check duplicates in that space.
     if (!isRecord(spec) || !isSafeString(spec.elementId, 512) || !isSafeString(spec.kind, 32) ||
-      !safeBounds(spec.bounds) || findElement(spec.elementId)) {
+      !safeBounds(spec.bounds) || findElement("data:" + encodeId(spec.elementId))) {
       throw { code: "invalid-create", message: "The requested element definition is invalid" };
     }
     const kind = spec.kind;
@@ -1153,7 +1176,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     let element;
     if (kind === "text") {
       element = document.createElement("div");
-      element.textContent = isSafeString(spec.text, MAX_TEXT_LENGTH, true) ? spec.text : "";
+      element.textContent = isTextString(spec.text, MAX_TEXT_LENGTH, true) ? spec.text : "";
       element.style.color = safeColor(spec.fill, "#171717");
       element.style.fontFamily = "Inter, ui-sans-serif, system-ui, -apple-system, \\\"Segoe UI\\\", Roboto, \\\"Helvetica Neue\\\", Arial, sans-serif";
       element.style.fontSize = "16px";
@@ -1180,7 +1203,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       if (!safeDataImage(spec.src || "")) throw { code: "unsafe-image", message: "Images must be local data URLs" };
       element = document.createElement("img");
       element.src = spec.src;
-      element.alt = isSafeString(spec.alt, 4096, true) ? spec.alt : "";
+      element.alt = isTextString(spec.alt, 4096, true) ? spec.alt : "";
       element.style.objectFit = "cover";
       element.style.background = "transparent";
       styleCreatedElement(element, bounds);
@@ -1254,6 +1277,10 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
     return {
       elementId: elementId(element),
+      // The raw attribute value must round-trip through duplicate/restore —
+      // re-embedding the scoped editor id double-wraps it and mints a new
+      // identity every undo/redo cycle.
+      attrId: element.getAttribute("data-design-element-id") || undefined,
       kind: element.getAttribute("data-design-tool-kind") || "rectangle",
       bounds,
       text: (element.textContent || "").slice(0, MAX_TEXT_LENGTH),
@@ -1278,7 +1305,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   function createCommandFromSnapshot(snapshot) {
     return {
       command: "create-element",
-      elementId: snapshot.elementId,
+      elementId: typeof snapshot.attrId === "string" && snapshot.attrId ? snapshot.attrId : snapshot.elementId,
       kind: snapshot.kind,
       bounds: snapshot.bounds,
       text: snapshot.text,
@@ -1549,12 +1576,16 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         property: command.property,
         previousValue,
         value,
+        // The gesture overlay renders predicted bounds, but layout is free to
+        // land the element elsewhere (alignment, clamps). This real post-edit
+        // rect lets the canvas glue the selection chrome to the truth.
+        bounds: localBounds(element),
         undo: { command: "set-inline-style", targetId: command.targetId, property: command.property, value: previousValue },
       };
     }
 
     if (command.command === "set-text") {
-      if (!isSafeString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG)$/.test(element.tagName)) {
+      if (!isTextString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG)$/.test(element.tagName)) {
         throw { code: "unsafe-text-target", message: "Text edits are not allowed for this element" };
       }
       const previousText = element.textContent || "";
@@ -1580,7 +1611,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       return { kind: "command", command: "cancel-text-edit", targetId: command.targetId };
     }
     if (command.command === "commit-text-edit") {
-      if (!isSafeString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG)$/.test(element.tagName)) {
+      if (!isTextString(command.text, MAX_TEXT_LENGTH, true) || /^(SCRIPT|STYLE|IFRAME|OBJECT|EMBED|IMG)$/.test(element.tagName)) {
         throw { code: "unsafe-text-target", message: "Text edits are not allowed for this element" };
       }
       const edit = activeTextEdit && activeTextEdit.element === element ? activeTextEdit : null;
@@ -1662,7 +1693,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         }
         let parent = null;
         if (snapshot.parentId !== null) {
-          if (!isSafeString(snapshot.parentId, 512)) throw { code: "restore-failed", message: "The captured markup snapshot is invalid" };
+          if (!isSafeString(snapshot.parentId, 1536)) throw { code: "restore-failed", message: "The captured markup snapshot is invalid" };
           parent = findElement(snapshot.parentId);
         } else {
           parent = document.body;
@@ -1687,7 +1718,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
           replay: { command: "delete-element", targetId: target.elementId },
         };
       }
-      const element = createElementFromSpec(command.snapshot);
+      const element = createElementFromSpec({
+        ...command.snapshot,
+        elementId: typeof command.snapshot.attrId === "string" && command.snapshot.attrId
+          ? command.snapshot.attrId
+          : command.snapshot.elementId,
+      });
       const target = describe(element);
       if (!target) throw { code: "restore-failed", message: "The element could not be restored" };
       const replay = createCommandFromSnapshot(command.snapshot);
@@ -1707,6 +1743,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       const snapshotValue = {
         ...sourceSnapshot,
         elementId: command.elementId,
+        attrId: command.elementId,
         bounds: { ...sourceSnapshot.bounds, x: sourceSnapshot.bounds.x + 16, y: sourceSnapshot.bounds.y + 16 },
       };
       const element = createElementFromSpec(snapshotValue);
@@ -1795,7 +1832,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       // Document-scoped: appends Canvas-bundled @font-face CSS (data-URI woff2)
       // so fonts picked after the frame rendered resolve inside this opaque
       // origin, which cannot fetch app-origin font files.
-      if (!isSafeString(command.css, 4000000) || command.css.length === 0 ||
+      if (!isTextString(command.css, 4000000) || command.css.length === 0 ||
         /<\\/style|javascript\\s*:|expression\\s*\\(|@import/i.test(command.css)) {
         throw { code: "invalid-font-css", message: "The font face payload is invalid" };
       }
@@ -1853,7 +1890,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         target: element,
         shiftKey: command.shiftKey,
       }, target);
-      return { kind: "command", command: "pick-element" };
+      // Acks carry a targetId: the wire validator rejects target-less acks,
+      // so "document" stands in for a pick that hit nothing.
+      return { kind: "command", command: "pick-element", targetId: target ? target.elementId : "document" };
     }
     throw { code: "unsupported-command", message: "The requested bridge command is not supported" };
   }
@@ -1871,7 +1910,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         sendResponse(message.requestId, { ok: true, result: { kind: "snapshot", snapshot: snapshot() } });
         return;
       }
-      if (message.command === "inspect" && isSafeString(message.targetId, 512)) {
+      if (message.command === "inspect" && isSafeString(message.targetId, 1536)) {
         sendResponse(message.requestId, { ok: true, result: { kind: "inspection", inspection: inspect(findElement(message.targetId)) } });
         return;
       }

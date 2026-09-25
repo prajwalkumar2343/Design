@@ -49,6 +49,38 @@ For Codex-facing integration or test harnesses, use the typed services/store doc
 Import/Export for `.wirecanvas.json`; this project has no Canvas CLI or direct workspace
 filesystem writer.
 
+## Agent bridge (push designs to the live canvas)
+
+The running app exposes a loopback agent bridge (`/__canvas-agent/*`, served by the
+Vite dev and preview servers). The open app tab polls it and applies ops to the live
+editor store — frames appear in the browser the user is already looking at, not a
+separate headless instance. Three ops:
+
+- `push` — upsert design HTML. Accepts a full `html` document, a bare `fragment`,
+  or either plus a separate `css` sheet (wrapped/injected automatically). With no
+  `id` a new design-mode frame is minted right of the existing frames; with an `id`
+  matching an existing frame (or `documentId` matching a document) the document is
+  replaced in place and `width`/`height`/`name`/`background` patch the frame.
+- `remove` — `{"op":"remove","frameId":"..."}` deletes a frame.
+- `list` — returns frames, documents, pages, and session state; use it to discover
+  IDs before targeting edits.
+
+Use the bundled script (same conventions as the other helpers):
+
+```bash
+node <plugin-root>/scripts/push-design.mjs --url http://127.0.0.1:5173 --list
+node <plugin-root>/scripts/push-design.mjs --html hero.html --css hero.css --name Hero --id hero
+node <plugin-root>/scripts/push-design.mjs --id hero --html hero-v2.html   # replace in place
+node <plugin-root>/scripts/push-design.mjs --remove hero
+echo '{"op":"push","fragment":"<h1>Hi</h1>"}' | node <plugin-root>/scripts/push-design.mjs --stdin
+```
+
+The script prints the applied result as JSON and exits nonzero when the canvas rejects
+the op (admission failure, brainstorm guard, unknown frame). The bridge runs
+automatically on `npm run dev`; against `vite preview` the open tab needs `?agent=1`.
+Design pushes are refused while a Brainstorm session is briefing/wireframing — use the
+wireframe path (`DocumentExchangeService.createWireframe`) there instead.
+
 ## Current Canvas Mapping
 
 Read `references/current-project.md` before changing documents, frames, or canvas state. It describes the present source ownership and prevents assuming future CLI features already exist.

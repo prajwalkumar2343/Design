@@ -324,4 +324,93 @@ describe("editor reducer", () => {
     });
     expect(bulk.nodes["child"].documentId).toBe("document-2");
   });
+
+  it("resolves a bulk child's parent from the batch when the parent is moving documents", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withParent = editorReducer(current, {
+      type: "node/upsert",
+      node: {
+        id: "parent",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element",
+        name: "Parent",
+        attributes: {},
+        childIds: [],
+      },
+    });
+
+    // Child row first, then the parent's move row — the parent lookup must see
+    // the incoming document-2 record, not the stale document-1 one in state.
+    const next = editorReducer(withParent, {
+      type: "nodes/upsert-many",
+      nodes: [
+        {
+          id: "child",
+          documentId: "document-2",
+          parentId: "parent",
+          kind: "element",
+          name: "Child",
+          attributes: {},
+          childIds: [],
+        },
+        {
+          id: "parent",
+          documentId: "document-2",
+          parentId: null,
+          kind: "element",
+          name: "Parent",
+          attributes: {},
+          childIds: ["child"],
+        },
+      ],
+    });
+    expect(next.nodes["parent"].documentId).toBe("document-2");
+    expect(next.nodes["child"].documentId).toBe("document-2");
+    expect(next.nodes["parent"].childIds).toEqual(["child"]);
+  });
+
+  it("clears descendant frameIds that reference frames left in the old document", () => {
+    const current = createEditorStateFromFrameSeeds([
+      baseFrame,
+      { ...baseFrame, id: "frame-2", documentId: "document-2" },
+    ]);
+    const withTree = [
+      {
+        id: "root",
+        documentId: "document-1",
+        parentId: null,
+        kind: "element" as const,
+        name: "Root",
+        attributes: {},
+        childIds: [] as string[],
+      },
+      {
+        id: "child",
+        documentId: "document-1",
+        parentId: "root",
+        kind: "element" as const,
+        name: "Child",
+        attributes: {},
+        childIds: [] as string[],
+        frameId: "frame-1",
+      },
+    ].reduce(
+      (s, node) => editorReducer(s, { type: "node/upsert", node }),
+      current,
+    );
+
+    const next = editorReducer(withTree, {
+      type: "node/upsert",
+      node: { ...withTree.nodes["root"], documentId: "document-2" },
+    });
+    const moved = next.nodes["child"];
+    expect(moved.documentId).toBe("document-2");
+    // frame-1 lives in document-1 — keeping it would fail serialization's
+    // same-document frame check.
+    expect(moved.frameId).toBeUndefined();
+  });
 });

@@ -5,6 +5,7 @@ import {
   type DocumentEntity,
   type EditorState,
   type FrameEntity,
+  type FrameId,
   type NodeEntity,
   type NodeId,
   type PageEntity,
@@ -120,10 +121,13 @@ function requireFrame(state: EditorState, frameId: string): FrameEntity {
 }
 
 // Moving a node across documents carries its whole subtree — descendants
-// left in the old document would fail parent/child ownership checks. Returns
-// the input record untouched when nothing needs retargeting.
+// left in the old document would fail parent/child ownership checks, and a
+// frameId still pointing at a frame in the old document fails the
+// same-document check at serialize time. Returns the input record untouched
+// when nothing needs retargeting.
 function retargetSubtreeDocument(
   nodes: Record<NodeId, NodeEntity>,
+  frames: Record<FrameId, FrameEntity>,
   rootId: NodeId,
   documentId: string,
 ): Record<NodeId, NodeEntity> {
@@ -138,9 +142,15 @@ function retargetSubtreeDocument(
     seen.add(id);
     const child = (out ?? nodes)[id];
     if (!child) continue;
-    if (child.documentId !== documentId) {
+    const staleFrame =
+      child.frameId !== undefined && frames[child.frameId]?.documentId !== documentId;
+    if (child.documentId !== documentId || staleFrame) {
       out ??= { ...nodes };
-      out[id] = { ...child, documentId };
+      out[id] = {
+        ...child,
+        documentId,
+        ...(staleFrame ? { frameId: undefined } : {}),
+      };
     }
     queue.push(...child.childIds);
   }
@@ -647,7 +657,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
         }
       }
       if (previous && previous.documentId !== action.node.documentId) {
-        nextState = { ...nextState, nodes: retargetSubtreeDocument(nextState.nodes, action.node.id, action.node.documentId) };
+        nextState = { ...nextState, nodes: retargetSubtreeDocument(nextState.nodes, nextState.frames, action.node.id, action.node.documentId) };
       }
       return nextState;
     }
@@ -672,7 +682,10 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       for (const node of action.nodes) {
         requireDocument(state, node.documentId);
         if (node.parentId) {
-          const parent = nodes[node.parentId] ?? incomingById.get(node.parentId);
+          // The incoming record wins: a parent already in state may be moving
+          // to this document within the same batch, and its stale record would
+          // wrongly fail the same-document check.
+          const parent = incomingById.get(node.parentId) ?? nodes[node.parentId];
           if (!parent) {
             throw new EditorReducerError(`Unknown parent node: ${node.parentId}`);
           }
@@ -735,7 +748,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       for (const node of action.nodes) {
         const previous = state.nodes[node.id];
         if (previous && previous.documentId !== node.documentId) {
-          nextNodes = retargetSubtreeDocument(nextNodes, node.id, node.documentId);
+          nextNodes = retargetSubtreeDocument(nextNodes, state.frames, node.id, node.documentId);
         }
       }
       return { ...state, nodes: nextNodes, documents };

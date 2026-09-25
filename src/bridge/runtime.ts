@@ -317,6 +317,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return points.map((point) => point.x + "," + point.y).join(" ");
   }
 
+  function clampedRectRadius(radius, width, height) {
+    const r = Math.max(0, Number(radius) || 0);
+    const cap = Math.min(Number(width) || 0, Number(height) || 0) / 2;
+    return cap > 0 ? Math.min(r, cap) : r;
+  }
+
   function createSvgChild(svg, kind, points, bounds, fill, stroke, strokeWidth, radius) {
     const ns = "http://www.w3.org/2000/svg";
     const normalized = points || [];
@@ -324,13 +330,16 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     let child;
     if (kind === "rectangle") {
       child = document.createElementNS(ns, "rect");
+      const rectW = Math.max(1, bounds.width - strokeWidth);
+      const rectH = Math.max(1, bounds.height - strokeWidth);
       child.setAttribute("x", String(inset));
       child.setAttribute("y", String(inset));
-      child.setAttribute("width", String(Math.max(1, bounds.width - strokeWidth)));
-      child.setAttribute("height", String(Math.max(1, bounds.height - strokeWidth)));
-      if (radius > 0) {
-        child.setAttribute("rx", String(radius));
-        child.setAttribute("ry", String(radius));
+      child.setAttribute("width", String(rectW));
+      child.setAttribute("height", String(rectH));
+      const r = clampedRectRadius(radius, rectW, rectH);
+      if (r > 0) {
+        child.setAttribute("rx", String(r));
+        child.setAttribute("ry", String(r));
       }
     } else if (kind === "ellipse") {
       child = document.createElementNS(ns, "ellipse");
@@ -378,9 +387,10 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       ? element.querySelector("rect")
       : null;
     if (!rect) return false;
-    if (radius > 0) {
-      rect.setAttribute("rx", String(radius));
-      rect.setAttribute("ry", String(radius));
+    const r = clampedRectRadius(radius, rect.getAttribute("width"), rect.getAttribute("height"));
+    if (r > 0) {
+      rect.setAttribute("rx", String(r));
+      rect.setAttribute("ry", String(r));
     } else {
       rect.removeAttribute("rx");
       rect.removeAttribute("ry");
@@ -430,9 +440,11 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         if (childTag === "rect") {
           child.setAttribute("x", String(inset));
           child.setAttribute("y", String(inset));
-          child.setAttribute("width", String(Math.max(1, W - strokeWidth)));
-          child.setAttribute("height", String(Math.max(1, H - strokeWidth)));
-          const r = Math.min(Math.max(0, radiusRaw), W / 2, H / 2);
+          const rectW = Math.max(1, W - strokeWidth);
+          const rectH = Math.max(1, H - strokeWidth);
+          child.setAttribute("width", String(rectW));
+          child.setAttribute("height", String(rectH));
+          const r = clampedRectRadius(radiusRaw, rectW, rectH);
           if (r > 0) {
             child.setAttribute("rx", String(r));
             child.setAttribute("ry", String(r));

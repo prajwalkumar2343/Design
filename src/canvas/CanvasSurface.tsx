@@ -310,6 +310,7 @@ function isCanvasCreationTool(tool: ToolId): tool is "rectangle" | "text" | "ima
  * mint an invisible, min-clamped shape into the document.
  */
 const MIN_SHAPE_DRAG = 6;
+const FRAME_CONTENT_INSET = 1;
 
 function creationToolLabel(tool: ToolId, shape: ShapeVariantId): string {
   if (tool === "rectangle") return shapeLabel(shape);
@@ -1750,8 +1751,8 @@ export function CanvasSurface({
       const transform = entry.inspection?.inlineStyle.transform ?? entry.inspection?.computedStyle.transform;
       const parsedRotation = transform ? parseTransform(transform)?.rotation ?? 0 : 0;
       const bounds = {
-        x: frame.x + entry.target.bounds.x - (shift?.x ?? 0),
-        y: frame.y + entry.target.bounds.y - (shift?.y ?? 0),
+        x: frame.x + FRAME_CONTENT_INSET + entry.target.bounds.x - (shift?.x ?? 0),
+        y: frame.y + FRAME_CONTENT_INSET + entry.target.bounds.y - (shift?.y ?? 0),
         width: entry.target.bounds.width,
         height: entry.target.bounds.height,
       };
@@ -2423,8 +2424,8 @@ export function CanvasSurface({
         for (const node of snapshot.nodes) {
           if (!isFreeformContentNode(node)) continue;
           content.push({
-            x: anchor.x + node.bounds.x + measureShift.x,
-            y: anchor.y + node.bounds.y + measureShift.y,
+            x: anchor.x + node.bounds.x + measureShift.x + FRAME_CONTENT_INSET,
+            y: anchor.y + node.bounds.y + measureShift.y + FRAME_CONTENT_INSET,
             width: node.bounds.width,
             height: node.bounds.height,
           });
@@ -2760,7 +2761,7 @@ export function CanvasSurface({
         const elementId = createElementId("text");
         const markup = buildFreeformTextMarkup({
           elementId,
-          bounds: { x: pad, y: pad, width: bounds.width, height: elementHeight },
+          bounds: { x: pad - FRAME_CONTENT_INSET, y: pad - FRAME_CONTENT_INSET, width: bounds.width, height: elementHeight },
           text: "Type to edit",
         });
         const created = createFreeformElement({
@@ -2796,11 +2797,11 @@ export function CanvasSurface({
       const markup = buildFreeformShapeMarkup({
         elementId,
         kind: shape,
-        bounds: { x: pad, y: pad, width: bounds.width, height: bounds.height },
+        bounds: { x: pad - FRAME_CONTENT_INSET, y: pad - FRAME_CONTENT_INSET, width: bounds.width, height: bounds.height },
         points: shapeDragPoints(
           shape,
-          { x: start.x - frameRect.x, y: start.y - frameRect.y },
-          { x: last.x - frameRect.x, y: last.y - frameRect.y },
+          { x: start.x - frameRect.x - FRAME_CONTENT_INSET, y: start.y - frameRect.y - FRAME_CONTENT_INSET },
+          { x: last.x - frameRect.x - FRAME_CONTENT_INSET, y: last.y - frameRect.y - FRAME_CONTENT_INSET },
         ),
         fill: "#d9d9d9",
         stroke: "#222222",
@@ -2829,7 +2830,7 @@ export function CanvasSurface({
       const alt = fileName.replace(/\.[^.]+$/, "").slice(0, 120);
       const markup = buildFreeformImageMarkup({
         elementId,
-        bounds: { x: pad, y: pad, width: rect.width, height: rect.height },
+        bounds: { x: pad - FRAME_CONTENT_INSET, y: pad - FRAME_CONTENT_INSET, width: rect.width, height: rect.height },
         src,
         alt,
       });
@@ -3695,8 +3696,8 @@ export function CanvasSurface({
           if (other.frameId !== frameId || !isFreeformContentNode(other.target)) continue;
           if (other.target.elementId === nodeId) {
             content.push({
-              x: frame.x + position.x - shift.x,
-              y: frame.y + position.y - shift.y,
+              x: frame.x + FRAME_CONTENT_INSET + position.x - shift.x,
+              y: frame.y + FRAME_CONTENT_INSET + position.y - shift.y,
               width: inspection.target.bounds.width,
               height: inspection.target.bounds.height,
             });
@@ -3754,10 +3755,10 @@ export function CanvasSurface({
   }, [editorStore]);
 
   const {
-    alignmentGuides,
     beginNodeGesture,
     cancelNodeGesture,
     endNodeGesture,
+    gestureOverlayStore,
     isNodeGestureActive,
     moveNodeGesture,
     selectedOverlayTargets,
@@ -4123,7 +4124,7 @@ export function CanvasSurface({
         const frameRect: Rect = { x: frame.x, y: frame.y, width: frame.width, height: frame.height };
         const bounds = bridgeHierarchies[frameId]?.nodes.find((node) => node.elementId === nodeId)?.bounds;
         const focusRect = bounds
-          ? getFramesBounds([frameRect, { x: frame.x + bounds.x, y: frame.y + bounds.y, width: bounds.width, height: bounds.height }])
+          ? getFramesBounds([frameRect, { x: frame.x + FRAME_CONTENT_INSET + bounds.x, y: frame.y + FRAME_CONTENT_INSET + bounds.y, width: bounds.width, height: bounds.height }])
           : frameRect;
         const nextCamera = revealCamera(cameraRef.current, viewport, focusRect, cameraFitPadding(viewport));
         if (nextCamera) {
@@ -5002,7 +5003,7 @@ export function CanvasSurface({
         const frame = frameById.get(selectedComment.frameId);
         if (!frame) return null;
         return worldToScreen(
-          { x: frame.x + selectedComment.point.x, y: frame.y + selectedComment.point.y },
+          { x: frame.x + FRAME_CONTENT_INSET + selectedComment.point.x, y: frame.y + FRAME_CONTENT_INSET + selectedComment.point.y },
           camera,
         );
       })()
@@ -5016,7 +5017,7 @@ export function CanvasSurface({
         const frame = frameById.get(hoveredComment.frameId);
         if (!frame) return null;
         return worldToScreen(
-          { x: frame.x + hoveredComment.point.x, y: frame.y + hoveredComment.point.y },
+          { x: frame.x + FRAME_CONTENT_INSET + hoveredComment.point.x, y: frame.y + FRAME_CONTENT_INSET + hoveredComment.point.y },
           camera,
         );
       })()
@@ -5131,7 +5132,8 @@ export function CanvasSurface({
           hoveredTarget={overlayHoveredTarget}
           selectedTargets={overlaySelectedTargets}
           interactive={!creationMode}
-          guides={alignmentGuides}
+          gestureStore={gestureOverlayStore}
+          excludeTarget={isEditingOverlayTarget}
           onGestureStart={beginNodeGesture}
           onGestureMove={moveNodeGesture}
           onGestureEnd={endNodeGesture}
@@ -5159,7 +5161,7 @@ export function CanvasSurface({
               onPointerLeave={() =>
                 setHoveredCommentId((current) => (current === comment.id ? null : current))
               }
-              style={{ left: frame.x + comment.point.x, top: frame.y + comment.point.y, scale: 1 / camera.zoom, transformOrigin: "0 0" }}
+              style={{ left: frame.x + FRAME_CONTENT_INSET + comment.point.x, top: frame.y + FRAME_CONTENT_INSET + comment.point.y, scale: 1 / camera.zoom, transformOrigin: "0 0" }}
               type="button"
             >
               {comment.status === "resolved" ? (

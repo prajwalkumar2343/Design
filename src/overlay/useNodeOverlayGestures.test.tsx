@@ -93,6 +93,8 @@ function createHarness({ extraTargets = {}, withFrameDom = true } = {}) {
     hasActiveTransaction: vi.fn(() => txActive),
     getState: () => ({ frames: {} }),
     execute: vi.fn(() => true),
+    suspendNotifications: vi.fn(),
+    resumeNotifications: vi.fn(),
   };
 
   const setInlineStyle = vi.fn(async (command: { targetId: string; property: string }) => ({
@@ -212,7 +214,8 @@ describe("useNodeOverlayGestures move", () => {
         property: "transform",
         value: "translate(45px, 30px)",
       });
-      expect(h.view.result.current.selectedOverlayTargets[0]!.bounds).toEqual({
+      expect(h.editorStore.suspendNotifications).toHaveBeenCalledTimes(1);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().targets?.[0]?.bounds).toEqual({
         x: 55, y: 50, width: 100, height: 50,
       });
 
@@ -221,6 +224,7 @@ describe("useNodeOverlayGestures move", () => {
       });
       expect(h.editorStore.commitTransaction).toHaveBeenCalledTimes(1);
       expect(h.editorStore.rollbackTransaction).not.toHaveBeenCalled();
+      expect(h.editorStore.resumeNotifications).toHaveBeenCalledTimes(1);
       expect(h.setInteractionMode).toHaveBeenLastCalledWith("idle");
       expect(h.refreshSnapshot).toHaveBeenCalledWith("frame-1");
       expect(h.refreshTarget).toHaveBeenCalledWith("frame-1", "node-1");
@@ -264,12 +268,12 @@ describe("useNodeOverlayGestures move", () => {
       act(() => h.view.result.current.beginNodeGesture(gesture(), pressAt(20, 30)));
       act(() => h.view.result.current.moveNodeGesture(pointer(157, 30)));
 
-      expect(h.view.result.current.alignmentGuides).toEqual([{ axis: "x", value: 150 }]);
-      expect(h.view.result.current.selectedOverlayTargets[0]!.bounds.x).toBe(150);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().guides).toEqual([{ axis: "x", value: 150 }]);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().targets?.[0]?.bounds.x).toBe(150);
       await act(async () => {
         h.view.result.current.endNodeGesture(pointer(157, 30));
       });
-      expect(h.view.result.current.alignmentGuides).toEqual([]);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().guides).toEqual([]);
     } finally {
       h.cleanup();
     }

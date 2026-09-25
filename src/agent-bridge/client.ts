@@ -34,6 +34,13 @@ export function startAgentBridge(
   const retryMs = options.retryMs ?? 5_000;
   const fetchImpl = options.fetchImpl ?? fetch;
 
+  // This tab's consumer id: the server hands each op to the first poller it
+  // reaches, so a second open tab can't re-apply ops this one owns — and the
+  // id rides along on results so the CLI can see which tab answered.
+  const consumerId =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let stopped = false;
   let lastSeq = 0;
   let bootId: string | undefined;
@@ -53,9 +60,10 @@ export function startAgentBridge(
     if (stopped || inFlight) return;
     inFlight = true;
     try {
-      const response = await fetchImpl(`${baseUrl}/inbox?after=${lastSeq}`, {
-        cache: "no-store",
-      });
+      const response = await fetchImpl(
+        `${baseUrl}/inbox?after=${lastSeq}&consumer=${encodeURIComponent(consumerId)}`,
+        { cache: "no-store" },
+      );
       if (!response.ok) throw new Error(`inbox ${response.status}`);
       const body = (await response.json()) as InboxResponse;
       // A restarted server renumbers from 1 — detect it by boot id (a fresh
@@ -89,6 +97,10 @@ export function startAgentBridge(
       store.batchNotifications(() => {
         for (const entry of body.ops) {
           if (entry.seq <= lastSeq || stopped) continue;
+          // A drag or in-flight gesture owns the store's transaction — an op
+          // applied now would fail outright. Leave it unconsumed; the next
+          // poll re-serves it once the gesture releases.
+          if (store.hasActiveTransaction()) break;
           lastSeq = entry.seq;
           applied.push({ seq: entry.seq, result: applyAgentOp(store, entry.op) });
         }
@@ -103,7 +115,7 @@ export function startAgentBridge(
         const post = await fetchImpl(`${baseUrl}/result`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ seq, result }),
+          body: JSON.stringify({ seq, result, consumer: consumerId }),
         });
         // Keep the failed head in the queue — it retries on the next tick.
         if (!post.ok) throw new Error(`result ${post.status}`);

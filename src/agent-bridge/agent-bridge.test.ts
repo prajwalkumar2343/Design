@@ -362,4 +362,59 @@ describe("startAgentBridge", () => {
       expect(store.getState().frames[id]).toBeDefined();
     }
   });
+
+  it("defers ops while a gesture transaction owns the store, then applies them", async () => {
+    const store = storeWith();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/inbox")) {
+        const after = Number(new URL(url, "http://l").searchParams.get("after") ?? "0");
+        const ops = [{ seq: 1, op: { op: "push", id: "a", html: doc("<p>x</p>") } }];
+        return new Response(JSON.stringify({ ops: ops.filter((e) => e.seq > after), latest: 1 }), { status: 200 });
+      }
+      if (url.includes("/result")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response("nope", { status: 404 });
+    };
+
+    const token = store.beginTransaction("drag");
+    const stop = startAgentBridge(store, { fetchImpl, intervalMs: 2, retryMs: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // The op stays unconsumed while the drag holds the transaction.
+    expect(store.getState().frames["a"]).toBeUndefined();
+
+    store.commitTransaction(undefined, token);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    stop();
+    expect(store.getState().frames["a"]).toBeDefined();
+  });
+
+  it("sends a stable consumer id on inbox polls and result posts", async () => {
+    const store = storeWith();
+    const consumers: string[] = [];
+    let inboxCalls = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/inbox")) {
+        inboxCalls += 1;
+        consumers.push(new URL(url, "http://l").searchParams.get("consumer") ?? "");
+        const ops = inboxCalls === 1 ? [{ seq: 1, op: { op: "push", id: "a", html: doc("<p>x</p>") } }] : [];
+        return new Response(JSON.stringify({ ops, latest: 1 }), { status: 200 });
+      }
+      if (url.includes("/result")) {
+        consumers.push(String(JSON.parse(String(init?.body)).consumer ?? ""));
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      return new Response("nope", { status: 404 });
+    };
+
+    const stop = startAgentBridge(store, { fetchImpl, intervalMs: 2, retryMs: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    stop();
+
+    expect(consumers.length).toBeGreaterThan(1);
+    expect(new Set(consumers).size).toBe(1);
+    expect(consumers[0]).not.toBe("");
+  });
 });

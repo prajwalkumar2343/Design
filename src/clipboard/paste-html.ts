@@ -71,13 +71,19 @@ const EXECUTABLE_URL_ATTRIBUTES = new Set([
   "data",
   "poster",
   "background",
+  "xlink:href",
 ]);
 
+// Fast-path gate for the DOMParser scrub below. Every browser-reachable
+// spelling must trip it: `/`- or quote-adjacent handlers (`<svg/onload=`,
+// `a="b"onload=` — both legal attribute separators in HTML5 tokenization) and
+// schemes with interleaved whitespace (`java\tscript:` — browsers strip tabs,
+// newlines and control chars before matching the scheme).
 const EXECUTABLE_DETECT_PATTERN =
-  /<(script|object|embed|applet|portal|base)[\s/>]|javascript\s*:|\son[a-zA-Z]+\s*=/;
+  /<(script|object|embed|applet|portal|base)[\s/>]|j[\s\u0000-\u0020]*a[\s\u0000-\u0020]*v[\s\u0000-\u0020]*a[\s\u0000-\u0020]*s[\s\u0000-\u0020]*c[\s\u0000-\u0020]*r[\s\u0000-\u0020]*i[\s\u0000-\u0020]*p[\s\u0000-\u0020]*t[\s\u0000-\u0020]*:|[\s/"']on[a-zA-Z]+\s*=/i;
 
 function isExecutableUrl(value: string): boolean {
-  const cleaned = value.replace(/^[\s\u0000-\u0020]+/, "").toLowerCase();
+  const cleaned = value.replace(/[\s\u0000-\u0020]+/g, "").toLowerCase();
   return cleaned.startsWith("javascript:");
 }
 

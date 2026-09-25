@@ -127,6 +127,7 @@ import {
   type BrowserDownloadAdapter,
   type PersistenceAdapter,
 } from "../persistence";
+import { applyPendingDocumentWrites } from "../persistence/live-documents";
 import {
   importFigmaFileIntoStore,
 } from "../import-figma/figma-file-import";
@@ -705,6 +706,12 @@ export function CanvasSurface({
   // mark their frame via markFrameDirty; a dirty frame keeps its mount pin
   // until its document unloads.
   const dirtyFrameIdsRef = useRef(new Set<string>());
+  // Latest live-document harvest per document, keyed by documentId. Written by
+  // the debounced read-back below and overlaid onto serialized payloads, so
+  // iframe-only edits persist without a revision bump (which would reload the
+  // iframe and wipe the live DOM it just captured).
+  const pendingDocWritesRef = useRef(new Map<string, { html: string; revision: number }>());
+  const docSyncTimersRef = useRef(new Map<string, number>());
   const [liveFrameIds, setLiveFrameIds] = useState<ReadonlySet<string>>(() => new Set());
   const pendingMountIdsRef = useRef<string[]>([]);
   const queuedMountIdsRef = useRef(new Set<string>());
@@ -753,6 +760,9 @@ export function CanvasSurface({
     // to an unrelated frame with the same id.
     freeformShiftRef.current.clear();
     frameDocRevisionsRef.current.clear();
+    for (const timer of docSyncTimersRef.current.values()) window.clearTimeout(timer);
+    docSyncTimersRef.current.clear();
+    pendingDocWritesRef.current.clear();
   }, [cancelMountPump]);
 
   const scheduleMountPump = useCallback((pump: () => void) => {
@@ -826,12 +836,34 @@ export function CanvasSurface({
     return true;
   }, [editorStore, frameDistanceSq, releaseInFlightMount]);
 
-  // A mutating bridge command landed (or is in flight) on this frame — its
-  // document now carries DOM edits the srcDoc lacks, so it must stay mounted.
+  // Bridge mutations exist only in the iframe's DOM — srcDoc still holds the
+  // document as loaded. Debounce a read-back so the fresh document is staged
+  // for the next serialize pass without reloading the iframe mid-session.
+  const scheduleDocumentSync = useCallback((frameId: string) => {
+    const timers = docSyncTimersRef.current;
+    const existing = timers.get(frameId);
+    if (existing !== undefined) window.clearTimeout(existing);
+    timers.set(frameId, window.setTimeout(() => {
+      timers.delete(frameId);
+      const frame = editorStore.getState().frames[frameId];
+      const controller = bridgeControllersRef.current.get(frameId);
+      const document = frame ? editorStore.getState().documents[frame.documentId] : undefined;
+      if (!frame || !controller || !document) return;
+      void controller.readDocument().then((html) => {
+        if (html.length === 0 || html === document.srcDoc) return;
+        pendingDocWritesRef.current.set(document.id, { html, revision: document.revision });
+      }).catch(() => undefined);
+    }, 350));
+  }, [editorStore]);
+
+  // A mutating bridge command landed on this frame — its document now carries
+  // DOM edits the srcDoc lacks, so it must stay mounted until the read-back
+  // can capture them.
   const markFrameDirty = useCallback((frameId: string) => {
     dirtyFrameIdsRef.current.add(frameId);
     pinnedFrameIdsRef.current.add(frameId);
-  }, []);
+    scheduleDocumentSync(frameId);
+  }, [scheduleDocumentSync]);
 
   // Called when a mounted frame completes bridge init (first snapshot) — frees
   // an in-flight slot so the next queued frame can load.
@@ -987,6 +1019,7 @@ export function CanvasSurface({
       if (last !== undefined && last !== revision) {
         freeformShiftRef.current.delete(frame.id);
         dirtyFrameIdsRef.current.delete(frame.id);
+        pendingDocWritesRef.current.delete(frame.documentId);
         frameTextEditRef.current.delete(frame.id);
         setTextEditingNode((current) => (current?.frameId === frame.id ? null : current));
         // The pin mirrored the just-cleared dirty/edit state — release it now
@@ -1129,7 +1162,7 @@ export function CanvasSurface({
           startBrainstorming(kind);
           setTimeout(() => {
             try {
-              const state = editorStore.getState();
+              const state = applyPendingDocumentWrites(editorStore.getState(), pendingDocWritesRef.current);
               const serialized = serializeWireCanvasProjectCompact(state);
               const idxNow = loadProjectIndex();
               const recNow = idxNow.find((p) => p.id === targetId);
@@ -1295,7 +1328,7 @@ export function CanvasSurface({
     }
     try {
       downloadAdapterRef.current?.downloadProjectFile({
-        text: serializeWireCanvasProject(editorStore.getState()),
+        text: serializeWireCanvasProject(applyPendingDocumentWrites(editorStore.getState(), pendingDocWritesRef.current)),
         filename: WIRECANVAS_FILE_NAME,
         mimeType: WIRECANVAS_FILE_MIME_TYPE,
       });
@@ -1439,7 +1472,7 @@ export function CanvasSurface({
         setPersistenceVersion((current) => current + 1);
         showPersistenceFeedback({ kind: "success", message: "Project imported successfully." });
         if (shouldUseLocalMemory) {
-          const state = editorStore.getState();
+          const state = applyPendingDocumentWrites(editorStore.getState(), pendingDocWritesRef.current);
           const serialized = serializeWireCanvasProjectCompact(state);
           const active = getActiveProjectId();
           const idx = loadProjectIndex();
@@ -1503,7 +1536,7 @@ export function CanvasSurface({
         // run it at idle time so it can't steal a frame from interactions.
         const run = () => {
         try {
-          const state = editorStore.getState();
+          const state = applyPendingDocumentWrites(editorStore.getState(), pendingDocWritesRef.current);
           const isEmpty =
             state.session.lifecycle === "not-started" &&
             Object.keys(state.documents).length === 0 &&

@@ -268,6 +268,16 @@ describe("sanitizeImportedHtml", () => {
     expect(result.html).toContain("go");
   });
 
+  it("catches entity-encoded javascript: schemes past the raw-text gate", () => {
+    const raw =
+      '<!doctype html><html><head></head><body><a href="java&#x73;cript:steal()">enc</a><a href="java&Tab;script&colon;steal()">named</a></body></html>';
+    const result = sanitizeImportedHtml(raw);
+    expect(result.removedExecutables).toBe(true);
+    expect(result.html).not.toContain("&#x73;");
+    expect(result.html).not.toContain("&Tab;");
+    expect(result.html).not.toContain("javascript");
+  });
+
   it("neutralizes javascript: URLs in xlink:href", () => {
     const raw =
       '<!doctype html><html><head></head><body><svg><a xlink:href="javascript:x()"><rect width="10" height="10"/></a></svg></body></html>';

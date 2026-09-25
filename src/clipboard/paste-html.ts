@@ -82,6 +82,27 @@ const EXECUTABLE_URL_ATTRIBUTES = new Set([
 const EXECUTABLE_DETECT_PATTERN =
   /<(script|object|embed|applet|portal|base)[\s/>]|j[\s\u0000-\u0020]*a[\s\u0000-\u0020]*v[\s\u0000-\u0020]*a[\s\u0000-\u0020]*s[\s\u0000-\u0020]*c[\s\u0000-\u0020]*r[\s\u0000-\u0020]*i[\s\u0000-\u0020]*p[\s\u0000-\u0020]*t[\s\u0000-\u0020]*:|[\s/"']on[a-zA-Z]+\s*=/i;
 
+// The detect gate runs on raw text, but browsers resolve character references
+// before matching the scheme — `java&#x73;cript:` decodes to `javascript:`.
+// Normalize the encodings that change gate semantics (numeric refs plus the
+// named whitespace/colon refs) so encoded payloads still trip the scrub.
+const NUMERIC_ENTITY_PATTERN = /&#(x[0-9a-f]{1,6}|\d{1,7});/gi;
+const NAMED_URL_ENTITY_PATTERN = /&(colon|tab|newline);/gi;
+
+function decodeEntitiesForDetection(html: string): string {
+  return html
+    .replace(NUMERIC_ENTITY_PATTERN, (_match, code: string) => {
+      const codePoint = code[0].toLowerCase() === "x"
+        ? Number.parseInt(code.slice(1), 16)
+        : Number.parseInt(code, 10);
+      return codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : "";
+    })
+    .replace(NAMED_URL_ENTITY_PATTERN, (_match, name: string) => {
+      const lower = name.toLowerCase();
+      return lower === "colon" ? ":" : lower === "tab" ? "\t" : "\n";
+    });
+}
+
 function isExecutableUrl(value: string): boolean {
   const cleaned = value.replace(/[\s\u0000-\u0020]+/g, "").toLowerCase();
   return cleaned.startsWith("javascript:");
@@ -100,7 +121,7 @@ export interface SanitizedImportedHtml {
  * always apply to the stored bytes).
  */
 export function sanitizeImportedHtml(html: string): SanitizedImportedHtml {
-  if (!EXECUTABLE_DETECT_PATTERN.test(html)) {
+  if (!EXECUTABLE_DETECT_PATTERN.test(decodeEntitiesForDetection(html))) {
     return { html, removedExecutables: false };
   }
   const parsed = new DOMParser().parseFromString(html, "text/html");

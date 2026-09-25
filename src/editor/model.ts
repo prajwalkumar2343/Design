@@ -239,3 +239,60 @@ export function selectAllFrameRenderModels(state: EditorState): FrameRenderModel
     };
   });
 }
+
+export interface FrameRenderModelSelection {
+  /** Every frame's render model, in stable store order. */
+  all: FrameRenderModel[];
+  /** Render models on the active page. */
+  active: FrameRenderModel[];
+}
+
+/**
+ * Memoizing version of the select*RenderModels pair. The reducer keeps
+ * untouched frame/document entities referentially stable, so a frame's render
+ * model can be reused across unrelated state transitions — React.memo'd
+ * consumers (FrameView) then skip re-rendering for every dispatch that did not
+ * actually change that frame.
+ */
+export function createFrameRenderModelSelector(): (state: EditorState) => FrameRenderModelSelection {
+  const modelCache = new WeakMap<FrameEntity, WeakMap<DocumentEntity, FrameRenderModel>>();
+  let lastFrames: EditorState["frames"] | null = null;
+  let lastDocuments: EditorState["documents"] | null = null;
+  let lastActivePageId: PageId | null | undefined;
+  let lastResult: FrameRenderModelSelection | null = null;
+
+  return (state: EditorState): FrameRenderModelSelection => {
+    if (
+      lastResult !== null &&
+      state.frames === lastFrames &&
+      state.documents === lastDocuments &&
+      state.activePageId === lastActivePageId
+    ) {
+      return lastResult;
+    }
+    const all = Object.values(state.frames).map((frame) => {
+      const document = state.documents[frame.documentId];
+      if (!document) {
+        return { ...frame, mode: "design" as const, srcDoc: "" };
+      }
+      let byDocument = modelCache.get(frame);
+      if (!byDocument) {
+        byDocument = new WeakMap();
+        modelCache.set(frame, byDocument);
+      }
+      const cached = byDocument.get(document);
+      if (cached) return cached;
+      const model: FrameRenderModel = { ...frame, mode: document.mode, srcDoc: document.srcDoc };
+      byDocument.set(document, model);
+      return model;
+    });
+    const active = state.activePageId === null
+      ? all
+      : all.filter((frame) => frame.pageId === state.activePageId);
+    lastResult = { all, active };
+    lastFrames = state.frames;
+    lastDocuments = state.documents;
+    lastActivePageId = state.activePageId;
+    return lastResult;
+  };
+}

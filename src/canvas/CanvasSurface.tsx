@@ -712,6 +712,9 @@ export function CanvasSurface({
   // iframe and wipe the live DOM it just captured).
   const pendingDocWritesRef = useRef(new Map<string, { html: string; revision: number }>());
   const docSyncTimersRef = useRef(new Map<string, number>());
+  // The autosave effect publishes its scheduler here so a completed live-doc
+  // harvest can trigger a save — it mutates no store state on its own.
+  const scheduleAutosaveRef = useRef<(() => void) | null>(null);
   const [liveFrameIds, setLiveFrameIds] = useState<ReadonlySet<string>>(() => new Set());
   const pendingMountIdsRef = useRef<string[]>([]);
   const queuedMountIdsRef = useRef(new Set<string>());
@@ -852,6 +855,10 @@ export function CanvasSurface({
       void controller.readDocument().then((html) => {
         if (html.length === 0 || html === document.srcDoc) return;
         pendingDocWritesRef.current.set(document.id, { html, revision: document.revision });
+        // A save may have run between the mutation and this read-back — without
+        // re-scheduling, the harvested document can sit unsaved until the next
+        // unrelated store change.
+        scheduleAutosaveRef.current?.();
       }).catch(() => undefined);
     }, 350));
   }, [editorStore]);
@@ -1605,9 +1612,11 @@ export function CanvasSurface({
       }, 650);
     };
     const unsub = editorStore.subscribe(schedule);
+    scheduleAutosaveRef.current = schedule;
     // initial schedule in case hydrated state is already non-empty
     schedule();
     return () => {
+      scheduleAutosaveRef.current = null;
       if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
       unsub();
     };

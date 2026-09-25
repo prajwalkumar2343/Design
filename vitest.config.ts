@@ -14,6 +14,6 @@ export default defineConfig({
     globals: true,
     css: true,
     setupFiles: ["./src/test/dom-storage-polyfill.ts"],
-    exclude: ["tests/e2e/**", "node_modules/**", "dist/**", "improved source/**", "tmp/**"],
+    exclude: ["tests/e2e/**", "node_modules/**", "dist/**", "improved source/**", "tmp/**", ".worktrees/**"],
   },
 });

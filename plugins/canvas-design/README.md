@@ -34,6 +34,7 @@ Install the plugin directory as a Codex plugin; the manifest lives at
 | `skills/canvas-design/references/current-project.md` | Source ownership map and the Codex-facing service APIs (`BrainstormSessionService`, `DocumentExchangeService`) |
 | `scripts/capture-canvas.mjs` | Headless screenshot of the whole canvas or one `--frame`, to `.canvas/artifacts/` |
 | `scripts/inspect-canvas.mjs` | JSON dump of frames, rects, selection state, and computed styles for a `--selector` |
+| `scripts/push-design.mjs` | Push HTML/CSS into the *live* canvas over the agent bridge (`push`/`remove`/`list` ops); frames appear in the user's open tab |
 
 Both helpers resolve `@playwright/test` from the target project's
 `node_modules`, emit JSON on stdout, diagnostics on stderr, and exit nonzero
@@ -46,4 +47,7 @@ when the requested evidence was not produced. They only accept loopback URLs.
 - The workspace runs at `npm run dev -- --host 127.0.0.1`, port 5173. `/` is
   the blank Brainstorming entry; `/?demo=1` is the explicit legacy fixture path.
 - There is no Canvas CLI or workspace filesystem writer. `.wirecanvas.json`
-  import/export happens through the browser UI.
+  import/export happens through the browser UI. The agent bridge
+  (`push-design.mjs` → `/__canvas-agent/*` on the Vite server → the open app
+  tab) is the live-canvas write path: `push` upserts design HTML into frames,
+  `remove` deletes frames, `list` snapshots canvas state.

@@ -35,6 +35,20 @@ future CLI or host integrations.
 - `src/router/brainstorm-session.ts` is the transport-independent Codex-facing session
   service. `src/router/document-exchange.ts` is the typed document boundary, including
   `createWireframe` and `replaceHtml`.
+- `src/agent-bridge/` is the local agent bridge into a running app tab.
+  `protocol.ts` owns the op/result wire types and HTML normalization (full `html`,
+  `fragment`, and `css` inputs become a complete doctype document); `apply.ts` owns
+  `applyAgentOp(store, op)` (`push` upsert, `remove`, `list`) on top of the typed
+  editor commands and `DocumentExchangeService.replaceHtml`; `client.ts` owns the
+  `startAgentBridge` inbox poller. `CanvasSurface` starts it in dev, or on preview
+  when the URL has `?agent=1`.
+- `vite-plugin-canvas-agent.ts` (repo root) serves the loopback bridge routes on dev
+  and preview servers: `POST /__canvas-agent/op`, `GET /__canvas-agent/inbox?after=`,
+  `POST /__canvas-agent/result`, `GET /__canvas-agent/result?seq=` (long-poll), and
+  `GET /__canvas-agent/ping`. State is in-memory and per server process.
+- `plugins/canvas-design/scripts/push-design.mjs` is the agent-facing CLI for the
+  bridge: flags or `--stdin` JSON op in, applied result JSON out, nonzero on
+  rejection.
 - `src/router/html-admission.ts` owns complete-HTML admission. `src/router/wireframe-
   admission.ts` owns the structured strict wireframe HTML/CSS validator; it uses the
   maintained `css-tree` parser rather than CSS regex splitting.

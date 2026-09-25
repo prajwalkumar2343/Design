@@ -4360,7 +4360,7 @@ export function CanvasSurface({
   }, [importFigmaFile, importProject]);
 
   const beginFramePointer = useCallback(
-    (frameId: string, event: ReactPointerEvent<HTMLButtonElement>) => {
+    (frameId: string, event: ReactPointerEvent<HTMLElement>) => {
       const surface = surfaceRef.current;
       if (!surface || event.button !== 0) {
         return;
@@ -4723,6 +4723,7 @@ export function CanvasSurface({
       cameraRef.current = nextCamera;
       if (worldRef.current) {
         worldRef.current.style.transform = cameraTransform(nextCamera);
+        worldRef.current.style.setProperty("--canvas-zoom", String(nextCamera.zoom));
       }
       setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
     } else {
@@ -5047,7 +5048,7 @@ export function CanvasSurface({
           ref={worldRef}
           className="canvas-world"
           data-testid="canvas-world"
-          style={{ ...worldStyle, transform: cameraTransform(camera) }}
+          style={{ ...worldStyle, transform: cameraTransform(camera), ["--canvas-zoom" as string]: String(camera.zoom) } as CSSProperties}
         >
         {briefFrame ? (
           <BriefFrameView

@@ -16,7 +16,7 @@ interface FrameViewProps {
   isSelected: boolean;
   isPanTool: boolean;
   onSelect: (frameId: string) => void;
-  onStartMove: (frameId: string, event: ReactPointerEvent<HTMLButtonElement>) => void;
+  onStartMove: (frameId: string, event: ReactPointerEvent<HTMLElement>) => void;
   onStartPan: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   onBridgeEvent?: (
     frameId: string,
@@ -533,6 +533,14 @@ export const FrameView = memo(function FrameView({
           ) : null}
         </div>
       </div>
+
+      {isSelected && !isPanTool ? (
+        <div
+          aria-hidden="true"
+          className="frame-drag-ring"
+          onPointerDown={(event) => onStartMove(frame.id, event)}
+        />
+      ) : null}
 
       {isDesktopFrame ? (
         <button

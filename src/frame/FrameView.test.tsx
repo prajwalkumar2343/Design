@@ -142,6 +142,17 @@ describe("FrameView", () => {
     expect(screen.queryByRole("button", { name: "Pan across Hero" })).toBeNull();
   });
 
+  it("starts a move from the drag ring on selected frames only", () => {
+    const { props, container, unmount } = renderFrame({ isSelected: true });
+    const ring = container.querySelector(".frame-drag-ring")!;
+    fireEvent.pointerDown(ring);
+    expect(props.onStartMove).toHaveBeenCalledWith("f1", expect.anything());
+    unmount();
+
+    const { container: unselected } = renderFrame();
+    expect(unselected.querySelector(".frame-drag-ring")).toBeNull();
+  });
+
   it("routes the activation layer to the pan handler under the pan tool", () => {
     const { props } = renderFrame({ isPanTool: true, isSelected: true });
     const activation = screen.getByRole("button", { name: "Pan across Hero" });

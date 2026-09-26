@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BridgeElementTarget, BridgeInspection } from "../bridge/protocol";
 import type { IframeBridgeController } from "../bridge/transport";
 import type { Camera } from "../canvas/types";
-import type { SelectionState } from "../editor/model";
+import type { FrameEntity, SelectionState } from "../editor/model";
 import type { NodeGestureStart, OverlayNodeTarget } from "./NodeOverlayLayer";
 import {
   useNodeOverlayGestures,
@@ -60,7 +60,11 @@ function gesture(overrides: Partial<NodeGestureStart> = {}): NodeGestureStart {
   };
 }
 
-function createHarness({ extraTargets = {}, withFrameDom = true } = {}) {
+function createHarness({
+  extraTargets = {},
+  withFrameDom = true,
+  frames = {} as Record<string, Partial<FrameEntity>>,
+} = {}) {
   const surface = document.createElement("div");
   if (withFrameDom) {
     const frame = document.createElement("div");
@@ -91,16 +95,19 @@ function createHarness({ extraTargets = {}, withFrameDom = true } = {}) {
       return true;
     }),
     hasActiveTransaction: vi.fn(() => txActive),
-    getState: () => ({ frames: {} }),
+    getState: () => ({ frames: frames as Record<string, FrameEntity> }),
     execute: vi.fn(() => true),
+    suspendNotifications: vi.fn(),
+    resumeNotifications: vi.fn(),
   };
 
   const setInlineStyle = vi.fn(async (command: { targetId: string; property: string }) => ({
     command: "set-inline-style",
     targetId: command.targetId,
     property: command.property,
-    previousValue: null,
-    bounds: undefined,
+    previousValue: null as string | null,
+    bounds: undefined as undefined | { x: number; y: number; width: number; height: number },
+    bodyOrigin: undefined as undefined | { x: number; y: number },
   }));
   const pickElement = vi.fn(async () => ({}));
   const bridgeControllersRef = {
@@ -212,7 +219,8 @@ describe("useNodeOverlayGestures move", () => {
         property: "transform",
         value: "translate(45px, 30px)",
       });
-      expect(h.view.result.current.selectedOverlayTargets[0]!.bounds).toEqual({
+      expect(h.editorStore.suspendNotifications).toHaveBeenCalledTimes(1);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().targets?.[0]?.bounds).toEqual({
         x: 55, y: 50, width: 100, height: 50,
       });
 
@@ -221,6 +229,7 @@ describe("useNodeOverlayGestures move", () => {
       });
       expect(h.editorStore.commitTransaction).toHaveBeenCalledTimes(1);
       expect(h.editorStore.rollbackTransaction).not.toHaveBeenCalled();
+      expect(h.editorStore.resumeNotifications).toHaveBeenCalledTimes(1);
       expect(h.setInteractionMode).toHaveBeenLastCalledWith("idle");
       expect(h.refreshSnapshot).toHaveBeenCalledWith("frame-1");
       expect(h.refreshTarget).toHaveBeenCalledWith("frame-1", "node-1");
@@ -264,12 +273,64 @@ describe("useNodeOverlayGestures move", () => {
       act(() => h.view.result.current.beginNodeGesture(gesture(), pressAt(20, 30)));
       act(() => h.view.result.current.moveNodeGesture(pointer(157, 30)));
 
-      expect(h.view.result.current.alignmentGuides).toEqual([{ axis: "x", value: 150 }]);
-      expect(h.view.result.current.selectedOverlayTargets[0]!.bounds.x).toBe(150);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().guides).toEqual([{ axis: "x", value: 150 }]);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().targets?.[0]?.bounds.x).toBe(150);
       await act(async () => {
         h.view.result.current.endNodeGesture(pointer(157, 30));
       });
-      expect(h.view.result.current.alignmentGuides).toEqual([]);
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().guides).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it("keeps ack-measured bounds anchored when a regular document reports a body margin", async () => {
+    const h = createHarness();
+    // A regular document's default 8px body margin lands in the ack's
+    // bodyOrigin — it is not a freeform re-anchor shift.
+    h.setInlineStyle.mockImplementation(async (command: { targetId: string; property: string }) => ({
+      command: "set-inline-style",
+      targetId: command.targetId,
+      property: command.property,
+      previousValue: null,
+      bounds: { x: 63, y: 58, width: 100, height: 50 },
+      bodyOrigin: { x: 8, y: 8 },
+    }));
+    try {
+      act(() => h.view.result.current.beginNodeGesture(gesture(), pressAt(20, 30)));
+      act(() => h.view.result.current.moveNodeGesture(pointer(65, 60)));
+      await act(async () => {});
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().targets?.[0]?.bounds).toEqual({
+        x: 63, y: 58, width: 100, height: 50,
+      });
+      await act(async () => {
+        h.view.result.current.endNodeGesture(pointer(65, 60));
+      });
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it("normalizes ack bounds by the body origin on freeform frames", async () => {
+    const h = createHarness({ frames: { "frame-1": { freeform: true } } });
+    h.setInlineStyle.mockImplementation(async (command: { targetId: string; property: string }) => ({
+      command: "set-inline-style",
+      targetId: command.targetId,
+      property: command.property,
+      previousValue: null,
+      bounds: { x: 63, y: 58, width: 100, height: 50 },
+      bodyOrigin: { x: 10, y: 4 },
+    }));
+    try {
+      act(() => h.view.result.current.beginNodeGesture(gesture(), pressAt(20, 30)));
+      act(() => h.view.result.current.moveNodeGesture(pointer(65, 60)));
+      await act(async () => {});
+      expect(h.view.result.current.gestureOverlayStore.getSnapshot().targets?.[0]?.bounds).toEqual({
+        x: 53, y: 54, width: 100, height: 50,
+      });
+      await act(async () => {
+        h.view.result.current.endNodeGesture(pointer(65, 60));
+      });
     } finally {
       h.cleanup();
     }

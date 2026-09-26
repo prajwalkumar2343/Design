@@ -128,7 +128,10 @@ export function buildFreeformShapeMarkup(spec: FreeformShapeSpec): string {
 
   let child: string;
   if (kind === "rectangle") {
-    child = `<rect x="${num(inset)}" y="${num(inset)}" width="${num(Math.max(1, bounds.width - strokeWidth))}" height="${num(Math.max(1, bounds.height - strokeWidth))}"${radius > 0 ? ` rx="${num(radius)}" ry="${num(radius)}"` : ""} ${attr("fill", childFill)} ${shared}/>`;
+    const rectW = Math.max(1, bounds.width - strokeWidth);
+    const rectH = Math.max(1, bounds.height - strokeWidth);
+    const corner = Math.min(radius, rectW / 2, rectH / 2);
+    child = `<rect x="${num(inset)}" y="${num(inset)}" width="${num(rectW)}" height="${num(rectH)}"${corner > 0 ? ` rx="${num(corner)}" ry="${num(corner)}"` : ""} ${attr("fill", childFill)} ${shared}/>`;
   } else if (kind === "ellipse") {
     child = `<ellipse cx="${num(bounds.width / 2)}" cy="${num(bounds.height / 2)}" rx="${num(Math.max(0.5, bounds.width / 2 - inset))}" ry="${num(Math.max(0.5, bounds.height / 2 - inset))}" ${attr("fill", childFill)} ${shared}/>`;
   } else if (kind === "line" || kind === "arrow") {
@@ -247,7 +250,8 @@ export function buildFreeformDocument(bodyMarkup: string, title: string): string
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>${escapeText(title)}</title>
     <style>
-      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: transparent; }
+      html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
+      html { overflow: hidden; }
     </style>
   </head>
   <body>${bodyMarkup}</body>

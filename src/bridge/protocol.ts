@@ -317,6 +317,7 @@ export type BridgeCommandAck =
        * sizing — so gesture overlays glue to this rect, not the prediction.
        */
       bounds?: BridgeRect;
+      bodyOrigin?: { x: number; y: number };
       undo: BridgeUndoCommand;
     }
   | {
@@ -771,6 +772,10 @@ function isCommandAck(value: unknown): value is BridgeCommandAck {
       (value.previousValue === null || isValidString(value.previousValue, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true })) &&
       (value.value === null || isValidString(value.value, { maxLength: 4096, allowEmpty: true, allowTextWhitespace: true })) &&
       (value.bounds === undefined || isRect(value.bounds)) &&
+      (value.bodyOrigin === undefined ||
+        (isRecord(value.bodyOrigin) &&
+          isFiniteNumber(value.bodyOrigin.x) &&
+          isFiniteNumber(value.bodyOrigin.y))) &&
       isRecord(value.undo) &&
       isBridgeCommand(value.undo) &&
       value.undo.command === "set-inline-style"

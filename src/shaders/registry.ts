@@ -318,6 +318,8 @@ export interface DetectPaperShaderSupportOptions {
   createCanvas?: () => HTMLCanvasElement;
 }
 
+let webgl2Available = false;
+
 /** Checks the WebGL2 requirement without importing or mounting a shader. */
 export function detectPaperShaderSupport(
   options: DetectPaperShaderSupportOptions = {},
@@ -332,6 +334,10 @@ export function detectPaperShaderSupport(
     return { supported: false, reason: "document-unavailable" };
   }
 
+  if (!options.createCanvas && webgl2Available) {
+    return { supported: true };
+  }
+
   try {
     const context = createCanvas().getContext("webgl2");
     if (!context) {
@@ -339,6 +345,7 @@ export function detectPaperShaderSupport(
     }
 
     context.getExtension("WEBGL_lose_context")?.loseContext();
+    if (!options.createCanvas) webgl2Available = true;
     return { supported: true };
   } catch {
     return { supported: false, reason: "webgl2-unavailable" };

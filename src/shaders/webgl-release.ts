@@ -18,6 +18,7 @@ export function collectShaderCanvases(root: ParentNode | null, into: Set<HTMLCan
 export function releaseShaderContexts(canvases: Iterable<HTMLCanvasElement>): void {
   for (const canvas of canvases) {
     try {
+      if (canvas.getContext("2d") !== null) continue;
       const gl = (canvas.getContext("webgl2") ?? canvas.getContext("webgl")) as WebGLRenderingContext | null;
       if (!gl) continue;
       gl.getExtension("WEBGL_lose_context")?.loseContext();

@@ -3,7 +3,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
@@ -41,7 +40,12 @@ import {
   unionRects,
   type ResizeHandle,
 } from "./geometry";
-import type { NodeGestureStart, OverlayNodeTarget } from "./NodeOverlayLayer";
+import {
+  createGestureOverlayStore,
+  type GestureOverlayStore,
+  type NodeGestureStart,
+  type OverlayNodeTarget,
+} from "./NodeOverlayLayer";
 
 export interface OverlayBridgeTargetState {
   frameId: string;
@@ -80,6 +84,8 @@ interface NodeGestureOperation {
    * pointermove fitted nothing new), `next` tracks the latest shift.
    */
   freeformBodyChanges: Map<string, OverlayStyleChange>;
+  fittedFrameIds: Set<string>;
+  suspendedNotifications: boolean;
   cancelled: boolean;
   /** Ownership token for the transaction this gesture opened, if it opened one. */
   txToken?: symbol;
@@ -98,6 +104,8 @@ interface UseNodeOverlayGesturesOptions {
     hasActiveTransaction: () => boolean;
     getState: () => { frames: Record<string, FrameEntity> };
     execute: (command: EditorCommand) => boolean;
+    suspendNotifications?: () => void;
+    resumeNotifications?: () => void;
   };
   bridgeTargets: Record<string, OverlayBridgeTargetState>;
   bridgeControllersRef: MutableRefObject<Map<string, IframeBridgeController>>;
@@ -236,8 +244,11 @@ export function useNodeOverlayGestures({
   const shiftRef = freeformShiftRef ?? ownShiftRef;
   const gestureStylesRef = useRef(new Map<string, Partial<Record<SafeInlineStyleProperty, string | null>>>());
   const measuredBoundsRef = useRef(new Map<string, Rect>());
-  const [gestureOverlayTargets, setGestureOverlayTargets] = useState<OverlayNodeTarget[] | null>(null);
-  const [alignmentGuides, setAlignmentGuides] = useState<{ axis: "x" | "y"; value: number }[]>([]);
+  const gestureOverlayStoreRef = useRef<GestureOverlayStore | null>(null);
+  if (gestureOverlayStoreRef.current === null) {
+    gestureOverlayStoreRef.current = createGestureOverlayStore();
+  }
+  const gestureOverlayStore = gestureOverlayStoreRef.current;
   const liveSettledRef = useRef<Promise<void>>(Promise.resolve());
 
   /**
@@ -249,16 +260,21 @@ export function useNodeOverlayGestures({
    * post-gesture snapshot refresh re-syncs everything.
    */
   const applyMeasuredBounds = useCallback(
-    (change: OverlayStyleChange, bounds: BridgeRect) => {
+    (change: OverlayStyleChange, bounds: BridgeRect, bodyOrigin?: { x: number; y: number }) => {
       if (!nodeGestureRef.current) return;
       // The measured rect is a post-transform AABB — wrong shape for rotated
       // elements, whose overlay box stays the pre-rotation rect.
       if (Math.abs(change.rotation) > 0.01) return;
       // Ack bounds are measured inside the shifted body — normalize into the
       // canonical space stored targets use, since toOverlayTarget subtracts
-      // the live shift back out.
-      const shift = editorStore.getState().frames[change.target.frameId]?.freeform
-        ? shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
+      // the live shift back out. Only freeform frames re-anchor <body>; on a
+      // regular document bodyOrigin reports the body margin/scroll offset,
+      // which the ack bounds already share with the stored targets.
+      const frame = editorStore.getState().frames[change.target.frameId];
+      const shift = frame?.freeform
+        ? bodyOrigin
+          ? { x: -bodyOrigin.x, y: -bodyOrigin.y }
+          : shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
         : { x: 0, y: 0 };
       const overlay = toOverlayTarget({
         frameId: change.target.frameId,
@@ -280,7 +296,7 @@ export function useNodeOverlayGestures({
       if (!overlay) return;
       const key = targetStateKey(change.target.frameId, change.target.nodeId);
       measuredBoundsRef.current.set(key, overlay.bounds);
-      setGestureOverlayTargets((current) => {
+      gestureOverlayStore.patchTargets((current) => {
         if (!current) return current;
         let changed = false;
         const next = current.map((target) => {
@@ -301,7 +317,7 @@ export function useNodeOverlayGestures({
         return changed ? next : current;
       });
     },
-    [editorStore, shiftRef, toOverlayTarget],
+    [editorStore, gestureOverlayStore, shiftRef, toOverlayTarget],
   );
 
   /**
@@ -333,7 +349,7 @@ export function useNodeOverlayGestures({
             captured.set(key, ack.previousValue);
             change.previous[command.property] = ack.previousValue;
           }
-          if (ack.bounds) applyMeasuredBounds(change, ack.bounds);
+          if (ack.bounds) applyMeasuredBounds(change, ack.bounds, ack.bodyOrigin);
         }).catch(() => undefined),
       );
     }
@@ -343,7 +359,6 @@ export function useNodeOverlayGestures({
   }, [applyMeasuredBounds, bridgeControllersRef]);
 
   const selectedOverlayTargets = useMemo(() => {
-    if (gestureOverlayTargets) return gestureOverlayTargets;
     const selectedNodeIds = new Set(selection.nodeIds);
     const selectedFrameIds = new Set(selection.frameIds);
     return Object.values(bridgeTargets)
@@ -354,11 +369,11 @@ export function useNodeOverlayGestures({
       )
       .map(toOverlayTarget)
       .filter((target): target is OverlayNodeTarget => target !== null);
-  }, [bridgeTargets, gestureOverlayTargets, selection, toOverlayTarget]);
+  }, [bridgeTargets, selection, toOverlayTarget]);
 
   useEffect(() => {
-    if (!nodeGestureRef.current) setGestureOverlayTargets(null);
-  }, [selection]);
+    if (!nodeGestureRef.current) gestureOverlayStore.clear();
+  }, [gestureOverlayStore, selection]);
 
   const applyStyleChanges = useCallback(
     async (
@@ -414,7 +429,7 @@ export function useNodeOverlayGestures({
         .filter((target) => !target.locked)
         .map((target) => {
           const entry = bridgeTargets[targetStateKey(target.frameId, target.nodeId)];
-          const transientStyles = gestureOverlayTargets
+          const transientStyles = gestureOverlayStore.getSnapshot().targets
             ? gestureStylesRef.current.get(targetStateKey(target.frameId, target.nodeId))
             : undefined;
           const inlineStyle = transientStyles
@@ -453,6 +468,8 @@ export function useNodeOverlayGestures({
         changes: [],
         capturedPrevious: new Map(),
         freeformBodyChanges: new Map(),
+        fittedFrameIds: new Set(),
+        suspendedNotifications: false,
         cancelled: false,
       };
       measuredBoundsRef.current.clear();
@@ -462,7 +479,7 @@ export function useNodeOverlayGestures({
       // once the pointer crosses the drag threshold.
       event.currentTarget.setPointerCapture(gesture.pointerId);
     },
-    [bridgeTargets, editorStore, gestureOverlayTargets, setInteractionMode, surfaceRef, cameraRef],
+    [bridgeTargets, editorStore, gestureOverlayStore, setInteractionMode, surfaceRef, cameraRef],
   );
 
   /**
@@ -514,6 +531,15 @@ export function useNodeOverlayGestures({
         for (const command of freeformFrameCommands(frame, fit.rect)) {
           editorStore.execute(command);
         }
+        nodeGestureRef.current?.fittedFrameIds.add(frameId);
+        const frameElement = surfaceRef.current?.querySelector<HTMLElement>(
+          `[data-frame-id="${frameId}"]`,
+        );
+        if (frameElement) {
+          frameElement.style.transform = `translate3d(${fit.rect.x}px, ${fit.rect.y}px, 0)`;
+          frameElement.style.width = `${fit.rect.width}px`;
+          frameElement.style.height = `${fit.rect.height}px`;
+        }
         if (Math.abs(fit.originDelta.x) < 0.01 && Math.abs(fit.originDelta.y) < 0.01) {
           continue;
         }
@@ -550,7 +576,34 @@ export function useNodeOverlayGestures({
       }
       return extras.length > 0 ? [...changes, ...extras] : changes;
     },
-    [bridgeTargets, editorStore, shiftRef, toOverlayTarget],
+    [bridgeTargets, editorStore, shiftRef, surfaceRef, toOverlayTarget],
+  );
+
+  const restoreFittedFrames = useCallback(
+    (operation: NodeGestureOperation) => {
+      if (operation.fittedFrameIds.size === 0) return;
+      const surface = surfaceRef.current;
+      const frames = editorStore.getState().frames;
+      for (const frameId of operation.fittedFrameIds) {
+        const frame = frames[frameId];
+        const element = surface?.querySelector<HTMLElement>(`[data-frame-id="${frameId}"]`);
+        if (!frame || !element) continue;
+        element.style.transform = `translate3d(${frame.x}px, ${frame.y}px, 0)`;
+        element.style.width = `${frame.width}px`;
+        element.style.height = `${frame.height}px`;
+      }
+      operation.fittedFrameIds.clear();
+    },
+    [editorStore, surfaceRef],
+  );
+
+  const resumeNotifications = useCallback(
+    (operation: NodeGestureOperation) => {
+      if (!operation.suspendedNotifications) return;
+      operation.suspendedNotifications = false;
+      editorStore.resumeNotifications?.();
+    },
+    [editorStore],
   );
 
   const moveNodeGesture = useCallback(
@@ -583,7 +636,10 @@ export function useNodeOverlayGestures({
         if (editorStore.hasActiveTransaction()) return true;
         operation.started = true;
         surface.setPointerCapture(operation.pointerId);
-        setGestureOverlayTargets(operation.snapshots.map((snapshot) => snapshot.target));
+        gestureOverlayStore.set({
+          targets: operation.snapshots.map((snapshot) => snapshot.target),
+          guides: [],
+        });
         operation.txToken = editorStore.beginTransaction(
           operation.kind === "move"
             ? "Move selection"
@@ -591,6 +647,10 @@ export function useNodeOverlayGestures({
               ? "Resize selection"
               : "Rotate selection",
         );
+        if (editorStore.suspendNotifications) {
+          editorStore.suspendNotifications();
+          operation.suspendedNotifications = true;
+        }
         setInteractionMode(
           operation.kind === "move"
             ? "moving-node"
@@ -600,6 +660,7 @@ export function useNodeOverlayGestures({
         );
       }
       let changes: OverlayStyleChange[];
+      let guides: { axis: "x" | "y"; value: number }[] = [];
       if (operation.kind === "move") {
         const selectedKeys = new Set(operation.targetIds);
         const snapTargets = Object.values(bridgeTargets)
@@ -608,10 +669,9 @@ export function useNodeOverlayGestures({
           .filter((target): target is OverlayNodeTarget => target !== null)
           .map((target) => target.bounds);
         const snap = snapTranslation(operation.groupBounds, rawDelta, snapTargets);
-        setAlignmentGuides(snap.guides.map(({ axis, value }) => ({ axis, value })));
+        guides = snap.guides.map(({ axis, value }) => ({ axis, value }));
         changes = buildMoveChanges(operation.snapshots, snap.delta);
       } else if (operation.kind === "resize" && operation.handle) {
-        setAlignmentGuides([]);
         changes = buildResizeChanges(
           operation.snapshots,
           operation.groupBounds,
@@ -619,7 +679,6 @@ export function useNodeOverlayGestures({
           rawDelta,
         );
       } else {
-        setAlignmentGuides([]);
         changes = buildRotationChanges(
           operation.snapshots,
           rotationAngle(
@@ -674,8 +733,8 @@ export function useNodeOverlayGestures({
         );
       }
       operation.changes = changes;
-      setGestureOverlayTargets(
-        changes
+      gestureOverlayStore.set({
+        targets: changes
           // Synthesized freeform <body> changes ride along for apply/undo —
           // they must not paint selection chrome.
           .filter((change) => !synthesizedBodyChanges.has(change))
@@ -690,11 +749,12 @@ export function useNodeOverlayGestures({
               ),
             ),
           })),
-      );
+        guides,
+      });
       flushLiveApply(changes);
       return true;
     },
-    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, fitFreeformFrames, flushLiveApply, setInteractionMode, surfaceRef, toOverlayTarget],
+    [applyStyleChanges, bridgeTargets, cameraRef, editorStore, fitFreeformFrames, flushLiveApply, gestureOverlayStore, setInteractionMode, surfaceRef, toOverlayTarget],
   );
 
   const endNodeGesture = useCallback(
@@ -702,7 +762,6 @@ export function useNodeOverlayGestures({
       const operation = nodeGestureRef.current;
       if (!operation || operation.pointerId !== event.pointerId) return;
       nodeGestureRef.current = null;
-      setAlignmentGuides([]);
       setInteractionMode("idle");
 
       if (operation.cancelled || !hasOverlayStyleChanges(operation.changes)) {
@@ -712,7 +771,9 @@ export function useNodeOverlayGestures({
         if (operation.txToken !== undefined && editorStore.hasActiveTransaction()) {
           editorStore.rollbackTransaction(operation.txToken);
         }
-        setGestureOverlayTargets(null);
+        restoreFittedFrames(operation);
+        resumeNotifications(operation);
+        gestureOverlayStore.clear();
         if (!operation.cancelled && !operation.started && operation.kind === "move") {
           const frameId = operation.snapshots[0]?.target.frameId;
           const controller = frameId ? bridgeControllersRef.current.get(frameId) : undefined;
@@ -738,7 +799,7 @@ export function useNodeOverlayGestures({
             for (const { frameId, targetId } of affectedTargets) {
               gestureStylesRef.current.delete(targetStateKey(frameId, targetId));
             }
-            if (!nodeGestureRef.current) setGestureOverlayTargets(null);
+            if (!nodeGestureRef.current) gestureOverlayStore.clear();
           })
           .catch(() => undefined);
       };
@@ -750,16 +811,18 @@ export function useNodeOverlayGestures({
           .then(() => applyStyleChanges(operation.changes, direction, operation.capturedPrevious))
           .catch(() => undefined);
         operation.queue = run;
-        setGestureOverlayTargets(
-          direction === "previous"
-            ? operation.snapshots.map((snapshot) => snapshot.target)
-            : operation.changes
-                .filter((change) => !synthesizedBodyChanges.has(change))
-                .map((change) => ({
-                  ...change.target,
-                  ...gestureOverlayBox(change, undefined),
-                })),
-        );
+        gestureOverlayStore.set({
+          targets:
+            direction === "previous"
+              ? operation.snapshots.map((snapshot) => snapshot.target)
+              : operation.changes
+                  .filter((change) => !synthesizedBodyChanges.has(change))
+                  .map((change) => ({
+                    ...change.target,
+                    ...gestureOverlayBox(change, undefined),
+                  })),
+          guides: [],
+        });
         refreshAfterQueue();
         return run.then(() => undefined);
       };
@@ -767,9 +830,11 @@ export function useNodeOverlayGestures({
       if (operation.txToken !== undefined && editorStore.hasActiveTransaction()) {
         editorStore.commitTransaction(effect, operation.txToken);
       }
+      resumeNotifications(operation);
+      operation.fittedFrameIds.clear();
       refreshAfterQueue();
     },
-    [applyStyleChanges, bridgeControllersRef, editorStore, refreshSnapshot, refreshTarget, setInteractionMode, surfaceRef],
+    [applyStyleChanges, bridgeControllersRef, editorStore, gestureOverlayStore, refreshSnapshot, refreshTarget, restoreFittedFrames, resumeNotifications, setInteractionMode, surfaceRef],
   );
 
   // When a frame's document reloads (new srcDoc, remount) its <body>
@@ -792,8 +857,10 @@ export function useNodeOverlayGestures({
     if (!operation) return false;
     operation.cancelled = true;
     nodeGestureRef.current = null;
-    setAlignmentGuides([]);
-    setGestureOverlayTargets(operation.snapshots.map((snapshot) => snapshot.target));
+    gestureOverlayStore.set({
+      targets: operation.snapshots.map((snapshot) => snapshot.target),
+      guides: [],
+    });
     const settled = liveSettledRef.current;
     operation.queue = operation.queue
       .then(() => settled)
@@ -813,23 +880,25 @@ export function useNodeOverlayGestures({
         for (const { frameId, targetId } of affectedTargets) {
           gestureStylesRef.current.delete(targetStateKey(frameId, targetId));
         }
-        setGestureOverlayTargets(null);
+        gestureOverlayStore.clear();
       })
       .catch(() => undefined);
     if (operation.txToken !== undefined && editorStore.hasActiveTransaction()) {
       editorStore.rollbackTransaction(operation.txToken);
     }
+    restoreFittedFrames(operation);
+    resumeNotifications(operation);
     setInteractionMode("idle");
     return true;
-  }, [applyStyleChanges, editorStore, refreshSnapshot, refreshTarget, setInteractionMode]);
+  }, [applyStyleChanges, editorStore, gestureOverlayStore, refreshSnapshot, refreshTarget, restoreFittedFrames, resumeNotifications, setInteractionMode]);
 
   const isNodeGestureActive = useCallback(() => nodeGestureRef.current !== null, []);
 
   return {
-    alignmentGuides,
     beginNodeGesture,
     cancelNodeGesture,
     endNodeGesture,
+    gestureOverlayStore,
     isNodeGestureActive,
     moveNodeGesture,
     selectedOverlayTargets,

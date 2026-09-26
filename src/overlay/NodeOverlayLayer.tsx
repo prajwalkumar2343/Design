@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { Rect } from "../canvas/types";
 import {
   RESIZE_HANDLES,
@@ -33,12 +33,61 @@ export interface NodeGestureStart {
   client: { x: number; y: number };
 }
 
+export interface OverlayGuide {
+  axis: "x" | "y";
+  value: number;
+}
+
+export interface GestureOverlayState {
+  targets: OverlayNodeTarget[] | null;
+  guides: OverlayGuide[];
+}
+
+export interface GestureOverlayStore {
+  subscribe: (listener: () => void) => () => void;
+  getSnapshot: () => GestureOverlayState;
+  set: (state: GestureOverlayState) => void;
+  patchTargets: (fn: (current: OverlayNodeTarget[] | null) => OverlayNodeTarget[] | null) => void;
+  clear: () => void;
+}
+
+export function createGestureOverlayStore(): GestureOverlayStore {
+  let state: GestureOverlayState = { targets: null, guides: [] };
+  const listeners = new Set<() => void>();
+  const emit = () => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    getSnapshot: () => state,
+    set(next) {
+      state = next;
+      emit();
+    },
+    patchTargets(fn) {
+      state = { ...state, targets: fn(state.targets) };
+      emit();
+    },
+    clear() {
+      state = { targets: null, guides: [] };
+      emit();
+    },
+  };
+}
+
+const EMPTY_STORE = createGestureOverlayStore();
+
 interface NodeOverlayLayerProps {
   zoom: number;
   hoveredTarget: OverlayNodeTarget | null;
   selectedTargets: OverlayNodeTarget[];
   interactive?: boolean;
-  guides?: { axis: "x" | "y"; value: number }[];
+  guides?: OverlayGuide[];
+  gestureStore?: GestureOverlayStore;
+  excludeTarget?: (target: OverlayNodeTarget) => boolean;
   onGestureStart: (gesture: NodeGestureStart, event: ReactPointerEvent<HTMLElement>) => void;
   onGestureMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onGestureEnd: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -85,14 +134,21 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
   selectedTargets,
   interactive = true,
   guides = [],
+  gestureStore = EMPTY_STORE,
+  excludeTarget,
   onGestureStart,
   onGestureMove,
   onGestureEnd,
   onTextEditStart,
 }: NodeOverlayLayerProps) {
-  const selectedKeys = new Set(selectedTargets.map(targetKey));
-  const groupBounds = unionRects(selectedTargets.map((target) => target.bounds));
-  const movableTargets = selectedTargets.filter((target) => !target.locked);
+  const gestureState = useSyncExternalStore(gestureStore.subscribe, gestureStore.getSnapshot);
+  const effectiveTargets = (gestureState.targets ?? selectedTargets).filter(
+    (target) => !excludeTarget?.(target),
+  );
+  const effectiveGuides = gestureState.targets !== null ? gestureState.guides : guides;
+  const selectedKeys = new Set(effectiveTargets.map(targetKey));
+  const groupBounds = unionRects(effectiveTargets.map((target) => target.bounds));
+  const movableTargets = effectiveTargets.filter((target) => !target.locked);
   const targetIds = movableTargets.map(targetKey);
   const zoomSafe = Math.max(zoom, 0.08);
   const handleSize = 14 / zoomSafe;
@@ -167,7 +223,7 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
       onPointerUp={onGestureEnd}
       onPointerCancel={onGestureEnd}
     >
-      {guides.map((guide, index) => (
+      {effectiveGuides.map((guide, index) => (
         <div
           aria-hidden="true"
           className={`alignment-guide alignment-guide-${guide.axis}`}
@@ -188,7 +244,7 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
         />
       ) : null}
 
-      {selectedTargets.map((target) => (
+      {effectiveTargets.map((target) => (
         <div
           aria-hidden="true"
           className={`node-selection-outline${target.locked ? " is-locked" : ""}`}

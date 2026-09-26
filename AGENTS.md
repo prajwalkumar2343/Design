@@ -66,6 +66,15 @@ dangling stash commits before hand-repairing.
 - Deleting every `data-design-tool-created` node inside a freeform frame
   deletes the frame itself (see the `delete-selection` branch in
   CanvasSurface) — otherwise invisible empty shells pile up.
+- `buildFreeformDocument` must keep `overflow:hidden` on `html` only, never
+  `body`: the gesture fit re-anchors content by translating `<body>`, and a
+  transformed body's own overflow clips `position:fixed` elements to the
+  shifted box (shape paints as a sliver / appears stuck at the old frame
+  bounds while moving).
+- `ShapePreview` (`src/frame/shape-geometry.tsx`) must mirror the committed
+  markup exactly: painted shapes commit with `stroke-width:0` and no inset,
+  and bounds use `normalizedBounds(start, end, 1)` like the creation path —
+  any divergence shows as an outline during draw or a size pop on commit.
 
 ## Agent bridge
 

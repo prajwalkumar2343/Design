@@ -206,15 +206,24 @@ export class EditorStore {
    * intermediate notifies are coalesced.
    */
   batchNotifications(callback: () => void): void {
-    this.deferredNotify += 1;
+    this.suspendNotifications();
     try {
       callback();
     } finally {
-      this.deferredNotify -= 1;
-      if (this.deferredNotify === 0 && this.pendingNotify) {
-        this.pendingNotify = false;
-        this.notify();
-      }
+      this.resumeNotifications();
+    }
+  }
+
+  suspendNotifications(): void {
+    this.deferredNotify += 1;
+  }
+
+  resumeNotifications(): void {
+    if (this.deferredNotify === 0) return;
+    this.deferredNotify -= 1;
+    if (this.deferredNotify === 0 && this.pendingNotify) {
+      this.pendingNotify = false;
+      this.notify();
     }
   }
 

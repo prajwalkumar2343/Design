@@ -79,12 +79,14 @@ interface ShapePreviewProps {
  */
 export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProps) {
   const markerId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  const bounds = normalizedBounds(start, end);
+  const bounds = normalizedBounds(start, end, 1);
   const points = shapeDragPoints(shape, start, end).map((point) => ({
     x: point.x - bounds.x,
     y: point.y - bounds.y,
   }));
-  const inset = SHAPE_STROKE_WIDTH / 2;
+  const paintsFill = shape === "rectangle" || shape === "ellipse" || shape === "polygon" || shape === "star";
+  const strokeWidth = paintsFill ? 0 : SHAPE_STROKE_WIDTH;
+  const inset = strokeWidth / 2;
   const cornerRadius = Math.min(radius, bounds.width / 2, bounds.height / 2);
 
   return (
@@ -104,12 +106,12 @@ export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProp
       {shape === "rectangle" ? (
         <rect
           fill={SHAPE_FILL}
-          height={Math.max(1, bounds.height - SHAPE_STROKE_WIDTH)}
+          height={Math.max(1, bounds.height - strokeWidth)}
           rx={cornerRadius > 0 ? cornerRadius : undefined}
           ry={cornerRadius > 0 ? cornerRadius : undefined}
           stroke={SHAPE_STROKE}
-          strokeWidth={SHAPE_STROKE_WIDTH}
-          width={Math.max(1, bounds.width - SHAPE_STROKE_WIDTH)}
+          strokeWidth={strokeWidth}
+          width={Math.max(1, bounds.width - strokeWidth)}
           x={inset}
           y={inset}
         />
@@ -121,7 +123,7 @@ export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProp
           rx={Math.max(0.5, bounds.width / 2 - inset)}
           ry={Math.max(0.5, bounds.height / 2 - inset)}
           stroke={SHAPE_STROKE}
-          strokeWidth={SHAPE_STROKE_WIDTH}
+          strokeWidth={strokeWidth}
         />
       ) : shape === "line" || shape === "arrow" ? (
         <>
@@ -144,7 +146,7 @@ export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProp
             markerEnd={shape === "arrow" ? `url(#shape-preview-arrow-${markerId})` : undefined}
             stroke={SHAPE_STROKE}
             strokeLinecap="round"
-            strokeWidth={SHAPE_STROKE_WIDTH}
+            strokeWidth={strokeWidth}
             x1={points[0].x}
             x2={points[1].x}
             y1={points[0].y}
@@ -158,7 +160,7 @@ export function ShapePreview({ shape, start, end, radius = 0 }: ShapePreviewProp
           stroke={SHAPE_STROKE}
           strokeLinecap="round"
           strokeLinejoin="round"
-          strokeWidth={SHAPE_STROKE_WIDTH}
+          strokeWidth={strokeWidth}
         />
       )}
     </svg>

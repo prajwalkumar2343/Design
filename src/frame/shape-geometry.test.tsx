@@ -79,13 +79,13 @@ describe("ShapePreview", () => {
     const rect = preview.querySelector("rect");
     expect(rect).not.toBeNull();
     expect(rect?.getAttribute("stroke")).toBe("#222222");
-    expect(rect?.getAttribute("stroke-width")).toBe("2");
+    expect(rect?.getAttribute("stroke-width")).toBe("0");
     expect(rect?.getAttribute("fill")).toBe("#d9d9d9");
   });
 
-  it("clamps the preview to the same 16px minimum the created shape gets", () => {
+  it("clamps the preview to the same 1px floor the committed bounds get", () => {
     render(<ShapePreview shape="rectangle" start={{ x: 10, y: 10 }} end={{ x: 18, y: 22 }} />);
-    expect(screen.getByTestId("shape-preview").getAttribute("viewBox")).toBe("0 0 16 16");
+    expect(screen.getByTestId("shape-preview").getAttribute("viewBox")).toBe("0 0 8 12");
   });
 
   it("renders a stroke-only preview for lines and arrows with an arrowhead marker", () => {
@@ -105,7 +105,7 @@ describe("ShapePreview", () => {
     const polygon = screen.getByTestId("shape-preview").querySelector("polygon");
     expect(polygon).not.toBeNull();
     expect(polygon?.getAttribute("stroke")).toBe("#222222");
-    expect(polygon?.getAttribute("stroke-width")).toBe("2");
+    expect(polygon?.getAttribute("stroke-width")).toBe("0");
     expect(polygon?.getAttribute("stroke-linejoin")).toBe("round");
     expect(polygon?.getAttribute("fill")).toBe("#d9d9d9");
 

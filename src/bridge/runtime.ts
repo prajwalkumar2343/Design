@@ -317,6 +317,12 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     return points.map((point) => point.x + "," + point.y).join(" ");
   }
 
+  function clampedRectRadius(radius, width, height) {
+    const r = Math.max(0, Number(radius) || 0);
+    const cap = Math.min(Number(width) || 0, Number(height) || 0) / 2;
+    return cap > 0 ? Math.min(r, cap) : r;
+  }
+
   function createSvgChild(svg, kind, points, bounds, fill, stroke, strokeWidth, radius) {
     const ns = "http://www.w3.org/2000/svg";
     const normalized = points || [];
@@ -324,13 +330,16 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     let child;
     if (kind === "rectangle") {
       child = document.createElementNS(ns, "rect");
+      const rectW = Math.max(1, bounds.width - strokeWidth);
+      const rectH = Math.max(1, bounds.height - strokeWidth);
       child.setAttribute("x", String(inset));
       child.setAttribute("y", String(inset));
-      child.setAttribute("width", String(Math.max(1, bounds.width - strokeWidth)));
-      child.setAttribute("height", String(Math.max(1, bounds.height - strokeWidth)));
-      if (radius > 0) {
-        child.setAttribute("rx", String(radius));
-        child.setAttribute("ry", String(radius));
+      child.setAttribute("width", String(rectW));
+      child.setAttribute("height", String(rectH));
+      const r = clampedRectRadius(radius, rectW, rectH);
+      if (r > 0) {
+        child.setAttribute("rx", String(r));
+        child.setAttribute("ry", String(r));
       }
     } else if (kind === "ellipse") {
       child = document.createElementNS(ns, "ellipse");
@@ -378,9 +387,10 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       ? element.querySelector("rect")
       : null;
     if (!rect) return false;
-    if (radius > 0) {
-      rect.setAttribute("rx", String(radius));
-      rect.setAttribute("ry", String(radius));
+    const r = clampedRectRadius(radius, rect.getAttribute("width"), rect.getAttribute("height"));
+    if (r > 0) {
+      rect.setAttribute("rx", String(r));
+      rect.setAttribute("ry", String(r));
     } else {
       rect.removeAttribute("rx");
       rect.removeAttribute("ry");
@@ -430,9 +440,11 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         if (childTag === "rect") {
           child.setAttribute("x", String(inset));
           child.setAttribute("y", String(inset));
-          child.setAttribute("width", String(Math.max(1, W - strokeWidth)));
-          child.setAttribute("height", String(Math.max(1, H - strokeWidth)));
-          const r = Math.min(Math.max(0, radiusRaw), W / 2, H / 2);
+          const rectW = Math.max(1, W - strokeWidth);
+          const rectH = Math.max(1, H - strokeWidth);
+          child.setAttribute("width", String(rectW));
+          child.setAttribute("height", String(rectH));
+          const r = clampedRectRadius(radiusRaw, rectW, rectH);
           if (r > 0) {
             child.setAttribute("rx", String(r));
             child.setAttribute("ry", String(r));
@@ -626,6 +638,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
 
   function removeLiquidFilter(element) {
     try {
+      unobserveLiquidLens(element);
       const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
       const ids = [liquidFilterId(rawId), liquidFilterId(rawId + "-surface")];
       const container = document.getElementById("design-tool-liquid-filters");
@@ -962,6 +975,92 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     } catch { return null; }
   }
 
+  const liquidLensBoxes = new WeakMap();
+  const liquidLensRestampTimers = new WeakMap();
+  let liquidLensObserver = null;
+
+  function liquidLensFid(element) {
+    const rawId = element.getAttribute("data-design-element-id") || element.id || "shape";
+    const kind = element.getAttribute("data-design-tool-kind") || "";
+    return GLASS_VECTOR_KINDS.indexOf(kind) !== -1 ? liquidFilterId(rawId) : liquidFilterId(rawId + "-surface");
+  }
+
+  function liquidLensFilter(element) {
+    const container = document.getElementById("design-tool-liquid-filters");
+    if (!container) return null;
+    return container.querySelector("filter[id='" + liquidLensFid(element) + "']");
+  }
+
+  function syncLiquidLensFrame(element, w, h) {
+    const filter = liquidLensFilter(element);
+    if (!filter) return;
+    const feImage = filter.querySelector("feImage");
+    if (!feImage) return;
+    const W = Math.max(1, Math.round(w));
+    const H = Math.max(1, Math.round(h));
+    if (feImage.getAttribute("width") === String(W) && feImage.getAttribute("height") === String(H)) return;
+    feImage.setAttribute("width", String(W));
+    feImage.setAttribute("height", String(H));
+  }
+
+  function restampLiquidLens(element) {
+    try {
+      if (!element.isConnected || !element.hasAttribute("data-design-tool-glass")) return;
+      const level = Number(element.getAttribute("data-design-tool-glass"));
+      if (!Number.isFinite(level) || level <= 0) return;
+      const kind = element.getAttribute("data-design-tool-kind") || "";
+      if (GLASS_VECTOR_KINDS.indexOf(kind) !== -1) applyVectorGlass(element, level);
+      else applySurfaceGlass(element, level);
+    } catch {}
+  }
+
+  function scheduleLiquidLensRestamp(element) {
+    const existing = liquidLensRestampTimers.get(element);
+    if (existing !== undefined) clearTimeout(existing);
+    liquidLensRestampTimers.set(element, setTimeout(function() {
+      liquidLensRestampTimers.delete(element);
+      restampLiquidLens(element);
+    }, 140));
+  }
+
+  function noteLiquidLensBox(element) {
+    const rect = element.getBoundingClientRect();
+    const w = Math.round(rect.width);
+    const h = Math.round(rect.height);
+    const last = liquidLensBoxes.get(element);
+    if (last && last.w === w && last.h === h) return;
+    liquidLensBoxes.set(element, { w: w, h: h });
+    if (w < 1 || h < 1) return;
+    syncLiquidLensFrame(element, w, h);
+    scheduleLiquidLensRestamp(element);
+  }
+
+  function observeLiquidLens(element) {
+    try {
+      if (typeof ResizeObserver === "undefined") return;
+      if (!liquidLensObserver) {
+        liquidLensObserver = new ResizeObserver(function(entries) {
+          for (const entry of entries) {
+            if (entry && entry.target instanceof Element) noteLiquidLensBox(entry.target);
+          }
+        });
+      }
+      const rect = element.getBoundingClientRect();
+      liquidLensBoxes.set(element, { w: Math.round(rect.width), h: Math.round(rect.height) });
+      liquidLensObserver.observe(element);
+    } catch {}
+  }
+
+  function unobserveLiquidLens(element) {
+    try {
+      if (liquidLensObserver) liquidLensObserver.unobserve(element);
+      const timer = liquidLensRestampTimers.get(element);
+      if (timer !== undefined) clearTimeout(timer);
+      liquidLensRestampTimers.delete(element);
+      liquidLensBoxes.delete(element);
+    } catch {}
+  }
+
   function shapeGeometryChild(element) {
     return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
   }
@@ -1108,6 +1207,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
 
     element.setAttribute("data-design-tool-glass", String(level));
+    observeLiquidLens(element);
   }
 
   function applySurfaceGlass(element, level) {
@@ -1156,6 +1256,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     // Keep existing radius but ensure clipping so backdrop follows it
     if (radius > 0) element.style.setProperty("overflow", "hidden", "important");
     element.setAttribute("data-design-tool-glass", String(level));
+    observeLiquidLens(element);
   }
 
   function createElementFromSpec(spec) {
@@ -1588,6 +1689,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         syncCreatedSvgSize(element);
       }
       const value = element.style.getPropertyValue(command.property) || null;
+      const bodyRect = document.body ? document.body.getBoundingClientRect() : null;
       return {
         kind: "command",
         command: "set-inline-style",
@@ -1599,6 +1701,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         // land the element elsewhere (alignment, clamps). This real post-edit
         // rect lets the canvas glue the selection chrome to the truth.
         bounds: localBounds(element),
+        bodyOrigin: bodyRect ? { x: bodyRect.x, y: bodyRect.y } : undefined,
         undo: { command: "set-inline-style", targetId: command.targetId, property: command.property, value: previousValue },
       };
     }

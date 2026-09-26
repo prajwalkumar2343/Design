@@ -301,7 +301,6 @@ button:focus-visible,
   border-radius: var(--bezel-radius, 24px);
   background: var(--paper);
   box-shadow: var(--shadow-frame);
-  overflow: hidden;
 }
 
 .canvas-frame.device-frame::after {
@@ -543,7 +542,7 @@ button:focus-visible,
 
 /* Adjust frame label for device frames – lift above bezel */
 .canvas-frame.device-frame .frame-label {
-  bottom: calc(100% + 18px);
+  bottom: calc(100% + 18px / var(--canvas-zoom, 1));
 }
 
 /* Ensure creation layer and activation layer respect inner radius */
@@ -555,8 +554,10 @@ button:focus-visible,
 .frame-label {
   position: absolute;
   left: -1px;
-  bottom: calc(100% + 11px);
+  bottom: calc(100% + 11px / var(--canvas-zoom, 1));
   z-index: 7;
+  scale: calc(1 / var(--canvas-zoom, 1));
+  transform-origin: 0 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -592,6 +593,27 @@ button:focus-visible,
 }
 
 .frame-label:active {
+  cursor: grabbing;
+}
+
+.frame-drag-ring {
+  --ring-out: calc(9px / var(--canvas-zoom, 1));
+  --ring-in: var(--ring-out);
+  position: absolute;
+  inset: calc(0px - var(--ring-out));
+  z-index: 6;
+  cursor: grab;
+  touch-action: none;
+  clip-path: polygon(evenodd,
+    0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%,
+    var(--ring-in) var(--ring-in),
+    var(--ring-in) calc(100% - var(--ring-in)),
+    calc(100% - var(--ring-in)) calc(100% - var(--ring-in)),
+    calc(100% - var(--ring-in)) var(--ring-in),
+    var(--ring-in) var(--ring-in));
+}
+
+.frame-drag-ring:active {
   cursor: grabbing;
 }
 

@@ -190,6 +190,7 @@ import {
   freeformBodyShiftValue,
   freeformFrameCommands,
   isFreeformContentNode,
+  isFreeformContentTag,
 } from "../overlay/freeform-fit";
 import {
   useNodeOverlayGestures,
@@ -1750,12 +1751,19 @@ export function CanvasSurface({
         : undefined;
       const transform = entry.inspection?.inlineStyle.transform ?? entry.inspection?.computedStyle.transform;
       const parsedRotation = transform ? parseTransform(transform)?.rotation ?? 0 : 0;
-      const bounds = {
+      let bounds = {
         x: frame.x + FRAME_CONTENT_INSET + entry.target.bounds.x - (shift?.x ?? 0),
         y: frame.y + FRAME_CONTENT_INSET + entry.target.bounds.y - (shift?.y ?? 0),
         width: entry.target.bounds.width,
         height: entry.target.bounds.height,
       };
+      if (!isFreeformContentTag(entry.target.tagName)) {
+        const left = Math.max(bounds.x, frame.x + FRAME_CONTENT_INSET);
+        const top = Math.max(bounds.y, frame.y + FRAME_CONTENT_INSET);
+        const right = Math.min(bounds.x + bounds.width, frame.x + frame.width - FRAME_CONTENT_INSET);
+        const bottom = Math.min(bounds.y + bounds.height, frame.y + frame.height - FRAME_CONTENT_INSET);
+        bounds = { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+      }
       // The measured AABB rotated by `rotation` would double-apply the angle —
       // reconstruct the unrotated rect (same center, laid-out size) so the
       // overlay can paint the element's real box.
@@ -2147,6 +2155,23 @@ export function CanvasSurface({
       };
       editorStore.execute({ type: "node/upsert", node }, { history: "skip" });
       const currentSelection = editorStore.getState().selection;
+      if (node.tagName && !isFreeformContentTag(node.tagName)) {
+        const frameIds = message.shiftKey
+          ? currentSelection.frameIds.includes(frameId)
+            ? currentSelection.frameIds.filter((id) => id !== frameId)
+            : [...currentSelection.frameIds, frameId]
+          : [frameId];
+        editorStore.execute(
+          setSelectionCommand({
+            frameIds,
+            nodeIds: message.shiftKey ? currentSelection.nodeIds : [],
+            primaryFrameId: frameIds[frameIds.length - 1] ?? null,
+            primaryNodeId: message.shiftKey ? currentSelection.primaryNodeId : null,
+          }),
+          { history: "skip" },
+        );
+        return;
+      }
       const selected = currentSelection.nodeIds.includes(node.id);
       const nodeIds = message.shiftKey
         ? selected
@@ -3677,7 +3702,7 @@ export function CanvasSurface({
   const editNodePosition = useCallback((frameId: string, nodeId: string, position: { x: number; y: number }) => {
     const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
     const controller = bridgeControllersRef.current.get(frameId);
-    if (!entry || !controller) return;
+    if (!entry || !controller || !isFreeformContentTag(entry.target.tagName)) return;
     void controller.inspect(nodeId).then((inspection) => {
       if (!inspection) return;
       handleBridgeInspection(frameId, inspection);

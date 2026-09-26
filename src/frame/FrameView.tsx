@@ -519,10 +519,9 @@ export const FrameView = memo(function FrameView({
             </div>
           ) : null}
 
-          {/* The activation layer must cover any frame the creation layer
-              isn't — otherwise a space-pan press during creation mode would
-              fall through to the iframe. */}
-          {!(isCreationMode && isLive && !isPanTool) && (!isSelected || isPanTool) ? (
+          {/* Only paused frames and pan mode take the cover — a press inside
+              a live frame always reaches the document. */}
+          {!(isCreationMode && isLive && !isPanTool) && (!isLive || isPanTool) ? (
             <button
               className="frame-activation-layer"
               aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}
@@ -534,7 +533,7 @@ export const FrameView = memo(function FrameView({
         </div>
       </div>
 
-      {isSelected && !isPanTool ? (
+      {!isPanTool ? (
         <div
           aria-hidden="true"
           className="frame-drag-ring"

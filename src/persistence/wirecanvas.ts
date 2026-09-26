@@ -718,6 +718,13 @@ function readDurableState(value: unknown, path: string): WireCanvasDurableState 
   const pages = collection(input.pages, `${path}.pages`).map((item, index) => readPage(item, `${path}.pages[${index}]`));
   const frames = collection(input.frames, `${path}.frames`).map((item, index) => readFrame(item, `${path}.frames[${index}]`));
   const nodes = collection(input.nodes, `${path}.nodes`).map((item, index) => readNode(item, `${path}.nodes[${index}]`));
+  // `draw-` ids are minted only by the canvas freeform-creation path — a
+  // stored frame carrying one without the flag lost it to payload repair.
+  for (const frame of frames) {
+    if (frame.freeform !== true && frame.id.startsWith("draw-")) {
+      frame.freeform = true;
+    }
+  }
   const state: WireCanvasDurableState = {
     session: readSession(input.session, `${path}.session`),
     tokens: readTokens(input.tokens, `${path}.tokens`),

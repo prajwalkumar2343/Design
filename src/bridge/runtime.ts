@@ -1491,16 +1491,20 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   // Serializes the live document for persistence: the parent's srcDoc only
   // knows the markup the document started with, so edits that exist only as
   // DOM mutations (moves, created elements, the freeform body shift) ride
-  // along here. Runtime-injected chrome — motion/theme/font style blocks and
-  // the text-edit marker — is stripped so the stored copy round-trips clean.
+  // along here. Runtime-injected chrome — the bridge script plus
+  // motion/theme/font style blocks and the text-edit marker — is stripped so
+  // the stored copy round-trips clean.
   function serializeDocument() {
     const root = document.documentElement;
     if (!root) return "";
     const clone = root.cloneNode(true);
     const tokenThemeAttr = "data-design-tool-" + "token-theme";
+    const runtimeAttr = "data-design-tool-" + "iframe-bridge";
+    const wireframeThemeAttr = "data-design-tool-" + "wireframe-theme";
     clone.querySelectorAll(
-      "style[data-design-tool-motion],style[" + FONT_FACES_ATTR + "],style[" + tokenThemeAttr + "]",
+      "style[data-design-tool-motion],style[" + FONT_FACES_ATTR + "],style[" + tokenThemeAttr + "],style[" + wireframeThemeAttr + "]",
     ).forEach(function (node) { node.remove(); });
+    clone.querySelectorAll("[" + runtimeAttr + "]").forEach(function (node) { node.remove(); });
     clone.querySelectorAll("[data-design-tool-editing]").forEach(function (node) {
       node.removeAttribute("data-design-tool-editing");
     });

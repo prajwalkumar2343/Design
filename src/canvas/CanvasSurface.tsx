@@ -2366,6 +2366,13 @@ export function CanvasSurface({
           ? { x: -bodyTarget.bounds.x, y: -bodyTarget.bounds.y }
           : freeformShiftRef.current.get(frameId) ?? { x: 0, y: 0 }
         : { x: 0, y: 0 };
+      if (
+        frame.freeform
+        && !freeformShiftRef.current.has(frameId)
+        && (measureShift.x !== 0 || measureShift.y !== 0)
+      ) {
+        freeformShiftRef.current.set(frameId, measureShift);
+      }
       // One store transition + one targets merge per snapshot — previously
       // each node did its own execute (cloning the nodes record) and its own
       // setBridgeTargets (cloning the targets record), an O(nodes²) ingest.

@@ -189,16 +189,13 @@ describe("repairWireCanvasProjectJson", () => {
     expect(state.documents["document-1"]!.rootNodeIds).toEqual(["a", "b"]);
   });
 
-  it("drops frame fields this schema does not support (freeform)", () => {
+  it("keeps the freeform flag through repair", () => {
     const parsed = parsedJson(validProjectText());
-    // A stored freeform flag must not poison the whole file — this branch's
-    // strict codec rejects it as an unknown field.
     parsed.state.frames[0].freeform = true;
     const repaired = repairWireCanvasProjectJson(JSON.stringify(parsed));
     expect(repaired).not.toBeNull();
     const state = parseWireCanvasProject(repaired!);
-    expect(state.frames["frame-1"]).toBeDefined();
-    expect("freeform" in state.frames["frame-1"]!).toBe(false);
+    expect(state.frames["frame-1"]!.freeform).toBe(true);
   });
 
   it("drops only invalid tokens and keeps valid sets and themes", () => {

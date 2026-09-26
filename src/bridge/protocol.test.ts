@@ -280,6 +280,61 @@ describe("iframe bridge protocol", () => {
     expect(parseBridgeMessage(commandEnvelope(
       { command: "set-shape-glass", targetId: "rectangle-1", level: 140 },
     ))).toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-stroke", targetId: "line-1", stroke: "#e5484d" },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-stroke", targetId: "line-1", strokeWidth: 4 },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-stroke", targetId: "line-1", stroke: null, strokeWidth: null },
+    ))).not.toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-stroke", targetId: "line-1", stroke: "url(#evil)" },
+    ))).toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-stroke", targetId: "line-1", strokeWidth: 140 },
+    ))).toBeNull();
+    expect(parseBridgeMessage(commandEnvelope(
+      { command: "set-shape-stroke", targetId: "line-1", strokeWidth: -1 },
+    ))).toBeNull();
+  });
+
+  it("validates shape stroke acknowledgements with their undo payloads", () => {
+    const strokeAck = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "response",
+      requestId: "bridge-desktop-stroke-1",
+      ok: true,
+      result: {
+        kind: "command",
+        ack: {
+          kind: "command",
+          command: "set-shape-stroke",
+          targetId: "line-1",
+          previousStroke: "#222222",
+          previousStrokeWidth: 2,
+          stroke: "#e5484d",
+          strokeWidth: 4,
+          undo: {
+            command: "set-shape-stroke",
+            targetId: "line-1",
+            stroke: "#222222",
+            strokeWidth: 2,
+          },
+        },
+      },
+    };
+    expect(parseBridgeMessage(strokeAck)).not.toBeNull();
+    expect(parseBridgeMessage({
+      ...strokeAck,
+      result: {
+        kind: "command",
+        ack: { ...strokeAck.result.ack, undo: { command: "set-shape-fill", targetId: "line-1", color: null } },
+      },
+    })).toBeNull();
   });
 
   it("validates shape fill and glass acknowledgements with their undo payloads", () => {

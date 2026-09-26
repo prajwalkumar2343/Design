@@ -296,6 +296,7 @@ export const FrameView = memo(function FrameView({
       duplicateElement: (command) => transport.duplicateElement(command),
       setShapeRadius: (command) => transport.setShapeRadius(command),
       setShapeFill: (command) => transport.setShapeFill(command),
+      setShapeStroke: (command) => transport.setShapeStroke(command),
       setShapeGlass: (command) => transport.setShapeGlass(command),
       pickElement: (command) => transport.pickElement(command),
       injectFontFaces: (command) => transport.injectFontFaces(command),

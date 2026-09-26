@@ -93,6 +93,13 @@ dangling stash commits before hand-repairing.
   markup exactly: painted shapes commit with `stroke-width:0` and no inset,
   and bounds use `normalizedBounds(start, end, 1)` like the creation path —
   any divergence shows as an outline during draw or a size pop on commit.
+- Shape paint lives on the SVG geometry child, never CSS: Fill edits run
+  `set-shape-fill` (child `fill`), Border/Width edits run `set-shape-stroke`
+  (child `stroke`/`stroke-width` + re-inset), Radius runs `set-shape-radius`.
+  Lines/arrows/paths are fill="none" — `editNodeStyle` routes their
+  `background-color` commits to the stroke, and `FillBorderSection` relabels
+  the field "Stroke". Kind resolution falls back to node attributes when the
+  bridge inspection hasn't landed yet.
 
 ## Agent bridge
 

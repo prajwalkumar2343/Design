@@ -49,6 +49,9 @@ export interface IframeBridgeController {
   setShapeFill: (
     command: Extract<BridgeCommand, { command: "set-shape-fill" }>,
   ) => Promise<BridgeCommandAck>;
+  setShapeStroke: (
+    command: Extract<BridgeCommand, { command: "set-shape-stroke" }>,
+  ) => Promise<BridgeCommandAck>;
   setShapeGlass: (
     command: Extract<BridgeCommand, { command: "set-shape-glass" }>,
   ) => Promise<BridgeCommandAck>;
@@ -90,6 +93,7 @@ const MUTATING_COMMANDS = new Set<BridgeCommand["command"]>([
   "duplicate-element",
   "set-shape-radius",
   "set-shape-fill",
+  "set-shape-stroke",
   "set-shape-glass",
 ]);
 
@@ -257,6 +261,10 @@ export class IframeBridgeTransport {
   }
 
   setShapeFill(command: Extract<BridgeCommand, { command: "set-shape-fill" }>): Promise<BridgeCommandAck> {
+    return this.sendCommand(command);
+  }
+
+  setShapeStroke(command: Extract<BridgeCommand, { command: "set-shape-stroke" }>): Promise<BridgeCommandAck> {
     return this.sendCommand(command);
   }
 

@@ -159,6 +159,72 @@ describe("PropertiesPanel color field", () => {
     expect((screen.getByTestId("color-option-#e5484d") as HTMLButtonElement).className).toContain("is-active");
   });
 
+  it("binds the stroke for stroke-only shapes and routes border edits to it", () => {
+    const lineEntry: OverlayBridgeTargetState = {
+      frameId: "frame-1",
+      target: { ...inspection.target, elementId: "line-1", tagName: "svg", name: "Line" },
+      inspection: {
+        target: { ...inspection.target, elementId: "line-1", tagName: "svg", name: "Line" },
+        text: "",
+        attributes: {
+          "data-design-tool-kind": "line",
+          "data-design-tool-fill": "#d9d9d9",
+          "data-design-tool-stroke": "#222222",
+          "data-design-tool-stroke-width": "2",
+        },
+        inlineStyle: {},
+        computedStyle: { "border-color": "rgb(34, 34, 34)", "border-width": "0px" },
+      },
+    };
+    const onEditNodeStyle = vi.fn();
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ frameIds: ["frame-1"], nodeIds: ["line-1"], primaryFrameId: "frame-1", primaryNodeId: "line-1" }}
+        bridgeTargets={{ "frame-1:line-1": lineEntry }}
+        onEditNodeStyle={onEditNodeStyle}
+      />,
+    );
+    const strokeInput = screen.getByLabelText("Stroke") as HTMLInputElement;
+    expect(strokeInput.value).toBe("#222222");
+    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toBe("2px");
+    // A stroke-only shape's outline IS its stroke — the redundant Border and
+    // Radius rows stay hidden.
+    expect(screen.queryByLabelText("Border")).toBeNull();
+    expect(screen.queryByLabelText("Radius")).toBeNull();
+    fireEvent.click(screen.getByTestId("color-swatch-Stroke"));
+    fireEvent.click(screen.getByTestId("color-option-#e5484d"));
+    expect(onEditNodeStyle).toHaveBeenCalledWith("background-color", "#e5484d");
+  });
+
+  it("binds the Border field to the vector stroke attribute", () => {
+    const onEditNodeStyle = vi.fn();
+    const stroked: OverlayBridgeTargetState = {
+      ...entry,
+      inspection: {
+        ...inspection,
+        attributes: {
+          ...inspection.attributes,
+          "data-design-tool-stroke": "#222222",
+          "data-design-tool-stroke-width": "3",
+        },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        bridgeTargets={{ "frame-1:rect-1": stroked }}
+        onEditNodeStyle={onEditNodeStyle}
+      />,
+    );
+    const border = screen.getByLabelText("Border") as HTMLInputElement;
+    expect(border.value).toBe("#222222");
+    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toBe("3px");
+    fireEvent.change(border, { target: { value: "#e5484d" } });
+    fireEvent.blur(border, { relatedTarget: document.body });
+    expect(onEditNodeStyle).toHaveBeenCalledWith("border-color", "#e5484d");
+  });
+
   it("applies the glass effect from the palette's Glass swatch instead of a fill", () => {
     const onApplyGlassEffect = vi.fn();
     const onEditNodeStyle = vi.fn();

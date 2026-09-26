@@ -200,6 +200,14 @@ export type BridgeCommand =
       color: string | null;
     }
   | {
+      command: "set-shape-stroke";
+      targetId: string;
+      /** Concrete CSS color, null to restore the original stroke, undefined to leave it. */
+      stroke?: string | null;
+      /** Stroke width in px, null to restore the original, undefined to leave it. */
+      strokeWidth?: number | null;
+    }
+  | {
       command: "set-shape-glass";
       targetId: string;
       /** Glass intensity 0–100, or null to remove the effect. */
@@ -297,6 +305,12 @@ export type BridgeUndoCommand =
       color: string | null;
     }
   | {
+      command: "set-shape-stroke";
+      targetId: string;
+      stroke?: string | null;
+      strokeWidth?: number | null;
+    }
+  | {
       command: "set-shape-glass";
       targetId: string;
       level: number | null;
@@ -362,6 +376,16 @@ export type BridgeCommandAck =
       targetId: string;
       previousColor: string | null;
       color: string | null;
+      undo: BridgeUndoCommand;
+    }
+  | {
+      kind: "command";
+      command: "set-shape-stroke";
+      targetId: string;
+      previousStroke: string | null;
+      previousStrokeWidth: number | null;
+      stroke: string | null;
+      strokeWidth: number | null;
       undo: BridgeUndoCommand;
     }
   | {
@@ -696,6 +720,12 @@ function isBridgeCommand(value: unknown): value is BridgeCommand {
     return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
       (value.color === null || isShapeColor(value.color));
   }
+  if (value.command === "set-shape-stroke") {
+    return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
+      (value.stroke === undefined || value.stroke === null || isShapeColor(value.stroke)) &&
+      (value.strokeWidth === undefined || value.strokeWidth === null ||
+        (isFiniteNumber(value.strokeWidth) && value.strokeWidth >= 0 && value.strokeWidth <= 100));
+  }
   if (value.command === "set-shape-glass") {
     return isValidString(value.targetId, { maxLength: MAX_ELEMENT_ID_LENGTH }) &&
       (value.level === null || (isFiniteNumber(value.level) && value.level >= 0 && value.level <= 100));
@@ -811,6 +841,16 @@ function isCommandAck(value: unknown): value is BridgeCommandAck {
       isRecord(value.undo) &&
       isBridgeCommand(value.undo) &&
       value.undo.command === "set-shape-fill";
+  }
+  if (value.command === "set-shape-stroke") {
+    const widthOk = (v: unknown) => v === null || (isFiniteNumber(v) && v >= 0 && v <= 100);
+    return (value.previousStroke === null || isShapeColor(value.previousStroke)) &&
+      widthOk(value.previousStrokeWidth) &&
+      (value.stroke === null || isShapeColor(value.stroke)) &&
+      widthOk(value.strokeWidth) &&
+      isRecord(value.undo) &&
+      isBridgeCommand(value.undo) &&
+      value.undo.command === "set-shape-stroke";
   }
   if (value.command === "set-shape-glass") {
     return (value.previousLevel === null || (isFiniteNumber(value.previousLevel) && value.previousLevel >= 0 && value.previousLevel <= 100)) &&

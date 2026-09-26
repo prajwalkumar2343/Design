@@ -402,6 +402,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 const GLASS_VECTOR_KINDS = new Set(["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"]);
 
+/** Shape kinds whose geometry child carries fill="none" — the stroke is their only paint. */
+const STROKE_ONLY_VECTOR_KINDS = new Set(["line", "arrow", "path"]);
+
 const GLASS_STYLE_PROPERTIES = ["backdrop-filter", "background", "box-shadow"] as const;
 
 type GlassSurfaceStyles = Record<(typeof GLASS_STYLE_PROPERTIES)[number], string | null>;
@@ -421,10 +424,18 @@ function glassStylesEqual(a: GlassSurfaceStyles, b: GlassSurfaceStyles): boolean
   return GLASS_STYLE_PROPERTIES.every((property) => a[property] === b[property]);
 }
 
-/** Created SVG shapes paint through their geometry child, not CSS backgrounds. */
-function isCreatedVector(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
-  const kind = entry.inspection?.attributes["data-design-tool-kind"];
-  return kind !== undefined && GLASS_VECTOR_KINDS.has(kind);
+/**
+ * Resolves a created shape's kind from the live inspection, falling back to
+ * the node entity's attributes so edits landing before the first inspection
+ * still route to the shape commands. Returns undefined for non-vectors.
+ */
+function createdVectorKind(
+  entry: { target: BridgeElementTarget; inspection: BridgeInspection | null },
+  nodes?: Record<string, NodeEntity>,
+): string | undefined {
+  const kind = entry.inspection?.attributes["data-design-tool-kind"]
+    ?? nodes?.[entry.target.elementId]?.attributes?.["data-design-tool-kind"];
+  return kind !== undefined && GLASS_VECTOR_KINDS.has(kind) ? kind : undefined;
 }
 
 /** Editor-created layers take the dedicated shape commands; foreign content cannot. */
@@ -3329,7 +3340,9 @@ export function CanvasSurface({
 
   type ShapeEffectAction =
     | { frameId: string; targetId: string; kind: "glass"; level: number | null }
-    | { frameId: string; targetId: string; kind: "fill"; color: string | null };
+    | { frameId: string; targetId: string; kind: "fill"; color: string | null }
+    | { frameId: string; targetId: string; kind: "stroke"; stroke?: string | null; strokeWidth?: number | null }
+    | { frameId: string; targetId: string; kind: "radius"; radius: number };
 
   // Shape effects target the SVG geometry itself, so they run as dedicated
   // bridge commands with their own undoable transaction.
@@ -3348,11 +3361,19 @@ export function CanvasSurface({
           if (!controller) continue;
           const ack = action.kind === "glass"
             ? await controller.setShapeGlass({ command: "set-shape-glass", targetId: action.targetId, level: action.level })
-            : await controller.setShapeFill({ command: "set-shape-fill", targetId: action.targetId, color: action.color });
+            : action.kind === "fill"
+              ? await controller.setShapeFill({ command: "set-shape-fill", targetId: action.targetId, color: action.color })
+              : action.kind === "radius"
+                ? await controller.setShapeRadius({ command: "set-shape-radius", targetId: action.targetId, radius: action.radius })
+                : await controller.setShapeStroke({ command: "set-shape-stroke", targetId: action.targetId, stroke: action.stroke, strokeWidth: action.strokeWidth });
           if (!("undo" in ack)) throw new Error("shape acknowledgement invalid");
           applied.push({ frameId: action.frameId, undo: ack.undo, redo: action.kind === "glass"
             ? { command: "set-shape-glass", targetId: action.targetId, level: action.level }
-            : { command: "set-shape-fill", targetId: action.targetId, color: action.color } });
+            : action.kind === "fill"
+              ? { command: "set-shape-fill", targetId: action.targetId, color: action.color }
+              : action.kind === "radius"
+                ? { command: "set-shape-radius", targetId: action.targetId, radius: action.radius }
+                : { command: "set-shape-stroke", targetId: action.targetId, stroke: action.stroke, strokeWidth: action.strokeWidth } });
         }
       } catch {
         for (const appliedAction of [...applied].reverse()) {
@@ -3361,6 +3382,8 @@ export function CanvasSurface({
           if (!controller) continue;
           if (undo.command === "set-shape-glass") await controller.setShapeGlass(undo).catch(() => undefined);
           else if (undo.command === "set-shape-fill") await controller.setShapeFill(undo).catch(() => undefined);
+          else if (undo.command === "set-shape-stroke") await controller.setShapeStroke(undo).catch(() => undefined);
+          else if (undo.command === "set-shape-radius") await controller.setShapeRadius(undo).catch(() => undefined);
         }
         if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
         return;
@@ -3376,6 +3399,8 @@ export function CanvasSurface({
           const next = direction === "undo" ? undo : redo;
           if (next.command === "set-shape-glass") return controller.setShapeGlass(next);
           if (next.command === "set-shape-fill") return controller.setShapeFill(next);
+          if (next.command === "set-shape-stroke") return controller.setShapeStroke(next);
+          if (next.command === "set-shape-radius") return controller.setShapeRadius(next);
           return undefined;
         });
         void Promise.all(requests)
@@ -3454,21 +3479,57 @@ export function CanvasSurface({
       .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
 
     // SVG shapes paint through their geometry child, so fills route to the
-    // dedicated shape command instead of an invisible background style.
-    if (property === "background-color" || property === "background") {
-      const vectors = entries.filter((entry) => isCreatedVector(entry));
-      if (vectors.length > 0) {
-        void runBridgeShapeEdits(
-          vectors.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "fill" as const, color: value })),
-          "Change shape fill",
+    // dedicated shape commands instead of an invisible background style.
+    // Lines, arrows, and freehand paths carry fill="none" — their stroke is
+    // the only paint, so every color field on them drives the stroke. The
+    // "Border"/"Width" fields are the shape's stroke for all created vectors.
+    const kindOf = (entry: (typeof entries)[number]) => createdVectorKind(entry, state.nodes);
+    const toStyleChanges = (list: typeof entries) =>
+      list.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
+    if (property === "background-color" || property === "background" || property === "border-color") {
+      const shapeActions: ShapeEffectAction[] = [];
+      const others: typeof entries = [];
+      for (const entry of entries) {
+        const kind = kindOf(entry);
+        if (kind === undefined) {
+          others.push(entry);
+          continue;
+        }
+        shapeActions.push(
+          property === "border-color" || STROKE_ONLY_VECTOR_KINDS.has(kind)
+            ? { frameId: entry.frameId, targetId: entry.target.elementId, kind: "stroke", stroke: value }
+            : { frameId: entry.frameId, targetId: entry.target.elementId, kind: "fill", color: value },
         );
       }
-      const others = entries.filter((entry) => !isCreatedVector(entry));
+      if (shapeActions.length > 0) {
+        void runBridgeShapeEdits(
+          shapeActions,
+          property === "border-color" ? "Change shape stroke" : "Change shape fill",
+        );
+      }
       if (others.length > 0) {
-        const changes = others.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
-        void runBridgeStyleEdit(changes, `Change ${property}`);
+        void runBridgeStyleEdit(toStyleChanges(others), `Change ${property}`);
       }
       return;
+    }
+    if (property === "border-width" || property === "border-radius") {
+      const parsed = value === null ? null : Number.parseFloat(value);
+      const vectors = entries.filter((entry) =>
+        kindOf(entry) !== undefined &&
+        (property === "border-width" || kindOf(entry) === "rectangle"));
+      const others = entries.filter((entry) => !vectors.includes(entry));
+      if (vectors.length > 0 && (parsed === null || Number.isFinite(parsed))) {
+        void runBridgeShapeEdits(
+          vectors.map((entry): ShapeEffectAction => property === "border-width"
+            ? { frameId: entry.frameId, targetId: entry.target.elementId, kind: "stroke", strokeWidth: parsed }
+            : { frameId: entry.frameId, targetId: entry.target.elementId, kind: "radius", radius: parsed ?? 0 }),
+          property === "border-width" ? "Change shape stroke width" : "Change corner radius",
+        );
+        if (others.length > 0) {
+          void runBridgeStyleEdit(toStyleChanges(others), `Change ${property}`);
+        }
+        return;
+      }
     }
     const changes = entries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
     void runBridgeStyleEdit(changes, `Change ${property}`);

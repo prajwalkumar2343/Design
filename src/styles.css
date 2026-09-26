@@ -1537,7 +1537,7 @@ button:focus-visible,
 }
 
 .node-resize-handle {
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) rotate(var(--unrotate, 0deg));
   cursor: nwse-resize;
 }
 
@@ -1565,19 +1565,19 @@ button:focus-visible,
 
 .node-resize-handle-nw { left: 0; top: 0; }
 .node-resize-handle-n { top: 0; }
-.node-resize-handle-ne { right: 0; top: 0; transform: translate(50%, -50%); }
+.node-resize-handle-ne { right: 0; top: 0; transform: translate(50%, -50%) rotate(var(--unrotate, 0deg)); }
 .node-resize-handle-e {
   right: 0;
-  transform: translate(50%, -50%);
+  transform: translate(50%, -50%) rotate(var(--unrotate, 0deg));
 }
-.node-resize-handle-se { right: 0; bottom: 0; transform: translate(50%, 50%); }
-.node-resize-handle-s { bottom: 0; transform: translate(-50%, 50%); }
-.node-resize-handle-sw { left: 0; bottom: 0; transform: translate(-50%, 50%); }
+.node-resize-handle-se { right: 0; bottom: 0; transform: translate(50%, 50%) rotate(var(--unrotate, 0deg)); }
+.node-resize-handle-s { bottom: 0; transform: translate(-50%, 50%) rotate(var(--unrotate, 0deg)); }
+.node-resize-handle-sw { left: 0; bottom: 0; transform: translate(-50%, 50%) rotate(var(--unrotate, 0deg)); }
 .node-resize-handle-w { left: 0; }
 
 .node-rotation-handle {
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) rotate(var(--unrotate, 0deg));
   cursor: grab;
 }
 

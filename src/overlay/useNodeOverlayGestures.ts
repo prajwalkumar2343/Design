@@ -198,18 +198,21 @@ function mapCanonicalBounds(canonical: Rect, before: Rect, after: Rect): Rect {
 function gestureOverlayBox(
   change: OverlayStyleChange,
   measured: Rect | undefined,
-): Pick<OverlayNodeTarget, "bounds" | "rotation"> {
+): Pick<OverlayNodeTarget, "bounds" | "rotation" | "canonicalBounds"> {
+  // Patched targets carry the canonical-space rect in `bounds`, so the
+  // target's stale `canonicalBounds` must not shadow it when painted.
   if (change.canonical && !measured) {
-    return { bounds: change.nextBounds, rotation: change.rotation };
+    return { bounds: change.nextBounds, canonicalBounds: undefined, rotation: change.rotation };
   }
   const bounds = measured ?? change.nextBounds;
   if (change.target.canonicalBounds) {
     return {
       bounds: mapCanonicalBounds(change.target.canonicalBounds, change.target.bounds, bounds),
+      canonicalBounds: undefined,
       rotation: change.rotation,
     };
   }
-  return { bounds, rotation: 0 };
+  return { bounds, canonicalBounds: undefined, rotation: 0 };
 }
 
 function hasOverlayStyleChanges(changes: readonly OverlayStyleChange[]): boolean {

@@ -96,6 +96,42 @@ describe("NodeOverlayLayer painting", () => {
     expect(outline.style.transform).toBe("rotate(30deg)");
   });
 
+  it("hugs a rotated target with the selection box instead of the loose AABB", () => {
+    renderLayer({
+      selectedTargets: [
+        target({
+          rotation: 30,
+          bounds: { x: 0, y: 0, width: 99, height: 99 },
+          canonicalBounds: { x: -0.5, y: 29.5, width: 100, height: 40 },
+        }),
+      ],
+    });
+    const box = screen.getByTestId("node-selection-box") as HTMLElement;
+    expect(box.style.left).toBe("-0.5px");
+    expect(box.style.top).toBe("29.5px");
+    expect(box.style.width).toBe("100px");
+    expect(box.style.height).toBe("40px");
+    expect(box.style.transform).toBe("rotate(30deg)");
+  });
+
+  it("keeps the loose AABB box for multi-target selections", () => {
+    renderLayer({
+      selectedTargets: [
+        target({
+          nodeId: "a",
+          rotation: 30,
+          bounds: { x: 0, y: 0, width: 99, height: 99 },
+          canonicalBounds: { x: -0.5, y: 29.5, width: 100, height: 40 },
+        }),
+        target({ nodeId: "b", bounds: { x: 100, y: 0, width: 40, height: 40 } }),
+      ],
+    });
+    const box = screen.getByTestId("node-selection-box") as HTMLElement;
+    expect(box.style.left).toBe("0px");
+    expect(box.style.width).toBe("140px");
+    expect(box.style.transform).toBe("");
+  });
+
   it("renders alignment guides at their world positions", () => {
     renderLayer({ guides: [{ axis: "x", value: 128 }, { axis: "y", value: -40 }] });
     expect((screen.getByTestId("alignment-guide-x-0") as HTMLElement).style.left).toBe("128px");
@@ -106,6 +142,31 @@ describe("NodeOverlayLayer painting", () => {
     renderLayer({ selectedTargets: [target({ locked: true })] });
     expect(screen.queryByTestId("node-selection-box")).toBeNull();
     expect(screen.getByTestId("node-selection-outline-node-1")).toBeTruthy();
+  });
+
+  it("suppresses the interactive box for structural-only selections", () => {
+    renderLayer({
+      selectedTargets: [
+        target({ nodeId: "body", tagName: "body", bounds: { x: 0, y: 0, width: 1600, height: 2400 } }),
+      ],
+    });
+    expect(screen.queryByTestId("node-selection-box")).toBeNull();
+    expect(screen.queryByTestId("node-rotation-handle")).toBeNull();
+    expect(screen.getByTestId("node-selection-outline-body")).toBeTruthy();
+  });
+
+  it("frames the selection box around movable targets only when a structural node is selected", () => {
+    renderLayer({
+      selectedTargets: [
+        target({ nodeId: "body", tagName: "body", bounds: { x: -200, y: -200, width: 2000, height: 3000 } }),
+        target({ nodeId: "card", bounds: { x: 40, y: 60, width: 120, height: 80 } }),
+      ],
+    });
+    const box = screen.getByTestId("node-selection-box") as HTMLElement;
+    expect(box.style.left).toBe("40px");
+    expect(box.style.top).toBe("60px");
+    expect(box.style.width).toBe("120px");
+    expect(box.style.height).toBe("80px");
   });
 
   it("renders no selection box when not interactive", () => {
@@ -187,6 +248,26 @@ describe("NodeOverlayLayer gestures", () => {
     const [gesture] = onGestureStart.mock.calls[0] as [NodeGestureStart, unknown];
     expect(gesture.targetIds).toEqual(["frame-1:free-node"]);
     expect(gesture.targets).toEqual([free]);
+  });
+
+  it("excludes structural targets from the gesture payload", () => {
+    const body = target({ nodeId: "body", tagName: "body", bounds: { x: 0, y: 0, width: 1600, height: 2400 } });
+    const free = target({ nodeId: "free-node" });
+    const { onGestureStart } = renderLayer({ selectedTargets: [body, free] });
+    fireEvent.pointerDown(screen.getByTestId("node-selection-box"), {
+      button: 0, pointerId: 1, clientX: 0, clientY: 0,
+    });
+    const [gesture] = onGestureStart.mock.calls[0] as [NodeGestureStart, unknown];
+    expect(gesture.targetIds).toEqual(["frame-1:free-node"]);
+    expect(gesture.targets).toEqual([free]);
+  });
+
+  it.each(["html", "head", "body"])("never starts a gesture on %s", (tagName) => {
+    const { props } = renderLayer({
+      selectedTargets: [target({ tagName, bounds: { x: 0, y: 0, width: 1600, height: 2400 } })],
+    });
+    expect(screen.queryByTestId("node-selection-box")).toBeNull();
+    expect(props.onGestureStart).not.toHaveBeenCalled();
   });
 
   it("ignores secondary buttons and multi-click presses", () => {

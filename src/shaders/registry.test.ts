@@ -38,6 +38,14 @@ describe("Paper Shader registry", () => {
       loadPaperShader("unknown-effect" as never),
     ).rejects.toBeInstanceOf(UnsupportedPaperShaderError);
   });
+
+  it("shares one in-flight load across concurrent callers", async () => {
+    const [first, second] = await Promise.all([
+      loadPaperShader("waves"),
+      loadPaperShader("waves"),
+    ]);
+    expect(first).toBe(second);
+  });
 });
 
 describe("detectPaperShaderSupport", () => {

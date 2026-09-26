@@ -11,26 +11,32 @@ describe("ShaderMenu gallery", () => {
   it("renders cards for every registered shader with zero live GL mounts at rest", () => {
     const { container } = renderMenu();
     // Every card exists…
-    expect(container.querySelectorAll(".shader-card").length).toBeGreaterThan(20);
+    const cards = container.querySelectorAll(".shader-card");
+    expect(cards.length).toBeGreaterThan(20);
     // …but none of them mount a live preview — the menu must not spend the
     // browser's WebGL context budget just by opening.
     expect(container.querySelectorAll(".shader-preview-mount")).toHaveLength(0);
     expect(container.querySelectorAll(".shader-preview-loading")).toHaveLength(0);
-    expect(container.querySelectorAll(".shader-card-thumb").length).toBe(
-      container.querySelectorAll(".shader-card").length,
-    );
+    // Every card rests on its real captured render, never the generic gradient.
+    const imgs = container.querySelectorAll(".shader-card-img");
+    expect(imgs.length).toBe(cards.length);
+    imgs.forEach((img) => expect(img.getAttribute("src")).toMatch(/shader-thumbs\/.+\.webp/));
+    expect(container.querySelectorAll(".shader-card-thumb")).toHaveLength(0);
   });
 
   it("mounts a live preview only for the hovered card and releases it on leave", async () => {
     const { container } = renderMenu();
     const card = screen.getByTestId("shader-card-ferro-tide");
     fireEvent.pointerEnter(card);
-    expect(container.querySelectorAll(".shader-preview-loading, .shader-preview-mount, .shader-preview-fallback").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".shader-preview-loading, .shader-preview-mount").length).toBeGreaterThan(0);
     await waitFor(() =>
-      // jsdom lacks WebGL2 — the preview resolves to the contained fallback.
-      expect(container.querySelectorAll(".shader-preview-fallback").length +
-        container.querySelectorAll(".shader-preview-mount").length).toBeGreaterThan(0),
+      // The loader resolves — to a mounted preview, or to nothing when jsdom's
+      // missing WebGL2 makes the load fail. Either way the real thumbnail is
+      // never covered by a fallback overlay.
+      expect(container.querySelectorAll(".shader-preview-loading")).toHaveLength(0),
     );
+    expect(container.querySelectorAll(".shader-preview-fallback")).toHaveLength(0);
+    expect(card.querySelector(".shader-card-img")).toBeTruthy();
     fireEvent.pointerLeave(card);
     await waitFor(() =>
       expect(container.querySelectorAll(".shader-preview-loading, .shader-preview-mount")).toHaveLength(0),
@@ -41,7 +47,7 @@ describe("ShaderMenu gallery", () => {
     const { container } = renderMenu();
     fireEvent.pointerEnter(screen.getByTestId("shader-card-ferro-tide"));
     fireEvent.pointerEnter(screen.getByTestId("shader-card-warp"));
-    const liveNodes = container.querySelectorAll(".shader-preview-loading, .shader-preview-mount, .shader-preview-fallback");
+    const liveNodes = container.querySelectorAll(".shader-preview-loading, .shader-preview-mount");
     expect(liveNodes.length).toBeLessThanOrEqual(2);
   });
 });

@@ -42,6 +42,14 @@ describe("ShadersPanel", () => {
     expect(props.onSelectShaderElement).toHaveBeenCalledWith("shader-el-1");
   });
 
+  it("shows each placed shader's real captured thumbnail instead of a generic mark", () => {
+    const { container } = renderPanel();
+    const thumb = container.querySelector(".shader-element-thumb");
+    expect(thumb).toBeTruthy();
+    expect(thumb?.getAttribute("src")).toMatch(/shader-thumbs\/mesh-gradient\.webp/);
+    expect(container.querySelector(".shader-element-mark")).toBeNull();
+  });
+
   it("exposes every shader param once the editor loads", async () => {
     const utils = renderPanel();
     await expandEditor(utils);

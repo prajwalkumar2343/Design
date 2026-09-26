@@ -239,8 +239,28 @@ button:focus-visible,
   inset: 0;
   display: grid;
   place-items: center;
+  align-content: center;
+  gap: 7px;
   color: var(--ink-faint);
   font-size: 11px;
+}
+
+.shader-element-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  background: rgba(250, 250, 248, 0.85);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.shader-element-retry:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
 }
 
 .canvas-shader-element .shader-element-label {
@@ -1331,6 +1351,7 @@ button:focus-visible,
 .shader-element-head { display: flex; align-items: center; gap: 2px; padding: 3px 5px 3px 3px; }
 .shader-element-toggle { display: flex; flex: 1; align-items: center; gap: 6px; min-width: 0; height: 26px; padding: 0 5px 0 2px; border: 0; color: var(--ink); background: transparent; text-align: left; cursor: pointer; }
 .shader-element-toggle .shader-element-mark { flex: 0 0 auto; color: var(--selection); opacity: .75; }
+.shader-element-thumb { display: block; flex: 0 0 auto; width: 26px; height: 17px; border-radius: 3px; object-fit: cover; }
 .shader-element-name { flex: 1; min-width: 0; overflow: hidden; font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .shader-element-toggle small { flex: 0 0 auto; color: var(--ink-faint); font-size: 9.5px; }
 .shader-element-head .layer-action-button { opacity: 1; }
@@ -1429,7 +1450,8 @@ button:focus-visible,
 
 .properties-scroll { height: 100%; overflow: auto; padding: 17px 13px 18px; scrollbar-width: thin; }
 .selection-summary,.prototype-intro { display: flex; align-items: center; gap: 9px; margin-bottom: 14px; }
-.selection-summary-mark { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 8px; color: var(--selection); background: var(--selection-soft); }
+.selection-summary-mark { display: grid; place-items: center; width: 29px; height: 29px; border-radius: 8px; color: var(--selection); background: var(--selection-soft); overflow: hidden; }
+.selection-summary-thumb { display: block; width: 100%; height: 100%; object-fit: cover; }
 .selection-summary > span:last-child,.prototype-intro > span:last-child { display: grid; gap: 3px; min-width: 0; }.selection-summary strong,.prototype-intro strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.selection-summary small,.prototype-intro small { color: var(--ink-faint); font-size: 10px; }
 .property-inspecting { display: flex; align-items: center; gap: 6px; margin: -3px 0 12px; padding: 7px 8px; border-radius: 7px; color: var(--selection); background: var(--selection-soft); font-size: 10px; }
 .property-section { padding: 13px 0; border-top: 1px solid var(--line); }.property-section:first-of-type { border-top: 0; }.property-section-title { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--ink-soft); font-size: 10px; font-weight: 600; letter-spacing: .01em; }.property-section-title span { display: flex; align-items: center; gap: 6px; }
@@ -2168,8 +2190,7 @@ button:focus-visible,
   height: 100%;
 }
 
-.shader-preview-loading,
-.shader-preview-fallback {
+.shader-preview-loading {
   display: block;
   width: 100%;
   height: 100%;

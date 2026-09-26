@@ -461,4 +461,11 @@ describe("PropertiesPanel shader inspector", () => {
     expect(screen.getByText("Nothing selected")).toBeTruthy();
     expect(screen.queryByTestId("shader-panel-delete")).toBeNull();
   });
+
+  it("shows the shader's real captured thumbnail in the summary mark", () => {
+    const { container } = render(<PropertiesPanel {...shaderProps} />);
+    const thumb = container.querySelector(".selection-summary-thumb");
+    expect(thumb).toBeTruthy();
+    expect(thumb?.getAttribute("src")).toMatch(/shader-thumbs\/mesh-gradient\.webp/);
+  });
 });

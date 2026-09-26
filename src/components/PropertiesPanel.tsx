@@ -49,6 +49,7 @@ import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures
 import { elementProfile, mixedValue } from "./panel-model";
 import { ColorField } from "./ColorField";
 import { ShaderParamsEditor } from "./ShaderEditor";
+import { SHADER_THUMB_URLS } from "./ShaderMenu";
 import {
   clampShaderElementSize,
   getShaderDefinition,
@@ -935,6 +936,7 @@ function ShaderDesignPanel({
   onDeleteShaderElement,
 }: Pick<PropertiesPanelProps, "onUpdateShaderElement" | "onUpdateShaderParams" | "onDeleteShaderElement"> & { element: CanvasShaderElement }) {
   const label = getShaderDefinition(element.shaderId).label;
+  const thumb = SHADER_THUMB_URLS[element.shaderId];
   const radius = Math.min(element.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS, maxShaderElementRadius(element));
   const commitGeometry = (patch: (next: number) => Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height">>, raw: string) => {
     const next = numericValue(raw);
@@ -952,7 +954,7 @@ function ShaderDesignPanel({
   return (
     <>
       <div className="selection-summary">
-        <span className="selection-summary-mark"><Sparkles size={15} /></span>
+        <span className="selection-summary-mark">{thumb ? <img className="selection-summary-thumb" src={thumb} alt="" draggable={false} /> : <Sparkles size={15} />}</span>
         <span><strong>{label}</strong><small>Shader · {element.width}×{element.height}</small></span>
         <button
           className="shader-inspector-delete"

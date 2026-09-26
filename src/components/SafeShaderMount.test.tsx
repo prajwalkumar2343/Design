@@ -1,14 +1,15 @@
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useEffect } from "react";
 import { SafeShaderMount } from "./SafeShaderMount";
 
 function fakeCanvas(label: string): HTMLCanvasElement {
   const loseContext = vi.fn();
   const canvas = document.createElement("canvas");
   canvas.dataset.probe = label;
-  canvas.getContext = vi.fn(() => ({
-    getExtension: vi.fn(() => ({ loseContext })),
-  })) as unknown as HTMLCanvasElement["getContext"];
+  canvas.getContext = vi.fn((type: string) =>
+    type === "2d" ? null : { getExtension: vi.fn(() => ({ loseContext })) },
+  ) as unknown as HTMLCanvasElement["getContext"];
   (canvas as HTMLCanvasElement & { __loseContext: typeof loseContext }).__loseContext = loseContext;
   return canvas;
 }
@@ -62,5 +63,57 @@ describe("SafeShaderMount", () => {
 
     expect((first as HTMLCanvasElement & { __loseContext: () => unknown }).__loseContext).toHaveBeenCalledTimes(1);
     expect((second as HTMLCanvasElement & { __loseContext: () => unknown }).__loseContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("remounts the shader once a lost context is restored", async () => {
+    const canvas = fakeCanvas("lost-then-restored");
+    let mounts = 0;
+    function CountedShader() {
+      useEffect(() => {
+        mounts += 1;
+      }, []);
+      return <ShaderStub canvases={[canvas]} />;
+    }
+    render(<SafeShaderMount className="mount" component={CountedShader} />);
+    expect(mounts).toBe(1);
+
+    const lost = new Event("webglcontextlost", { cancelable: true });
+    await act(async () => {
+      canvas.dispatchEvent(lost);
+    });
+    expect(lost.defaultPrevented).toBe(true);
+    await act(async () => {
+      canvas.dispatchEvent(new Event("webglcontextrestored"));
+    });
+
+    await waitFor(() => expect(mounts).toBe(2));
+  });
+
+  it("remounts after a grace period when a lost context is never restored", async () => {
+    vi.useFakeTimers();
+    try {
+      const canvas = fakeCanvas("lost-forever");
+      let mounts = 0;
+      function CountedShader() {
+        useEffect(() => {
+          mounts += 1;
+        }, []);
+        return <ShaderStub canvases={[canvas]} />;
+      }
+      render(<SafeShaderMount className="mount" component={CountedShader} />);
+      expect(mounts).toBe(1);
+
+      await act(async () => {
+        canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+      });
+      expect(mounts).toBe(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2500);
+      });
+      expect(mounts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

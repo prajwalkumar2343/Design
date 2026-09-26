@@ -1,7 +1,17 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShaderElementView } from "./ShaderElementView";
+import { detectPaperShaderSupport, loadPaperShader } from "../shaders";
 import type { CanvasShaderElement } from "../shaders/canvas-model";
+
+vi.mock("../shaders", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("../shaders")>();
+  return {
+    ...mod,
+    loadPaperShader: vi.fn(mod.loadPaperShader),
+    detectPaperShaderSupport: vi.fn(mod.detectPaperShaderSupport),
+  };
+});
 
 const element: CanvasShaderElement = {
   id: "shader-el-1",
@@ -103,5 +113,67 @@ describe("ShaderElementView", () => {
     expect(el.style.borderRadius).toBe("40px");
     const stage = el.querySelector<HTMLElement>(".shader-element-stage");
     expect(stage?.style.borderRadius).toBe("37px");
+  });
+
+  it("reports a module load failure honestly instead of blaming WebGL2", async () => {
+    vi.mocked(loadPaperShader).mockRejectedValueOnce(new Error("chunk 404"));
+    renderElement();
+    await waitFor(() =>
+      expect(screen.getByText("Shader failed to load")).toBeTruthy(),
+    );
+    expect(screen.queryByText("WebGL2 unavailable")).toBeNull();
+  });
+
+  it("recovers from a transient load failure when retry is clicked", async () => {
+    vi.mocked(loadPaperShader).mockRejectedValueOnce(new Error("chunk 404"));
+    renderElement();
+    await waitFor(() =>
+      expect(screen.getByText("Shader failed to load")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("shader-element-retry"));
+    await waitFor(() =>
+      expect(screen.queryByText("Shader failed to load")).toBeNull(),
+    );
+    // The retry reached the real loader, which resolved Ferro Tide's module.
+    expect(vi.mocked(loadPaperShader).mock.calls.length).toBeGreaterThanOrEqual(2);
+    await waitFor(() =>
+      expect(screen.getByTestId("ferro-tide-fallback")).toBeTruthy(),
+    );
+  });
+
+  it("labels an unrecognized shader id as unknown with no retry", async () => {
+    renderElement({
+      element: { ...element, shaderId: "gone-shader" as never },
+    });
+    await waitFor(() =>
+      expect(screen.getByText("Unknown shader")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("shader-element-retry")).toBeNull();
+  });
+
+  it("reserves the WebGL2 message for a Paper shader that truly lacks support", async () => {
+    vi.mocked(detectPaperShaderSupport).mockReturnValueOnce({
+      supported: false,
+      reason: "webgl2-unavailable",
+    });
+    renderElement({
+      element: { ...element, shaderId: "mesh-gradient" },
+    });
+    await waitFor(() =>
+      expect(screen.getByText("WebGL2 unavailable")).toBeTruthy(),
+    );
+  });
+
+  it("does not gate custom shaders behind the WebGL2 probe", async () => {
+    vi.mocked(detectPaperShaderSupport).mockReturnValue({
+      supported: false,
+      reason: "webgl2-unavailable",
+    });
+    renderElement();
+    await waitFor(() =>
+      expect(screen.getByTestId("ferro-tide-fallback")).toBeTruthy(),
+    );
+    expect(screen.queryByText("WebGL2 unavailable")).toBeNull();
+    expect(vi.mocked(loadPaperShader)).toHaveBeenCalledWith("ferro-tide");
   });
 });

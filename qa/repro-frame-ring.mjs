@@ -28,10 +28,11 @@ if (sel.sel !== "true") {
 }
 console.log("desktop selected:", JSON.stringify(await info("desktop")));
 
-// Drag the selected desktop frame by its TOP EDGE (midpoint of top border)
+// Drag the selected desktop frame by its TOP EDGE (the ring band ends at the
+// frame edge — inside presses reach the document — so grab just outside it)
 const box = await page.locator('[data-frame-id="desktop"]').boundingBox();
 const ex = box.x + box.width / 2;
-const ey = box.y + 2;
+const ey = box.y - 4;
 const at = await page.evaluate(({ x, y }) => {
   const el = document.elementFromPoint(x, y);
   return el ? `${el.tagName}.${typeof el.className === "string" ? el.className : ""}` : null;

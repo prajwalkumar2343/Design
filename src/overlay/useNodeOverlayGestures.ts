@@ -267,12 +267,15 @@ export function useNodeOverlayGestures({
       if (Math.abs(change.rotation) > 0.01) return;
       // Ack bounds are measured inside the shifted body — normalize into the
       // canonical space stored targets use, since toOverlayTarget subtracts
-      // the live shift back out.
-      const shift = bodyOrigin
-        ? { x: -bodyOrigin.x, y: -bodyOrigin.y }
-        : editorStore.getState().frames[change.target.frameId]?.freeform
-          ? shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
-          : { x: 0, y: 0 };
+      // the live shift back out. Only freeform frames re-anchor <body>; on a
+      // regular document bodyOrigin reports the body margin/scroll offset,
+      // which the ack bounds already share with the stored targets.
+      const frame = editorStore.getState().frames[change.target.frameId];
+      const shift = frame?.freeform
+        ? bodyOrigin
+          ? { x: -bodyOrigin.x, y: -bodyOrigin.y }
+          : shiftRef.current.get(change.target.frameId) ?? { x: 0, y: 0 }
+        : { x: 0, y: 0 };
       const overlay = toOverlayTarget({
         frameId: change.target.frameId,
         target: {

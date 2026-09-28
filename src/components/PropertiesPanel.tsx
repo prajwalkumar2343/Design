@@ -91,6 +91,22 @@ function numericValue(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** A bare number (no unit) — CSS length fields treat this as px input. */
+function isBareNumber(value: string): boolean {
+  return /^\s*-?(\d+(\.\d+)?|\.\d+)\s*$/.test(value);
+}
+
+/** The px suffix only makes sense for unitless/empty/mixed values — a value
+ *  that already carries its own unit (px, %, auto…) must not show a second one. */
+function dimensionSuffix(value: string | null): string | undefined {
+  return value !== null && value !== "mixed" && !isBareNumber(value) ? undefined : "px";
+}
+
+/** Bare numbers commit as px; anything already carrying a unit/keyword passes through. */
+function dimensionCommitValue(value: string): string {
+  return isBareNumber(value) ? `${value.trim()}px` : value;
+}
+
 function PropertyField({
   label,
   value,
@@ -538,8 +554,8 @@ function PositionSizeSection({
       <div className="property-grid">
         <PropertyField label="X" value={position.x} type="number" suffix="px" testId="property-node-x" onCommit={(value) => commitPosition("x", value)} />
         <PropertyField label="Y" value={position.y} type="number" suffix="px" testId="property-node-y" onCommit={(value) => commitPosition("y", value)} />
-        <PropertyField label="W" value={width} type="text" suffix="px" testId="property-node-width" onCommit={(value) => onEditNodeStyle("width", value)} />
-        {includeHeight ? <PropertyField label="H" value={height} type="text" suffix="px" testId="property-node-height" onCommit={(value) => onEditNodeStyle("height", value)} /> : null}
+        <PropertyField label="W" value={width} type="text" suffix={dimensionSuffix(width)} testId="property-node-width" onCommit={(value) => onEditNodeStyle("width", dimensionCommitValue(value))} />
+        {includeHeight ? <PropertyField label="H" value={height} type="text" suffix={dimensionSuffix(height)} testId="property-node-height" onCommit={(value) => onEditNodeStyle("height", dimensionCommitValue(value))} /> : null}
       </div>
     </PropertySection>
   );
@@ -602,7 +618,7 @@ function FillBorderSection({ entries, onEditNodeStyle, onApplyGlassEffect, token
           glassActive={entries.length > 0 && entries.every(entryHasGlass)}
           token={control("background-color", fill)}
         />
-        <div className="property-grid"><PropertyField label="Border" value={border} onCommit={(value) => onEditNodeStyle("border-color", value)} token={control("border-color", border)} /><PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={control("border-width", borderWidth)} /></div>
+        <div className="property-grid"><ColorField label="Border" value={border} onCommit={(value) => onEditNodeStyle("border-color", value)} token={control("border-color", border)} /><PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={control("border-width", borderWidth)} /></div>
         <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} token={control("border-radius", radius)} />
       </div>
     </PropertySection>

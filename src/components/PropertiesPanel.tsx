@@ -93,7 +93,7 @@ function numericValue(value: string): number | null {
 
 /** A bare number (no unit) — CSS length fields treat this as px input. */
 function isBareNumber(value: string): boolean {
-  return /^\s*-?\d+(\.\d+)?\s*$/.test(value);
+  return /^\s*-?(\d+(\.\d+)?|\.\d+)\s*$/.test(value);
 }
 
 /** The px suffix only makes sense for unitless/empty/mixed values — a value

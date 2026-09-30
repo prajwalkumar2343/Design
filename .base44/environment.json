@@ -1,0 +1,19 @@
+{
+  "previewPort": 3000,
+  "healthPath": "/",
+  "startCommand": "docker compose -f docker-compose.base44.yml up -d",
+  "secrets": [
+    {
+      "name": "VITE_OPENCODE_GO_API_KEY",
+      "description": "OpenCode Go API key from https://opencode.ai/auth (optional — powers AI features)"
+    },
+    {
+      "name": "VITE_CODEX_CHATGPT_API_KEY",
+      "description": "Codex/ChatGPT token from ~/.codex/auth.json (optional — powers AI features)"
+    },
+    {
+      "name": "VITE_GEMINI_API_KEY",
+      "description": "Google AI Gemini API key from https://aistudio.google.com/apikey (optional — powers AI features)"
+    }
+  ]
+}

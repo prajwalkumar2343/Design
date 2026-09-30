@@ -1,5 +1,18 @@
 # Project notes
 
+## Base44 dev environment
+
+- `docker-compose.base44.yml` runs the Vite dev server (`npm run dev`) on host
+  port 3000 (container port 5173) with the source bind-mounted and
+  `node_modules` in a named volume. Edits hot-reload without rebuilds.
+- No backend or database — this is a frontend-only Vite + React SPA.
+- LLM provider keys (`VITE_OPENCODE_GO_API_KEY`, `VITE_CODEX_CHATGPT_API_KEY`,
+  `VITE_GEMINI_API_KEY`) are **optional**; the app boots and renders the canvas
+  without them. They only power the AI/LLM features and are browser-injected via
+  Vite `import.meta.env` (see `.env.example`).
+- Start: `docker compose -f docker-compose.base44.yml up -d`
+- Verify: `curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/` → 200
+
 ## Commands
 
 - `npm run dev` — Vite dev server

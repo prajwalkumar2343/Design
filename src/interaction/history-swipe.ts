@@ -1,5 +1,3 @@
-const HORIZONTAL_SCROLLABLE_SELECTOR = ".sidebar-panel-content, .properties-scroll, .figma-lake-body, .figma-lake, .project-lake";
-
 const canScrollHorizontally = (element: Element | null): boolean => {
   let current: Element | null = element;
   while (current && current !== document.documentElement) {

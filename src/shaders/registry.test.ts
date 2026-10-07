@@ -7,6 +7,7 @@ import {
   detectPaperShaderSupport,
   getPaperShaderDefinition,
   getShaderDefinition,
+  importShaderModule,
   isCustomShaderId,
   isShaderId,
   loadPaperShader,
@@ -37,6 +38,59 @@ describe("Paper Shader registry", () => {
     await expect(
       loadPaperShader("unknown-effect" as never),
     ).rejects.toBeInstanceOf(UnsupportedPaperShaderError);
+  });
+
+  it("shares one in-flight load across concurrent callers", async () => {
+    const [first, second] = await Promise.all([
+      loadPaperShader("waves"),
+      loadPaperShader("waves"),
+    ]);
+    expect(first).toBe(second);
+  });
+});
+
+describe("importShaderModule", () => {
+  const entryModule = {
+    FerroTide: () => null,
+    FERRO_TIDE_MOODS: [{ name: "Abyss", params: {} }],
+  };
+  const isEntryModule = (module: unknown): module is typeof entryModule =>
+    !!module &&
+    (typeof module === "object" || typeof module === "function") &&
+    "FerroTide" in module &&
+    "FERRO_TIDE_MOODS" in module;
+
+  it("recovers by re-importing the failed entry URL", async () => {
+    const entryUrl = "https://app.example.test/assets/ferro-tide-abc.js";
+    const load = vi.fn<() => Promise<typeof entryModule>>().mockRejectedValueOnce(
+      new Error(`Failed to fetch dynamically imported module: ${entryUrl}`),
+    );
+    const importUrl = vi.fn<(url: string) => Promise<unknown>>(async () => entryModule);
+
+    const result = await importShaderModule(load, { importUrl, isEntryModule });
+
+    expect(result).toBe(entryModule);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(importUrl).toHaveBeenCalledTimes(1);
+    const retried = importUrl.mock.calls[0]![0];
+    expect(retried).toContain(entryUrl);
+    expect(retried).not.toBe(entryUrl);
+  });
+
+  it("rejects with the entry error when the failure names a nested dependency", async () => {
+    // FerroTide imports `ogl` — when that nested fetch fails, the error
+    // names the dependency URL. Importing it succeeds with ogl's exports,
+    // which must never be returned as the entry module.
+    const nestedUrl = "https://app.example.test/assets/ogl-dep-xyz.js";
+    const entryError = new Error(`Failed to fetch dynamically imported module: ${nestedUrl}`);
+    const load = vi.fn<() => Promise<typeof entryModule>>().mockRejectedValue(entryError);
+    const importUrl = vi.fn<(url: string) => Promise<unknown>>(async () => ({ createGeometry: () => ({}) }));
+
+    await expect(importShaderModule(load, { importUrl, isEntryModule })).rejects.toBe(entryError);
+    expect(load).toHaveBeenCalledTimes(1);
+    for (const [url] of importUrl.mock.calls) {
+      expect(url).toContain(nestedUrl);
+    }
   });
 });
 

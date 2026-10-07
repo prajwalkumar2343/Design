@@ -17,7 +17,10 @@ export type EditorShortcutAction =
   | { type: "duplicate-selection" }
   | { type: "delete-selection" }
   | { type: "escape" }
-  | { type: "fit-all" };
+  | { type: "fit-all" }
+  | { type: "zoom-in" }
+  | { type: "zoom-out" }
+  | { type: "zoom-reset" };
 
 function hasCommandModifier(input: ShortcutInput): boolean {
   return Boolean(input.metaKey || input.ctrlKey);
@@ -45,6 +48,18 @@ export function resolveEditorShortcut(
   }
   if (commandModifier && !input.altKey && !input.shiftKey && key === "d") {
     return { type: "duplicate-selection" };
+  }
+
+  // Browser page-zoom keys are repurposed as canvas zoom so the site itself
+  // never rescales ("=" and "+" differ only by Shift; same for "-" and "_").
+  if (commandModifier && !input.altKey && (key === "=" || key === "+")) {
+    return { type: "zoom-in" };
+  }
+  if (commandModifier && !input.altKey && (key === "-" || key === "_")) {
+    return { type: "zoom-out" };
+  }
+  if (commandModifier && !input.altKey && !input.shiftKey && key === "0") {
+    return { type: "zoom-reset" };
   }
 
   if (commandModifier || input.shiftKey || input.altKey) {

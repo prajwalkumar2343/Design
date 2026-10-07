@@ -133,7 +133,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       capabilities: [
         "hover", "select", "pointer-events", "snapshot", "inspect", "document", "set-inline-style", "set-text",
         "create-element", "delete-element", "duplicate-element", "set-shape-radius",
-        "set-shape-fill", "set-shape-glass", "inject-font-faces", "set-token-theme",
+        "set-shape-fill", "set-shape-stroke", "set-shape-glass", "inject-font-faces", "set-token-theme",
       ],
     });
   }
@@ -425,7 +425,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       const strokeWidth = strokeWidthAttr === null ? 2 : Math.max(0, Number(strokeWidthAttr) || 0);
       const radiusRaw = Number(element.getAttribute("data-design-tool-radius") || 0) || 0;
       const inset = Math.max(0, strokeWidth / 2);
-      const child = element.querySelector("rect,ellipse,line,polyline,polygon,path");
+      const child = shapeGeometryChild(element);
       let scaleX = 1;
       let scaleY = 1;
       if (oldW > 0 && oldH > 0 && !viewBoxMatches) {
@@ -1062,7 +1062,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   }
 
   function shapeGeometryChild(element) {
-    return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
+    // Arrowheads live in <defs> ahead of the geometry — scoping to direct
+    // children keeps stroke/fill/glass edits on the shaft, not the marker tip.
+    return element.querySelector(":scope > rect,:scope > ellipse,:scope > circle,:scope > line,:scope > polyline,:scope > polygon,:scope > path");
   }
 
   function rememberOriginalFill(element, child) {
@@ -1087,6 +1089,87 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       child.setAttribute("fill", color);
     }
     element.setAttribute("data-design-tool-fill", color);
+  }
+
+  function rememberOriginalStroke(element, child) {
+    if (!element.hasAttribute("data-design-tool-original-stroke")) {
+      element.setAttribute("data-design-tool-original-stroke", child.getAttribute("stroke") || "#222222");
+    }
+    if (!element.hasAttribute("data-design-tool-original-stroke-width")) {
+      element.setAttribute("data-design-tool-original-stroke-width", child.getAttribute("stroke-width") || "0");
+    }
+  }
+
+  // Widening a stroke shifts its painted edge outward from the geometry, so
+  // rect/ellipse children re-inset against the live viewBox to keep the
+  // outline inside the element box (same math as createSvgChild).
+  function insetStrokeGeometry(element, child, strokeWidth) {
+    const vb = /^0 0 ([\\d.]+) ([\\d.]+)$/.exec((element.getAttribute("viewBox") || "").trim());
+    if (!vb) return;
+    const W = Number(vb[1]);
+    const H = Number(vb[2]);
+    if (!Number.isFinite(W) || !Number.isFinite(H) || W < 1 || H < 1) return;
+    const inset = Math.max(0, strokeWidth / 2);
+    const tag = (child.tagName || "").toLowerCase();
+    if (tag === "rect") {
+      const w = Math.max(1, W - strokeWidth);
+      const h = Math.max(1, H - strokeWidth);
+      child.setAttribute("x", String(inset));
+      child.setAttribute("y", String(inset));
+      child.setAttribute("width", String(w));
+      child.setAttribute("height", String(h));
+      const r = clampedRectRadius(Number(element.getAttribute("data-design-tool-radius") || 0), w, h);
+      if (r > 0) {
+        child.setAttribute("rx", String(r));
+        child.setAttribute("ry", String(r));
+      } else {
+        child.removeAttribute("rx");
+        child.removeAttribute("ry");
+      }
+    } else if (tag === "ellipse") {
+      child.setAttribute("cx", String(W / 2));
+      child.setAttribute("cy", String(H / 2));
+      child.setAttribute("rx", String(Math.max(0.5, W / 2 - inset)));
+      child.setAttribute("ry", String(Math.max(0.5, H / 2 - inset)));
+    }
+  }
+
+  function applyShapeStroke(element, stroke, strokeWidth) {
+    const child = shapeGeometryChild(element);
+    if (!child) throw { code: "shape-stroke-not-supported", message: "This shape has no paintable geometry" };
+    if (stroke === undefined && strokeWidth === undefined) return;
+    rememberOriginalStroke(element, child);
+    const kind = element.getAttribute("data-design-tool-kind") || "";
+    if (stroke !== undefined) {
+      const next = stroke === null
+        ? (element.getAttribute("data-design-tool-original-stroke") || "#222222")
+        : stroke;
+      if (/^\\s*var\\(/.test(next)) {
+        // var() only resolves in style context — same treatment as fills.
+        const fallback = child.getAttribute("stroke") || element.getAttribute("data-design-tool-original-stroke");
+        const linked = fallback ? next.replace(/\\)\\s*$/, ", " + fallback + ")") : next;
+        child.style.setProperty("stroke", linked, "important");
+      } else {
+        child.style.removeProperty("stroke");
+        child.setAttribute("stroke", next);
+      }
+      element.setAttribute("data-design-tool-stroke", next);
+      const tip = element.querySelector("marker path");
+      if (tip) tip.setAttribute("fill", /^\\s*var\\(/.test(next) ? (child.getAttribute("stroke") || "#222222") : next);
+    }
+    if (strokeWidth !== undefined) {
+      const originalWidth = Number(element.getAttribute("data-design-tool-original-stroke-width"));
+      const nextWidth = strokeWidth === null
+        ? (Number.isFinite(originalWidth) ? originalWidth : 0)
+        : Math.max(0, Math.min(100, strokeWidth));
+      element.setAttribute("data-design-tool-stroke-width", String(nextWidth));
+      child.setAttribute("stroke-width", String(nextWidth));
+      insetStrokeGeometry(element, child, nextWidth);
+      if (kind === "arrow") {
+        if (nextWidth > 0) child.setAttribute("marker-end", "url(#design-tool-arrowhead)");
+        else child.removeAttribute("marker-end");
+      }
+    }
   }
 
   function applyVectorGlass(element, level) {
@@ -1491,16 +1574,20 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   // Serializes the live document for persistence: the parent's srcDoc only
   // knows the markup the document started with, so edits that exist only as
   // DOM mutations (moves, created elements, the freeform body shift) ride
-  // along here. Runtime-injected chrome — motion/theme/font style blocks and
-  // the text-edit marker — is stripped so the stored copy round-trips clean.
+  // along here. Runtime-injected chrome — the bridge script plus
+  // motion/theme/font style blocks and the text-edit marker — is stripped so
+  // the stored copy round-trips clean.
   function serializeDocument() {
     const root = document.documentElement;
     if (!root) return "";
     const clone = root.cloneNode(true);
     const tokenThemeAttr = "data-design-tool-" + "token-theme";
+    const runtimeAttr = "data-design-tool-" + "iframe-bridge";
+    const wireframeThemeAttr = "data-design-tool-" + "wireframe-theme";
     clone.querySelectorAll(
-      "style[data-design-tool-motion],style[" + FONT_FACES_ATTR + "],style[" + tokenThemeAttr + "]",
+      "style[data-design-tool-motion],style[" + FONT_FACES_ATTR + "],style[" + tokenThemeAttr + "],style[" + wireframeThemeAttr + "]",
     ).forEach(function (node) { node.remove(); });
+    clone.querySelectorAll("[" + runtimeAttr + "]").forEach(function (node) { node.remove(); });
     clone.querySelectorAll("[data-design-tool-editing]").forEach(function (node) {
       node.removeAttribute("data-design-tool-editing");
     });
@@ -1599,6 +1686,13 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       altKey: Boolean(event.altKey),
       metaKey: Boolean(event.metaKey),
       ctrlKey: Boolean(event.ctrlKey),
+      ...(typeof event.deltaY === "number" && isFiniteNumber(event.deltaY)
+        ? {
+            deltaX: isFiniteNumber(event.deltaX) ? event.deltaX : 0,
+            deltaY: event.deltaY,
+            deltaMode: isFiniteNumber(event.deltaMode) ? event.deltaMode : 0,
+          }
+        : {}),
     });
   }
 
@@ -1654,7 +1748,8 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     }
     const needsTarget = command.command === "set-inline-style" || command.command === "set-text" ||
       command.command === "start-text-edit" || command.command === "cancel-text-edit" || command.command === "commit-text-edit" ||
-      command.command === "set-shape-fill" || command.command === "set-shape-glass";
+      command.command === "set-shape-fill" || command.command === "set-shape-stroke" ||
+      command.command === "set-shape-glass";
     const element = needsTarget ? findElement(command.targetId) : null;
     if (needsTarget && !element) throw { code: "target-not-found", message: "The requested element no longer exists" };
 
@@ -1928,6 +2023,44 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
         undo: { command: "set-shape-fill", targetId: command.targetId, color: previousColor },
       };
     }
+    if (command.command === "set-shape-stroke") {
+      const stroke = command.stroke;
+      const strokeWidth = command.strokeWidth;
+      if (stroke !== undefined && stroke !== null &&
+        !(isSafeString(stroke, 128) && !/[;]|url\\s*\\(/i.test(stroke))) {
+        throw { code: "unsafe-shape-stroke", message: "The requested stroke color is not allowed" };
+      }
+      if (strokeWidth !== undefined && strokeWidth !== null &&
+        !(isFiniteNumber(strokeWidth) && strokeWidth >= 0 && strokeWidth <= 100)) {
+        throw { code: "invalid-stroke-width", message: "The stroke width must be between 0 and 100" };
+      }
+      if (!element || element.getAttribute("data-design-tool-created") !== "true") {
+        throw { code: "target-not-found", message: "The requested shape no longer exists" };
+      }
+      const previousStroke = element.getAttribute("data-design-tool-stroke") ||
+        element.getAttribute("data-design-tool-original-stroke") || null;
+      const previousWidthRaw = Number(element.getAttribute("data-design-tool-stroke-width"));
+      const previousStrokeWidth = Number.isFinite(previousWidthRaw) ? previousWidthRaw : null;
+      applyShapeStroke(element, stroke, strokeWidth);
+      return {
+        kind: "command",
+        command: "set-shape-stroke",
+        targetId: command.targetId,
+        previousStroke,
+        previousStrokeWidth,
+        stroke: element.getAttribute("data-design-tool-stroke") || null,
+        strokeWidth: (() => {
+          const applied = Number(element.getAttribute("data-design-tool-stroke-width"));
+          return Number.isFinite(applied) ? applied : null;
+        })(),
+        undo: {
+          command: "set-shape-stroke",
+          targetId: command.targetId,
+          stroke: previousStroke,
+          strokeWidth: previousStrokeWidth,
+        },
+      };
+    }
     if (command.command === "set-shape-glass") {
       const level = command.level;
       if (level !== null && !(isFiniteNumber(level) && level >= 0 && level <= 100)) {
@@ -2086,7 +2219,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     // Migrate legacy shapes: outline should scale with shape (remove non-scaling-stroke)
     try {
       document.querySelectorAll("[data-design-tool-created='true']").forEach(function(el) {
-        const child = el.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
+        const child = shapeGeometryChild(el);
         if (child && child.getAttribute("vector-effect") === "non-scaling-stroke") child.removeAttribute("vector-effect");
       });
     } catch {}
@@ -2111,6 +2244,11 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       if (element && beginTextEdit(element, event)) event.preventDefault();
     }, true);
     document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === "=" || event.key === "+" || event.key === "-" || event.key === "_" || event.key === "0")) {
+        // The browser's page zoom must not run while the iframe has focus —
+        // the forwarded keydown resolves to a canvas zoom on the parent.
+        event.preventDefault();
+      }
       const target = event.target instanceof Element ? describe(event.target) : null;
       if (activeTextEdit && activeTextEdit.element === event.target) {
         if (event.key === "Escape") {
@@ -2129,6 +2267,41 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     document.addEventListener("input", (event) => {
       const target = event.target instanceof Element ? describe(event.target) : null;
       sendEvent("input", event, target);
+    }, true);
+    // Pinch (ctrl/cmd+wheel) and Safari gesture events inside an iframe never
+    // reach the parent's handlers — cancel the page zoom locally and forward
+    // the deltas so the canvas camera zooms instead.
+    document.addEventListener("wheel", function (event) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      sendEvent("wheel", event, null);
+    }, { passive: false, capture: true });
+    var lastGestureScale = 0;
+    document.addEventListener("gesturestart", function (event) {
+      event.preventDefault();
+      lastGestureScale = typeof event.scale === "number" && event.scale > 0 ? event.scale : 1;
+    }, true);
+    document.addEventListener("gesturechange", function (event) {
+      event.preventDefault();
+      var scale = typeof event.scale === "number" ? event.scale : 0;
+      if (lastGestureScale > 0 && scale > 0) {
+        var delta = scale / lastGestureScale;
+        if (delta !== 1) {
+          sendEvent("wheel", {
+            clientX: event.clientX,
+            clientY: event.clientY,
+            deltaX: 0,
+            deltaY: -Math.log(delta) / 0.008,
+            deltaMode: 0,
+            ctrlKey: true,
+          }, null);
+        }
+        lastGestureScale = scale;
+      }
+    }, true);
+    document.addEventListener("gestureend", function (event) {
+      event.preventDefault();
+      lastGestureScale = 0;
     }, true);
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? describe(event.target) : null;

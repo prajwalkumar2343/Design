@@ -271,21 +271,97 @@ export type LoadedCustomShader<Id extends CustomShaderId = CustomShaderId> = {
   presets: readonly { name: string; params: { mood: string; interactive: boolean } }[];
 };
 
-/** Loads the shader implementation only when a consumer requests it. */
-export async function loadPaperShader<Id extends PaperShaderId>(
-  shaderId: Id,
-): Promise<LoadedPaperShader<Id>>;
-export async function loadPaperShader(
-  shaderId: CustomShaderId,
-): Promise<LoadedCustomShader>;
-export async function loadPaperShader(
-  shaderId: ShaderId,
-): Promise<LoadedPaperShader | LoadedCustomShader>;
-export async function loadPaperShader(
+/**
+ * Dynamic import failures are usually transient — a dev server re-optimizing
+ * its dep bundle, a service worker mid-update, a dropped chunk fetch — so a
+ * load is retried with a short backoff before surfacing.
+ */
+const SHADER_IMPORT_RETRY_DELAYS_MS = [250, 1200] as const;
+
+/**
+ * Browsers memoize a failed dynamic import() by resolved URL — re-running the
+ * same specifier hits the dead module-map entry without touching the network,
+ * which is why plain retries never recover. The failure message carries the
+ * URL ("Failed to fetch dynamically imported module: <url>" in Chromium,
+ * similar in Firefox); WebKit's message has no URL, so this returns null there.
+ */
+function failedModuleUrl(error: unknown): string | null {
+  const message = error instanceof Error ? error.message : String(error);
+  return /https?:\/\/\S+/.exec(message)?.[0] ?? null;
+}
+
+/**
+ * Re-imports a failed URL under a fresh module-map slot. A stale Vite `?v=`
+ * dep hash is dropped entirely — the dev server answers a hash-less dep URL
+ * with its current bundle (and re-transforms src modules, refreshing their
+ * own dep specifiers). In production the query is inert: the same static
+ * file is served, which is what a transient fetch failure needs.
+ */
+function cacheBustedModuleUrl(url: string, nonce: number): string {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete("v");
+    parsed.searchParams.set("t", `${Date.now()}-${nonce}`);
+    return parsed.toString();
+  } catch {
+    return url;
+  }
+}
+
+export interface ImportShaderModuleOptions<T> {
+  /** Re-imports a single URL. Injectable so tests can simulate CDN failures. */
+  importUrl?: (url: string) => Promise<unknown>;
+  /**
+   * Guards the retry path: the failure URL can name a nested dependency
+   * instead of the requested entry, and importing it succeeds with the
+   * wrong exports. Reject those so the entry failure surfaces.
+   */
+  isEntryModule?: (module: unknown) => module is T;
+}
+
+const defaultImportShaderModuleUrl = (url: string): Promise<unknown> =>
+  import(/* @vite-ignore */ url);
+
+export async function importShaderModule<T>(
+  load: () => Promise<T>,
+  options: ImportShaderModuleOptions<T> = {},
+): Promise<T> {
+  const importUrl = options.importUrl ?? defaultImportShaderModuleUrl;
+  const isEntryModule = options.isEntryModule;
+  let lastError: unknown = undefined;
+  let failedUrl: string | null = null;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      if (failedUrl === null) {
+        return await load();
+      }
+      const recovered: unknown = await importUrl(cacheBustedModuleUrl(failedUrl, attempt));
+      // A failed nested dependency (FerroTide's `ogl` import, for example)
+      // names the dependency, not the entry — returning it would hand the
+      // wrong exports to the shader loader as if the entry had loaded.
+      if (isEntryModule && !isEntryModule(recovered)) throw lastError;
+      return recovered as T;
+    } catch (error) {
+      lastError = error;
+      failedUrl ??= failedModuleUrl(error);
+      const delay = SHADER_IMPORT_RETRY_DELAYS_MS[attempt];
+      if (delay === undefined) throw lastError;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+async function loadShaderOnce(
   shaderId: ShaderId,
 ): Promise<LoadedPaperShader | LoadedCustomShader> {
   if (isCustomShaderId(shaderId)) {
-    const { FerroTide, FERRO_TIDE_MOODS } = await import("./ferro-tide");
+    const { FerroTide, FERRO_TIDE_MOODS } = await importShaderModule(() => import("./ferro-tide"), {
+      isEntryModule: (module): module is typeof import("./ferro-tide") =>
+        !!module &&
+        (typeof module === "object" || typeof module === "function") &&
+        "FerroTide" in module &&
+        "FERRO_TIDE_MOODS" in module,
+    });
     return {
       id: shaderId,
       definition: CUSTOM_SHADER_DEFINITIONS[shaderId],
@@ -297,14 +373,62 @@ export async function loadPaperShader(
     };
   }
   const definition = getPaperShaderDefinition(shaderId);
-  const shaderModule = await import("@paper-design/shaders-react");
+  const shaderModule = await importShaderModule(() => import("@paper-design/shaders-react"), {
+    isEntryModule: (module): module is PaperShadersModule =>
+      !!module &&
+      (typeof module === "object" || typeof module === "function") &&
+      definition.componentExport in module &&
+      definition.presetsExport in module,
+  });
+
+  const Component = shaderModule[definition.componentExport];
+  const presets = shaderModule[definition.presetsExport];
+  if (Component == null || presets == null) {
+    throw new Error(
+      `Shader module is missing exports for "${shaderId}" (${definition.componentExport}/${definition.presetsExport})`,
+    );
+  }
 
   return {
     id: shaderId,
     definition,
-    Component: shaderModule[definition.componentExport],
-    presets: shaderModule[definition.presetsExport],
+    Component,
+    presets,
   } as LoadedPaperShader;
+}
+
+/**
+ * Every consumer shares one in-flight load per shader id, so a canvas full of
+ * elements can't stampede the chunk endpoint. Failures evict themselves so
+ * the next request (or a UI retry) starts a fresh attempt.
+ */
+const loadedShaderCache = new Map<
+  ShaderId,
+  Promise<LoadedPaperShader | LoadedCustomShader>
+>();
+
+/** Loads the shader implementation only when a consumer requests it. */
+export function loadPaperShader<Id extends PaperShaderId>(
+  shaderId: Id,
+): Promise<LoadedPaperShader<Id>>;
+export function loadPaperShader(
+  shaderId: CustomShaderId,
+): Promise<LoadedCustomShader>;
+export function loadPaperShader(
+  shaderId: ShaderId,
+): Promise<LoadedPaperShader | LoadedCustomShader>;
+export function loadPaperShader(
+  shaderId: ShaderId,
+): Promise<LoadedPaperShader | LoadedCustomShader> {
+  const cached = loadedShaderCache.get(shaderId);
+  if (cached) return cached;
+
+  const pending = loadShaderOnce(shaderId).catch((error: unknown) => {
+    loadedShaderCache.delete(shaderId);
+    throw error;
+  });
+  loadedShaderCache.set(shaderId, pending);
+  return pending;
 }
 
 export type PaperShaderSupport =

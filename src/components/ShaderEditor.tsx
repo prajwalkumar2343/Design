@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { parseCssColor } from "../editor/effects";
 import {
   deriveShaderParamFields,
-  loadPaperShader,
   shaderParamLabel,
   type CanvasShaderElement,
   type ShaderParamField,
@@ -18,6 +17,7 @@ import {
   type ShaderPresetLike,
 } from "../shaders";
 import { ColorField, SwatchGrid } from "./ColorField";
+import { useLoadedShader } from "./useLoadedShader";
 
 const MAX_COLORS = 10;
 
@@ -426,30 +426,17 @@ export function ShaderParamsEditor({
   element: CanvasShaderElement;
   onUpdateParams?: (elementId: string, params: ShaderParams) => void;
 }) {
-  const [loaded, setLoaded] = useState<{
+  // The editor only reads preset metadata — no GL probe, so controls stay
+  // usable on machines where the preview itself can't render.
+  const { shader, failure, retry } = useLoadedShader(element.shaderId, { checkSupport: false });
+  const loaded = useMemo<{
     presets: readonly ShaderPresetLike[];
     fields: ShaderParamField[];
-  } | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    setLoaded(null);
-    loadPaperShader(element.shaderId)
-      .then((shader) => {
-        if (!alive) return;
-        const presets = shader.presets as unknown as readonly ShaderPresetLike[];
-        setLoaded({
-          presets,
-          fields: deriveShaderParamFields(element.shaderId, presets),
-        });
-      })
-      .catch(() => {
-        if (alive) setLoaded({ presets: [], fields: [] });
-      });
-    return () => {
-      alive = false;
-    };
-  }, [element.shaderId]);
+  } | null>(() => {
+    if (!shader) return null;
+    const presets = shader.presets as unknown as readonly ShaderPresetLike[];
+    return { presets, fields: deriveShaderParamFields(element.shaderId, presets) };
+  }, [shader, element.shaderId]);
 
   const defaults = useMemo(
     () => (loaded?.presets[0]?.params ?? {}) as ShaderParams,
@@ -485,6 +472,21 @@ export function ShaderParamsEditor({
   };
 
   if (!loaded) {
+    if (failure) {
+      return (
+        <div className="shader-element-editor">
+          <span className="shader-editor-hint">
+            {failure === "unknown" ? "Unknown shader." : "Shader controls failed to load."}
+          </span>
+          {failure !== "unknown" ? (
+            <button className="shader-reset-button" type="button" onClick={retry}>
+              <RotateCcw size={11} strokeWidth={2} />
+              Retry
+            </button>
+          ) : null}
+        </div>
+      );
+    }
     return <div className="shader-element-editor is-loading" aria-label="Loading shader controls" />;
   }
   if (loaded.fields.length === 0) {

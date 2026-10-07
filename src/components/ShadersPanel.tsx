@@ -11,6 +11,7 @@ import {
   type ShaderParams,
 } from "../shaders";
 import { ShaderParamsEditor } from "./ShaderEditor";
+import { SHADER_THUMB_URLS } from "./ShaderMenu";
 
 export interface ShadersPanelProps {
   shaderElements: CanvasShaderElement[];
@@ -68,6 +69,7 @@ function ShadersPanel({
             const isSelected = element.id === selectedShaderElementId;
             const isExpanded = expandedId === element.id;
             const label = getShaderDefinition(element.shaderId).label;
+            const thumb = SHADER_THUMB_URLS[element.shaderId];
             return (
               <div
                 className={`shader-element-item${isSelected ? " is-selected" : ""}`}
@@ -86,7 +88,11 @@ function ShadersPanel({
                     }}
                   >
                     {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                    <Sparkles size={11} className="shader-element-mark" />
+                    {thumb ? (
+                      <img className="shader-element-thumb" src={thumb} alt="" draggable={false} />
+                    ) : (
+                      <Sparkles size={11} className="shader-element-mark" />
+                    )}
                     <span className="shader-element-name">{label}</span>
                     <small>
                       {element.width}×{element.height}

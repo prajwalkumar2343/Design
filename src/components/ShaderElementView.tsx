@@ -1,12 +1,12 @@
-import { Trash2 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { RotateCcw, Trash2 } from "lucide-react";
+import { Component as ReactComponent, memo, useEffect, useMemo, useRef, type ComponentType, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { SafeShaderMount } from "./SafeShaderMount";
+import { useLoadedShader, type ShaderFailureKind } from "./useLoadedShader";
 import {
   clampShaderElementSize,
-  detectPaperShaderSupport,
+  getShaderDefinition,
   getShaderMountProps,
-  isCustomShaderId,
-  loadPaperShader,
+  isShaderId,
   SHADER_ELEMENT_RADIUS_INSET,
   type CanvasShaderElement,
 } from "../shaders";
@@ -28,34 +28,43 @@ interface ElementDragState {
   origin: { x: number; y: number; width: number; height: number };
 }
 
-type SizedShaderComponent = ComponentType<{ width?: string; height?: string }>;
+const FAILURE_MESSAGES: Record<ShaderFailureKind, string> = {
+  unsupported: "WebGL2 unavailable",
+  unknown: "Unknown shader",
+  "load-error": "Shader failed to load",
+};
 
-function useLoadedShaderComponent(shaderId: CanvasShaderElement["shaderId"]) {
-  const [Component, setComponent] = useState<SizedShaderComponent | null>(null);
-  const [failed, setFailed] = useState(false);
+/**
+ * A transient render crash (lost GL state, a bad param write) shouldn't
+ * brick the element forever: when the shader id, params, or load attempt
+ * changes, the boundary opens back up and the shader gets another mount.
+ */
+class ShaderElementBoundary extends ReactComponent<
+  { children: ReactNode; resetKey: string },
+  { failed: boolean }
+> {
+  override state = { failed: false };
 
-  useEffect(() => {
-    let alive = true;
-    setComponent(null);
-    setFailed(false);
-    loadPaperShader(shaderId)
-      .then((loaded) => {
-        if (!alive) return;
-        if (isCustomShaderId(shaderId) || detectPaperShaderSupport().supported) {
-          setComponent(() => loaded.Component as SizedShaderComponent);
-        } else {
-          setFailed(true);
-        }
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [shaderId]);
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
 
-  return { Component, failed };
+  override componentDidCatch(error: unknown) {
+    console.warn("Shader element crashed", error);
+  }
+
+  override componentDidUpdate(previous: { resetKey: string }) {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false });
+    }
+  }
+
+  override render() {
+    if (this.state.failed) {
+      return <div className="shader-element-unsupported">Shader failed to render</div>;
+    }
+    return this.props.children;
+  }
 }
 
 export const ShaderElementView = memo(function ShaderElementView({
@@ -70,20 +79,12 @@ export const ShaderElementView = memo(function ShaderElementView({
   const dragRef = useRef<ElementDragState | null>(null);
   const cameraRef = useRef(camera);
   cameraRef.current = camera;
-  const { Component, failed } = useLoadedShaderComponent(element.shaderId);
-  const [definitionLabel, setDefinitionLabel] = useState<string>(element.shaderId);
-
-  useEffect(() => {
-    let alive = true;
-    loadPaperShader(element.shaderId)
-      .then((loaded) => {
-        if (alive) setDefinitionLabel(loaded.definition.label);
-      })
-      .catch(() => undefined);
-    return () => {
-      alive = false;
-    };
-  }, [element.shaderId]);
+  const { shader, failure, retry, attempt } = useLoadedShader(element.shaderId);
+  const Component = shader?.Component as ComponentType<{ width?: string; height?: string }> | undefined;
+  // The registry knows the label synchronously — no module fetch needed.
+  const definitionLabel = isShaderId(element.shaderId)
+    ? getShaderDefinition(element.shaderId).label
+    : element.shaderId;
 
   // Clicking anywhere outside a selected shader element deselects it —
   // except clicks on canvas chrome (sidebars, inspector), which are edits,
@@ -176,13 +177,33 @@ export const ShaderElementView = memo(function ShaderElementView({
       ref={rootRef}
       style={style}
     >
-      <div aria-hidden="true" className="shader-element-stage" style={stageStyle}>
-        {failed ? (
-          <div className="shader-element-unsupported">WebGL2 unavailable</div>
+      <div className="shader-element-stage" style={stageStyle}>
+        {failure ? (
+          <div className="shader-element-unsupported">
+            <span>{FAILURE_MESSAGES[failure]}</span>
+            {failure !== "unknown" ? (
+              <button
+                aria-label={`Retry loading ${definitionLabel}`}
+                className="shader-element-retry"
+                data-testid="shader-element-retry"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  retry();
+                }}
+                onPointerDown={(event) => event.stopPropagation()}
+                type="button"
+              >
+                <RotateCcw size={10} strokeWidth={2} aria-hidden="true" />
+                Retry
+              </button>
+            ) : null}
+          </div>
         ) : Component ? (
-          <SafeShaderMount className="shader-element-mount" component={Component} componentProps={mountProps} />
+          <ShaderElementBoundary resetKey={`${element.shaderId}:${attempt}:${JSON.stringify(element.params ?? null)}`}>
+            <SafeShaderMount className="shader-element-mount" component={Component} componentProps={mountProps} />
+          </ShaderElementBoundary>
         ) : (
-          <div className="shader-element-loading" />
+          <div aria-hidden="true" className="shader-element-loading" />
         )}
       </div>
 

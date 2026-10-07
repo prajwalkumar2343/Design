@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BridgeInspection } from "../bridge/protocol";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
 import type { CanvasShaderElement } from "../shaders";
+import type { TokenStoreState } from "../tokens";
 import { PropertiesPanel } from "./PropertiesPanel";
 
 const inspection: BridgeInspection = {
@@ -159,6 +160,72 @@ describe("PropertiesPanel color field", () => {
     expect((screen.getByTestId("color-option-#e5484d") as HTMLButtonElement).className).toContain("is-active");
   });
 
+  it("binds the stroke for stroke-only shapes and routes border edits to it", () => {
+    const lineEntry: OverlayBridgeTargetState = {
+      frameId: "frame-1",
+      target: { ...inspection.target, elementId: "line-1", tagName: "svg", name: "Line" },
+      inspection: {
+        target: { ...inspection.target, elementId: "line-1", tagName: "svg", name: "Line" },
+        text: "",
+        attributes: {
+          "data-design-tool-kind": "line",
+          "data-design-tool-fill": "#d9d9d9",
+          "data-design-tool-stroke": "#222222",
+          "data-design-tool-stroke-width": "2",
+        },
+        inlineStyle: {},
+        computedStyle: { "border-color": "rgb(34, 34, 34)", "border-width": "0px" },
+      },
+    };
+    const onEditNodeStyle = vi.fn();
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ frameIds: ["frame-1"], nodeIds: ["line-1"], primaryFrameId: "frame-1", primaryNodeId: "line-1" }}
+        bridgeTargets={{ "frame-1:line-1": lineEntry }}
+        onEditNodeStyle={onEditNodeStyle}
+      />,
+    );
+    const strokeInput = screen.getByLabelText("Stroke") as HTMLInputElement;
+    expect(strokeInput.value).toBe("#222222");
+    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toBe("2px");
+    // A stroke-only shape's outline IS its stroke — the redundant Border and
+    // Radius rows stay hidden.
+    expect(screen.queryByLabelText("Border")).toBeNull();
+    expect(screen.queryByLabelText("Radius")).toBeNull();
+    fireEvent.click(screen.getByTestId("color-swatch-Stroke"));
+    fireEvent.click(screen.getByTestId("color-option-#e5484d"));
+    expect(onEditNodeStyle).toHaveBeenCalledWith("background-color", "#e5484d");
+  });
+
+  it("binds the Border field to the vector stroke attribute", () => {
+    const onEditNodeStyle = vi.fn();
+    const stroked: OverlayBridgeTargetState = {
+      ...entry,
+      inspection: {
+        ...inspection,
+        attributes: {
+          ...inspection.attributes,
+          "data-design-tool-stroke": "#222222",
+          "data-design-tool-stroke-width": "3",
+        },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        bridgeTargets={{ "frame-1:rect-1": stroked }}
+        onEditNodeStyle={onEditNodeStyle}
+      />,
+    );
+    const border = screen.getByLabelText("Border") as HTMLInputElement;
+    expect(border.value).toBe("#222222");
+    expect((screen.getByLabelText("Width") as HTMLInputElement).value).toBe("3px");
+    fireEvent.change(border, { target: { value: "#e5484d" } });
+    fireEvent.blur(border, { relatedTarget: document.body });
+    expect(onEditNodeStyle).toHaveBeenCalledWith("border-color", "#e5484d");
+  });
+
   it("applies the glass effect from the palette's Glass swatch instead of a fill", () => {
     const onApplyGlassEffect = vi.fn();
     const onEditNodeStyle = vi.fn();
@@ -216,6 +283,69 @@ const textProps = {
   selection: { ...baseProps.selection, nodeIds: ["text-1"], primaryNodeId: "text-1" },
   bridgeTargets: { "frame-1:text-1": textEntry },
 };
+
+describe("PropertiesPanel shape width/radius tokens", () => {
+  const tokens: TokenStoreState = {
+    sets: {
+      "set-1": {
+        id: "set-1",
+        name: "Core",
+        tokens: {
+          "stroke-md": { id: "stroke-md", name: "stroke.md", type: "spacing", value: "2px" },
+          "radius-md": { id: "radius-md", name: "radius.md", type: "radius", value: "8px" },
+        },
+      },
+    },
+    themes: { "theme-1": { id: "theme-1", name: "Default", setIds: ["set-1"] } },
+    activeThemeId: "theme-1",
+    revision: 1,
+  };
+
+  it("hides the Width and Radius token controls on created vectors", () => {
+    // A var() pick parses to NaN in the shape-command path and falls through
+    // to a wrapper style that never paints the geometry — offering the
+    // control promises a link that silently does nothing.
+    render(<PropertiesPanel {...baseProps} tokens={tokens} />);
+    expect(screen.getByLabelText("Width")).toBeTruthy();
+    expect(screen.getByLabelText("Radius")).toBeTruthy();
+    for (const testId of [
+      "token-picker-border-width",
+      "token-offsystem-border-width",
+      "token-hint-border-width",
+      "token-picker-border-radius",
+      "token-offsystem-border-radius",
+      "token-hint-border-radius",
+    ]) {
+      expect(screen.queryByTestId(testId)).toBeNull();
+    }
+  });
+
+  it("keeps the Width and Radius token controls on plain elements", () => {
+    const divEntry: OverlayBridgeTargetState = {
+      frameId: "frame-1",
+      target: { ...inspection.target, elementId: "box-1", tagName: "div", name: "Box" },
+      inspection: {
+        target: { ...inspection.target, elementId: "box-1", tagName: "div", name: "Box" },
+        text: "",
+        attributes: {},
+        inlineStyle: {},
+        computedStyle: { "border-width": "2px", "border-radius": "8px" },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ frameIds: ["frame-1"], nodeIds: ["box-1"], primaryFrameId: "frame-1", primaryNodeId: "box-1" }}
+        bridgeTargets={{ "frame-1:box-1": divEntry }}
+        tokens={tokens}
+      />,
+    );
+    // The controls exist on plain elements (unmatched raw values render
+    // the picker button).
+    expect(screen.getByTestId("token-picker-border-width")).toBeTruthy();
+    expect(screen.getByTestId("token-picker-border-radius")).toBeTruthy();
+  });
+});
 
 describe("PropertiesPanel font family picker", () => {
   it("lists the bundled catalog and commits a font stack", () => {
@@ -460,5 +590,12 @@ describe("PropertiesPanel shader inspector", () => {
     render(<PropertiesPanel {...shaderProps} selectedShaderElementId={null} />);
     expect(screen.getByText("Nothing selected")).toBeTruthy();
     expect(screen.queryByTestId("shader-panel-delete")).toBeNull();
+  });
+
+  it("shows the shader's real captured thumbnail in the summary mark", () => {
+    const { container } = render(<PropertiesPanel {...shaderProps} />);
+    const thumb = container.querySelector(".selection-summary-thumb");
+    expect(thumb).toBeTruthy();
+    expect(thumb?.getAttribute("src")).toMatch(/shader-thumbs\/mesh-gradient\.webp/);
   });
 });

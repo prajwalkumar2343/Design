@@ -152,7 +152,7 @@ export const FrameView = memo(function FrameView({
   }
   const bridgeSession = bridgeSessionRef.current;
   const transportRef = useRef<IframeBridgeTransport | null>(null);
-  const latestInspectionTargetRef = useRef<string | null>(null);
+  const latestInspectionTargetRef = useRef<{ hover: string | null; select: string | null }>({ hover: null, select: null });
   const [bridgeState, setBridgeState] = useState<BridgeViewState>({
     status: isLive ? "waiting" : "idle",
     hoveredElementId: null,
@@ -200,15 +200,18 @@ export const FrameView = memo(function FrameView({
     const iframe = iframeRef.current;
     let transport: IframeBridgeTransport;
     let snapshotRequestSequence = 0;
-    const inspectTarget = (target: BridgeElementTarget | null) => {
+    const isLatestInspectionTarget = (elementId: string) => {
+      const latest = latestInspectionTargetRef.current;
+      return latest.hover === elementId || latest.select === elementId;
+    };
+    const inspectTarget = (kind: "hover" | "select", target: BridgeElementTarget | null) => {
+      latestInspectionTargetRef.current = { ...latestInspectionTargetRef.current, [kind]: target?.elementId ?? null };
       if (!target) {
-        latestInspectionTargetRef.current = null;
         onBridgeInspection?.(frame.id, null);
         return;
       }
-      latestInspectionTargetRef.current = target.elementId;
       void transport.inspect(target.elementId).then((inspection) => {
-        if (latestInspectionTargetRef.current !== target.elementId) return;
+        if (!isLatestInspectionTarget(target.elementId)) return;
         setBridgeState((current) => ({
           ...current,
           inspectedTagName: inspection?.target.tagName ?? null,
@@ -216,7 +219,7 @@ export const FrameView = memo(function FrameView({
         }));
         onBridgeInspection?.(frame.id, inspection);
       }).catch((error: unknown) => {
-        if (latestInspectionTargetRef.current !== target.elementId) return;
+        if (!isLatestInspectionTarget(target.elementId)) return;
         setBridgeState((current) => ({
           ...current,
           status: "error",
@@ -261,7 +264,7 @@ export const FrameView = memo(function FrameView({
               : current.selectedElementId,
           }));
           onBridgeEvent?.(frame.id, message, iframe);
-          if (message.event === "hover" || message.event === "select") inspectTarget(message.target);
+          if (message.event === "hover" || message.event === "select") inspectTarget(message.event, message.target);
         },
         onMutatingCommand: () => onBridgeMutation?.(frame.id),
       },
@@ -296,6 +299,7 @@ export const FrameView = memo(function FrameView({
       duplicateElement: (command) => transport.duplicateElement(command),
       setShapeRadius: (command) => transport.setShapeRadius(command),
       setShapeFill: (command) => transport.setShapeFill(command),
+      setShapeStroke: (command) => transport.setShapeStroke(command),
       setShapeGlass: (command) => transport.setShapeGlass(command),
       pickElement: (command) => transport.pickElement(command),
       injectFontFaces: (command) => transport.injectFontFaces(command),
@@ -304,7 +308,7 @@ export const FrameView = memo(function FrameView({
     transport.attach();
 
     return () => {
-      latestInspectionTargetRef.current = null;
+      latestInspectionTargetRef.current = { hover: null, select: null };
       onBridgeController?.(frame.id, null);
       transport.destroy();
       if (transportRef.current === transport) transportRef.current = null;
@@ -519,10 +523,9 @@ export const FrameView = memo(function FrameView({
             </div>
           ) : null}
 
-          {/* The activation layer must cover any frame the creation layer
-              isn't — otherwise a space-pan press during creation mode would
-              fall through to the iframe. */}
-          {!(isCreationMode && isLive && !isPanTool) && (!isSelected || isPanTool) ? (
+          {/* Only paused frames and pan mode take the cover — a press inside
+              a live frame always reaches the document. */}
+          {!(isCreationMode && isLive && !isPanTool) && (!isLive || isPanTool) ? (
             <button
               className="frame-activation-layer"
               aria-label={isPanTool ? `Pan across ${frame.name}` : `Select ${frame.name}`}
@@ -534,7 +537,7 @@ export const FrameView = memo(function FrameView({
         </div>
       </div>
 
-      {isSelected && !isPanTool ? (
+      {!isPanTool ? (
         <div
           aria-hidden="true"
           className="frame-drag-ring"

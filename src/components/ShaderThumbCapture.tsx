@@ -1,6 +1,7 @@
-import { useEffect, useState, type ComponentType } from "react";
+import type { ComponentType } from "react";
 import { SafeShaderMount } from "./SafeShaderMount";
-import { SHADER_IDS, getShaderMountProps, isShaderId, loadPaperShader, type ShaderId } from "../shaders";
+import { useLoadedShader } from "./useLoadedShader";
+import { SHADER_IDS, getShaderMountProps, isShaderId, type ShaderId } from "../shaders";
 
 /** Matches the gallery card aspect (16:10) at 2x density for retina displays. */
 const THUMB_SIZE = { width: 384, height: 240 } as const;
@@ -28,21 +29,8 @@ export function ShaderThumbCapture({ id }: { id: string }) {
 }
 
 function ShaderThumbStage({ shaderId }: { shaderId: ShaderId }) {
-  const [Component, setComponent] = useState<ComponentType<{ width?: string; height?: string }> | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    loadPaperShader(shaderId)
-      .then((loaded) => {
-        if (alive) {
-          setComponent(() => loaded.Component as ComponentType<{ width?: string; height?: string }>);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [shaderId]);
+  const { shader } = useLoadedShader(shaderId);
+  const Component = shader?.Component as ComponentType<{ width?: string; height?: string }> | undefined;
 
   return (
     <div

@@ -240,6 +240,27 @@ describe("WireCanvas project codec", () => {
     expect(project.state.session.schemaVersion).toBe(1);
   });
 
+  it("restores the freeform flag on draw-* frames saved without it", () => {
+    const json = asProjectJson(createState(), (project) => {
+      const frame = project.state.frames.find((item: { id: string }) => item.id === "frame-a");
+      frame.id = "draw-1";
+      delete frame.freeform;
+      project.state.pages[0].frameIds = project.state.pages[0].frameIds.map((id: string) =>
+        id === "frame-a" ? "draw-1" : id);
+      const selection = project.state.selection;
+      selection.frameIds = selection.frameIds.map((id: string) => (id === "frame-a" ? "draw-1" : id));
+      if (selection.primaryFrameId === "frame-a") selection.primaryFrameId = "draw-1";
+      project.state.nodes[0].frameId = "draw-1";
+      project.state.nodes[0].id = "frm~draw-1~data:shape-1";
+      project.state.documents[0].rootNodeIds = project.state.documents[0].rootNodeIds.map((id: string) =>
+        id === "node-1" ? "frm~draw-1~data:shape-1" : id);
+    });
+
+    const parsed = parseWireCanvasProject(json);
+    expect(parsed.frames["draw-1"]!.freeform).toBe(true);
+    expect(parsed.frames["frame-b"]!.freeform).toBeUndefined();
+  });
+
   it("migrates legacy unscoped bridge node ids to frame-scoped ids", () => {
     // Files saved before frame-scoped ids carry data:/id:/path: node ids that
     // are only unique inside their frame's document. Loading rewrites them to

@@ -34,6 +34,13 @@ const spaFallbackOnMalformedUrl: Plugin = {
 export default defineConfig({
   appType: "spa",
   plugins: [react(), spaFallbackOnMalformedUrl, canvasAgentBridge()],
+  optimizeDeps: {
+    // Shader chunks load lazily at user-gesture time — if the optimizer
+    // discovers them mid-session it re-bundles .vite/deps and in-flight or
+    // subsequent dynamic imports land on stale hashes. Pinning them up front
+    // keeps every shader load on the bundle produced at server start.
+    include: ["@paper-design/shaders", "@paper-design/shaders-react", "ogl"],
+  },
   preview: {
     host: true,
   },

@@ -49,6 +49,7 @@ import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures
 import { elementProfile, mixedValue } from "./panel-model";
 import { ColorField } from "./ColorField";
 import { ShaderParamsEditor } from "./ShaderEditor";
+import { SHADER_THUMB_URLS } from "./ShaderMenu";
 import {
   clampShaderElementSize,
   getShaderDefinition,
@@ -571,18 +572,61 @@ function TypographySection({ entries, onEditNodeStyle, tokens }: Pick<Properties
   );
 }
 
-function FillBorderSection({ entries, onEditNodeStyle, onApplyGlassEffect, tokens }: Pick<PropertiesPanelProps, "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[]; onApplyGlassEffect?: (level: number) => void }) {
+const VECTOR_SHAPE_KINDS = new Set(["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"]);
+const STROKE_ONLY_SHAPE_KINDS = new Set(["line", "arrow", "path"]);
+
+/**
+ * A created vector's kind from the live inspection, falling back to the node
+ * entity's attributes so the fields read correctly before inspection lands.
+ */
+function vectorShapeKind(entry: OverlayBridgeTargetState, nodes: Record<string, NodeEntity>): string | undefined {
+  const kind = entry.inspection?.attributes["data-design-tool-kind"]
+    ?? nodes[entry.target.elementId]?.attributes?.["data-design-tool-kind"];
+  return typeof kind === "string" && VECTOR_SHAPE_KINDS.has(kind) ? kind : undefined;
+}
+
+function pixelValue(raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) ? `${parsed}px` : raw;
+}
+
+function FillBorderSection({ entries, nodes, onEditNodeStyle, onApplyGlassEffect, tokens }: Pick<PropertiesPanelProps, "nodes" | "onEditNodeStyle" | "tokens"> & { entries: OverlayBridgeTargetState[]; onApplyGlassEffect?: (level: number) => void }) {
+  const kindOf = (entry: OverlayBridgeTargetState) => vectorShapeKind(entry, nodes);
+  const strokeOnly = entries.length > 0 && entries.every((entry) => {
+    const kind = kindOf(entry);
+    return kind !== undefined && STROKE_ONLY_SHAPE_KINDS.has(kind);
+  });
   // Created vectors paint through `data-design-tool-fill` (the applied fill,
-  // which may be a `var(--token)` link), not a background style.
-  const fill = mixedValue(entries.map((entry) =>
-    entry.inspection?.attributes["data-design-tool-fill"]
-    ?? entry.inspection?.inlineStyle["background-color"]
-    ?? entry.inspection?.computedStyle["background-color"]
-    ?? "",
-  )) ?? styleValue(entries, "background");
-  const border = styleValue(entries, "border-color");
-  const borderWidth = styleValue(entries, "border-width");
-  const radius = styleValue(entries, "border-radius");
+  // which may be a `var(--token)` link), not a background style. Stroke-only
+  // shapes (line/arrow/path) carry fill="none" — their stroke is the paint.
+  const fill = mixedValue(entries.map((entry) => {
+    const kind = kindOf(entry);
+    if (kind !== undefined && STROKE_ONLY_SHAPE_KINDS.has(kind)) {
+      return entry.inspection?.attributes["data-design-tool-stroke"] ?? "";
+    }
+    return entry.inspection?.attributes["data-design-tool-fill"]
+      ?? entry.inspection?.inlineStyle["background-color"]
+      ?? entry.inspection?.computedStyle["background-color"]
+      ?? "";
+  })) ?? styleValue(entries, "background");
+  // A vector's outline is the geometry child's stroke — CSS border-color on
+  // the svg wrapper never paints, so the fields bind the stroke attributes.
+  const border = mixedValue(entries.map((entry) =>
+    kindOf(entry) !== undefined
+      ? entry.inspection?.attributes["data-design-tool-stroke"] ?? ""
+      : entry.inspection?.computedStyle["border-color"] ?? "",
+  )) ?? styleValue(entries, "border-color");
+  const borderWidth = mixedValue(entries.map((entry) =>
+    kindOf(entry) !== undefined
+      ? pixelValue(entry.inspection?.attributes["data-design-tool-stroke-width"]) ?? ""
+      : entry.inspection?.computedStyle["border-width"] ?? "",
+  )) ?? styleValue(entries, "border-width");
+  const radius = mixedValue(entries.map((entry) =>
+    kindOf(entry) === "rectangle"
+      ? pixelValue(entry.inspection?.attributes["data-design-tool-radius"]) ?? ""
+      : entry.inspection?.computedStyle["border-radius"] ?? "",
+  )) ?? styleValue(entries, "border-radius");
   const control = (property: SafeInlineStyleProperty, fieldValue: string | null) => (
     <TokenControl
       tokens={tokens}
@@ -591,19 +635,27 @@ function FillBorderSection({ entries, onEditNodeStyle, onApplyGlassEffect, token
       onCommit={(value) => onEditNodeStyle(property, value)}
     />
   );
+  // Width and radius travel to vectors as parsed numbers through the shape
+  // commands — a `var(--token)` pick parses to NaN and falls through to a
+  // wrapper style that never paints the geometry, so the token controls stay
+  // hidden until token links are supported there.
+  const allVectors = entries.length > 0 && entries.every((entry) => kindOf(entry) !== undefined);
   return (
     <PropertySection title="Fill & border" icon={<Palette size={13} />}>
       <div className="property-grid property-grid-single">
         <ColorField
-          label="Fill"
+          label={strokeOnly ? "Stroke" : "Fill"}
           value={fill}
           onCommit={(value) => onEditNodeStyle("background-color", value)}
           onPickGlass={onApplyGlassEffect ? () => onApplyGlassEffect(DEFAULT_GLASS_LEVEL) : undefined}
           glassActive={entries.length > 0 && entries.every(entryHasGlass)}
           token={control("background-color", fill)}
         />
-        <div className="property-grid"><PropertyField label="Border" value={border} onCommit={(value) => onEditNodeStyle("border-color", value)} token={control("border-color", border)} /><PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={control("border-width", borderWidth)} /></div>
-        <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} token={control("border-radius", radius)} />
+        <div className="property-grid">
+          {strokeOnly ? null : <PropertyField label="Border" value={border} onCommit={(value) => onEditNodeStyle("border-color", value)} token={control("border-color", border)} />}
+          <PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={allVectors ? undefined : control("border-width", borderWidth)} />
+        </div>
+        {strokeOnly ? null : <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} token={allVectors ? undefined : control("border-radius", radius)} />}
       </div>
     </PropertySection>
   );
@@ -896,14 +948,14 @@ function NodeDesignPanel({
           <PositionSizeSection {...positionProps} includeHeight={false} />
           {glassSection}
           <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
+          <FillBorderSection entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "shape" ? (
         <>
           <PositionSizeSection {...positionProps} />
           {glassSection}
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
+          <FillBorderSection entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       ) : profile === "image" ? (
@@ -916,7 +968,7 @@ function NodeDesignPanel({
           <PositionSizeSection {...positionProps} />
           {glassSection}
           <TypographySection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
-          <FillBorderSection entries={entries} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
+          <FillBorderSection entries={entries} nodes={nodes} onEditNodeStyle={onEditNodeStyle} onApplyGlassEffect={onApplyGlassEffect} tokens={tokens} />
           <OpacityEffectsSection entries={entries} onEditNodeStyle={onEditNodeStyle} tokens={tokens} />
         </>
       )}
@@ -935,6 +987,7 @@ function ShaderDesignPanel({
   onDeleteShaderElement,
 }: Pick<PropertiesPanelProps, "onUpdateShaderElement" | "onUpdateShaderParams" | "onDeleteShaderElement"> & { element: CanvasShaderElement }) {
   const label = getShaderDefinition(element.shaderId).label;
+  const thumb = SHADER_THUMB_URLS[element.shaderId];
   const radius = Math.min(element.radius ?? SHADER_ELEMENT_DEFAULT_RADIUS, maxShaderElementRadius(element));
   const commitGeometry = (patch: (next: number) => Partial<Pick<CanvasShaderElement, "x" | "y" | "width" | "height">>, raw: string) => {
     const next = numericValue(raw);
@@ -952,7 +1005,7 @@ function ShaderDesignPanel({
   return (
     <>
       <div className="selection-summary">
-        <span className="selection-summary-mark"><Sparkles size={15} /></span>
+        <span className="selection-summary-mark">{thumb ? <img className="selection-summary-thumb" src={thumb} alt="" draggable={false} /> : <Sparkles size={15} />}</span>
         <span><strong>{label}</strong><small>Shader · {element.width}×{element.height}</small></span>
         <button
           className="shader-inspector-delete"

@@ -190,6 +190,7 @@ import {
   freeformBodyShiftValue,
   freeformFrameCommands,
   isFreeformContentNode,
+  isFreeformContentTag,
 } from "../overlay/freeform-fit";
 import {
   useNodeOverlayGestures,
@@ -211,6 +212,7 @@ import type { Camera, CanvasFrame, Point, Rect, Size } from "./types";
 
 const CAMERA_FIT_PADDING = 148;
 const CAMERA_SETTLE_MS = 140;
+const KEYBOARD_ZOOM_STEP = 1.25;
 
 function cameraFitPadding(viewport: Size): number {
   return viewport.width < 760 ? 18 : CAMERA_FIT_PADDING;
@@ -401,6 +403,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 const GLASS_VECTOR_KINDS = new Set(["rectangle", "ellipse", "line", "arrow", "polygon", "star", "path"]);
 
+/** Shape kinds whose geometry child carries fill="none" — the stroke is their only paint. */
+const STROKE_ONLY_VECTOR_KINDS = new Set(["line", "arrow", "path"]);
+
 const GLASS_STYLE_PROPERTIES = ["backdrop-filter", "background", "box-shadow"] as const;
 
 type GlassSurfaceStyles = Record<(typeof GLASS_STYLE_PROPERTIES)[number], string | null>;
@@ -420,10 +425,18 @@ function glassStylesEqual(a: GlassSurfaceStyles, b: GlassSurfaceStyles): boolean
   return GLASS_STYLE_PROPERTIES.every((property) => a[property] === b[property]);
 }
 
-/** Created SVG shapes paint through their geometry child, not CSS backgrounds. */
-function isCreatedVector(entry: { target: BridgeElementTarget; inspection: BridgeInspection | null }): boolean {
-  const kind = entry.inspection?.attributes["data-design-tool-kind"];
-  return kind !== undefined && GLASS_VECTOR_KINDS.has(kind);
+/**
+ * Resolves a created shape's kind from the live inspection, falling back to
+ * the node entity's attributes so edits landing before the first inspection
+ * still route to the shape commands. Returns undefined for non-vectors.
+ */
+function createdVectorKind(
+  entry: { target: BridgeElementTarget; inspection: BridgeInspection | null },
+  nodes?: Record<string, NodeEntity>,
+): string | undefined {
+  const kind = entry.inspection?.attributes["data-design-tool-kind"]
+    ?? nodes?.[entry.target.elementId]?.attributes?.["data-design-tool-kind"];
+  return kind !== undefined && GLASS_VECTOR_KINDS.has(kind) ? kind : undefined;
 }
 
 /** Editor-created layers take the dedicated shape commands; foreign content cannot. */
@@ -560,6 +573,11 @@ export function CanvasSurface({
   const addCommentRef = useRef<(frameId: string, point: Point) => void>(() => undefined);
   const deleteSelectedNodesRef = useRef<() => Promise<void>>(async () => undefined);
   const runEditorShortcutRef = useRef<(action: EditorShortcutAction) => void>(() => undefined);
+  // Bridge wheel events arrive via handleBridgeEvent, which renders before
+  // these callbacks are defined — refs keep the pinch-zoom path reachable
+  // without reordering the component body.
+  const applyZoomAtPointRef = useRef<(nextZoom: number, pointer: Point) => void>(() => undefined);
+  const isNodeGestureActiveRef = useRef<() => boolean>(() => false);
 
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
@@ -1750,12 +1768,19 @@ export function CanvasSurface({
         : undefined;
       const transform = entry.inspection?.inlineStyle.transform ?? entry.inspection?.computedStyle.transform;
       const parsedRotation = transform ? parseTransform(transform)?.rotation ?? 0 : 0;
-      const bounds = {
+      let bounds = {
         x: frame.x + FRAME_CONTENT_INSET + entry.target.bounds.x - (shift?.x ?? 0),
         y: frame.y + FRAME_CONTENT_INSET + entry.target.bounds.y - (shift?.y ?? 0),
         width: entry.target.bounds.width,
         height: entry.target.bounds.height,
       };
+      if (!isFreeformContentTag(entry.target.tagName)) {
+        const left = Math.max(bounds.x, frame.x + FRAME_CONTENT_INSET);
+        const top = Math.max(bounds.y, frame.y + FRAME_CONTENT_INSET);
+        const right = Math.min(bounds.x + bounds.width, frame.x + frame.width - FRAME_CONTENT_INSET);
+        const bottom = Math.min(bounds.y + bounds.height, frame.y + frame.height - FRAME_CONTENT_INSET);
+        bounds = { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) };
+      }
       // The measured AABB rotated by `rotation` would double-apply the angle —
       // reconstruct the unrotated rect (same center, laid-out size) so the
       // overlay can paint the element's real box.
@@ -1937,6 +1962,19 @@ export function CanvasSurface({
       } else if (message.event === "text-commit" || message.event === "text-cancel") {
         frameTextEditRef.current.delete(frameId);
         setTextEditingNode((current) => (current?.frameId === frameId ? null : current));
+      }
+
+      // Pinch over a frame iframe never reaches the surface wheel handler —
+      // the bridge runtime cancelled the site zoom and forwards the deltas
+      // here so the canvas camera zooms under the pointer instead.
+      if (message.event === "wheel") {
+        if (pointerRef.current !== null || isNodeGestureActiveRef.current()) return;
+        const wheelContext = buildBridgeEventContext(iframe, surface);
+        const pointer = mapIframePointToCanvas(message.point, wheelContext).screen;
+        const wheelMultiplier = message.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+        const wheelDeltaY = (message.deltaY ?? 0) * wheelMultiplier;
+        applyZoomAtPointRef.current(cameraRef.current.zoom * Math.exp(-wheelDeltaY * 0.008), pointer);
+        return;
       }
 
       const currentTool = activeToolRef.current;
@@ -2147,6 +2185,23 @@ export function CanvasSurface({
       };
       editorStore.execute({ type: "node/upsert", node }, { history: "skip" });
       const currentSelection = editorStore.getState().selection;
+      if (node.tagName && !isFreeformContentTag(node.tagName)) {
+        const frameIds = message.shiftKey
+          ? currentSelection.frameIds.includes(frameId)
+            ? currentSelection.frameIds.filter((id) => id !== frameId)
+            : [...currentSelection.frameIds, frameId]
+          : [frameId];
+        editorStore.execute(
+          setSelectionCommand({
+            frameIds,
+            nodeIds: message.shiftKey ? currentSelection.nodeIds : [],
+            primaryFrameId: frameIds[frameIds.length - 1] ?? null,
+            primaryNodeId: message.shiftKey ? currentSelection.primaryNodeId : null,
+          }),
+          { history: "skip" },
+        );
+        return;
+      }
       const selected = currentSelection.nodeIds.includes(node.id);
       const nodeIds = message.shiftKey
         ? selected
@@ -2366,6 +2421,13 @@ export function CanvasSurface({
           ? { x: -bodyTarget.bounds.x, y: -bodyTarget.bounds.y }
           : freeformShiftRef.current.get(frameId) ?? { x: 0, y: 0 }
         : { x: 0, y: 0 };
+      if (
+        frame.freeform
+        && !freeformShiftRef.current.has(frameId)
+        && (measureShift.x !== 0 || measureShift.y !== 0)
+      ) {
+        freeformShiftRef.current.set(frameId, measureShift);
+      }
       // One store transition + one targets merge per snapshot — previously
       // each node did its own execute (cloning the nodes record) and its own
       // setBridgeTargets (cloning the targets record), an O(nodes²) ingest.
@@ -3297,7 +3359,9 @@ export function CanvasSurface({
 
   type ShapeEffectAction =
     | { frameId: string; targetId: string; kind: "glass"; level: number | null }
-    | { frameId: string; targetId: string; kind: "fill"; color: string | null };
+    | { frameId: string; targetId: string; kind: "fill"; color: string | null }
+    | { frameId: string; targetId: string; kind: "stroke"; stroke?: string | null; strokeWidth?: number | null }
+    | { frameId: string; targetId: string; kind: "radius"; radius: number };
 
   // Shape effects target the SVG geometry itself, so they run as dedicated
   // bridge commands with their own undoable transaction.
@@ -3316,11 +3380,19 @@ export function CanvasSurface({
           if (!controller) continue;
           const ack = action.kind === "glass"
             ? await controller.setShapeGlass({ command: "set-shape-glass", targetId: action.targetId, level: action.level })
-            : await controller.setShapeFill({ command: "set-shape-fill", targetId: action.targetId, color: action.color });
+            : action.kind === "fill"
+              ? await controller.setShapeFill({ command: "set-shape-fill", targetId: action.targetId, color: action.color })
+              : action.kind === "radius"
+                ? await controller.setShapeRadius({ command: "set-shape-radius", targetId: action.targetId, radius: action.radius })
+                : await controller.setShapeStroke({ command: "set-shape-stroke", targetId: action.targetId, stroke: action.stroke, strokeWidth: action.strokeWidth });
           if (!("undo" in ack)) throw new Error("shape acknowledgement invalid");
           applied.push({ frameId: action.frameId, undo: ack.undo, redo: action.kind === "glass"
             ? { command: "set-shape-glass", targetId: action.targetId, level: action.level }
-            : { command: "set-shape-fill", targetId: action.targetId, color: action.color } });
+            : action.kind === "fill"
+              ? { command: "set-shape-fill", targetId: action.targetId, color: action.color }
+              : action.kind === "radius"
+                ? { command: "set-shape-radius", targetId: action.targetId, radius: action.radius }
+                : { command: "set-shape-stroke", targetId: action.targetId, stroke: action.stroke, strokeWidth: action.strokeWidth } });
         }
       } catch {
         for (const appliedAction of [...applied].reverse()) {
@@ -3329,6 +3401,8 @@ export function CanvasSurface({
           if (!controller) continue;
           if (undo.command === "set-shape-glass") await controller.setShapeGlass(undo).catch(() => undefined);
           else if (undo.command === "set-shape-fill") await controller.setShapeFill(undo).catch(() => undefined);
+          else if (undo.command === "set-shape-stroke") await controller.setShapeStroke(undo).catch(() => undefined);
+          else if (undo.command === "set-shape-radius") await controller.setShapeRadius(undo).catch(() => undefined);
         }
         if (editorStore.hasActiveTransaction()) editorStore.rollbackTransaction(txToken);
         return;
@@ -3344,6 +3418,8 @@ export function CanvasSurface({
           const next = direction === "undo" ? undo : redo;
           if (next.command === "set-shape-glass") return controller.setShapeGlass(next);
           if (next.command === "set-shape-fill") return controller.setShapeFill(next);
+          if (next.command === "set-shape-stroke") return controller.setShapeStroke(next);
+          if (next.command === "set-shape-radius") return controller.setShapeRadius(next);
           return undefined;
         });
         void Promise.all(requests)
@@ -3422,21 +3498,57 @@ export function CanvasSurface({
       .filter((entry) => state.selection.nodeIds.includes(entry.target.elementId) && (state.selection.frameIds.length === 0 || state.selection.frameIds.includes(entry.frameId)));
 
     // SVG shapes paint through their geometry child, so fills route to the
-    // dedicated shape command instead of an invisible background style.
-    if (property === "background-color" || property === "background") {
-      const vectors = entries.filter((entry) => isCreatedVector(entry));
-      if (vectors.length > 0) {
-        void runBridgeShapeEdits(
-          vectors.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, kind: "fill" as const, color: value })),
-          "Change shape fill",
+    // dedicated shape commands instead of an invisible background style.
+    // Lines, arrows, and freehand paths carry fill="none" — their stroke is
+    // the only paint, so every color field on them drives the stroke. The
+    // "Border"/"Width" fields are the shape's stroke for all created vectors.
+    const kindOf = (entry: (typeof entries)[number]) => createdVectorKind(entry, state.nodes);
+    const toStyleChanges = (list: typeof entries) =>
+      list.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
+    if (property === "background-color" || property === "background" || property === "border-color") {
+      const shapeActions: ShapeEffectAction[] = [];
+      const others: typeof entries = [];
+      for (const entry of entries) {
+        const kind = kindOf(entry);
+        if (kind === undefined) {
+          others.push(entry);
+          continue;
+        }
+        shapeActions.push(
+          property === "border-color" || STROKE_ONLY_VECTOR_KINDS.has(kind)
+            ? { frameId: entry.frameId, targetId: entry.target.elementId, kind: "stroke", stroke: value }
+            : { frameId: entry.frameId, targetId: entry.target.elementId, kind: "fill", color: value },
         );
       }
-      const others = entries.filter((entry) => !isCreatedVector(entry));
+      if (shapeActions.length > 0) {
+        void runBridgeShapeEdits(
+          shapeActions,
+          property === "border-color" ? "Change shape stroke" : "Change shape fill",
+        );
+      }
       if (others.length > 0) {
-        const changes = others.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
-        void runBridgeStyleEdit(changes, `Change ${property}`);
+        void runBridgeStyleEdit(toStyleChanges(others), `Change ${property}`);
       }
       return;
+    }
+    if (property === "border-width" || property === "border-radius") {
+      const parsed = value === null ? null : Number.parseFloat(value);
+      const vectors = entries.filter((entry) =>
+        kindOf(entry) !== undefined &&
+        (property === "border-width" || kindOf(entry) === "rectangle"));
+      const others = entries.filter((entry) => !vectors.includes(entry));
+      if (vectors.length > 0 && (parsed === null || Number.isFinite(parsed))) {
+        void runBridgeShapeEdits(
+          vectors.map((entry): ShapeEffectAction => property === "border-width"
+            ? { frameId: entry.frameId, targetId: entry.target.elementId, kind: "stroke", strokeWidth: parsed }
+            : { frameId: entry.frameId, targetId: entry.target.elementId, kind: "radius", radius: parsed ?? 0 }),
+          property === "border-width" ? "Change shape stroke width" : "Change corner radius",
+        );
+        if (others.length > 0) {
+          void runBridgeStyleEdit(toStyleChanges(others), `Change ${property}`);
+        }
+        return;
+      }
     }
     const changes = entries.map((entry) => ({ frameId: entry.frameId, targetId: entry.target.elementId, property, value }));
     void runBridgeStyleEdit(changes, `Change ${property}`);
@@ -3670,7 +3782,7 @@ export function CanvasSurface({
   const editNodePosition = useCallback((frameId: string, nodeId: string, position: { x: number; y: number }) => {
     const entry = bridgeTargets[targetStateKey(frameId, nodeId)];
     const controller = bridgeControllersRef.current.get(frameId);
-    if (!entry || !controller) return;
+    if (!entry || !controller || !isFreeformContentTag(entry.target.tagName)) return;
     void controller.inspect(nodeId).then((inspection) => {
       if (!inspection) return;
       handleBridgeInspection(frameId, inspection);
@@ -3775,6 +3887,7 @@ export function CanvasSurface({
     setInteractionMode,
     freeformShiftRef,
   });
+  isNodeGestureActiveRef.current = isNodeGestureActive;
 
   const sidebarHoveredOverlayTarget = useMemo(() => {
     if (!sidebarHoveredNode) return null;
@@ -4682,8 +4795,40 @@ export function CanvasSurface({
     endPointerOperation(event);
   };
 
+  // The world transform is applied imperatively during wheel gestures; the
+  // React camera commit only needs to happen once the gesture actually pauses.
+  // Committing per wheel tick rendered the whole frame tree mid-gesture — at
+  // 1k frames that's the difference between a smooth pan and a stutter. The
+  // delay is just past CAMERA_SETTLE_MS so the commit lands as interaction
+  // goes idle.
+  const commitWheelCamera = useCallback(() => {
+    if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
+    wheelCommitTimeoutRef.current = setTimeout(() => {
+      setCamera(cameraRef.current);
+      wheelCommitTimeoutRef.current = null;
+    }, CAMERA_SETTLE_MS + 20);
+    scheduleVisibilityScan();
+    settleInteraction();
+  }, [scheduleVisibilityScan, settleInteraction]);
+
+  const applyZoomAtPoint = useCallback((nextZoom: number, pointer: Point) => {
+    const nextCamera = zoomCameraAtPoint(cameraRef.current, nextZoom, pointer);
+    cameraRef.current = nextCamera;
+    if (worldRef.current) {
+      worldRef.current.style.transform = cameraTransform(nextCamera);
+      worldRef.current.style.setProperty("--canvas-zoom", String(nextCamera.zoom));
+    }
+    setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
+    commitWheelCamera();
+  }, [commitWheelCamera]);
+  applyZoomAtPointRef.current = applyZoomAtPoint;
+
   const handleWheel = useCallback((event: WheelEvent) => {
+    const isPinchZoom = event.ctrlKey || event.metaKey;
     if (isCanvasControlTarget(event.target)) {
+      // Overlay controls keep their own wheel scrolling, but a pinch still
+      // must not fall through to the browser's whole-site zoom.
+      if (isPinchZoom) event.preventDefault();
       return;
     }
     // A wheel/pinch during a pointer or node drag would mutate cameraRef under
@@ -4694,7 +4839,7 @@ export function CanvasSurface({
       return;
     }
     const targetEl = event.target as Element | null;
-    if (targetEl && !event.ctrlKey && !event.metaKey) {
+    if (targetEl && !isPinchZoom) {
       const scrollable = targetEl.closest(".sidebar-panel-content, .properties-scroll, .figma-lake-body, .figma-lake, .project-lake") as HTMLElement | null;
       if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
         const deltaAbsY = Math.abs(event.deltaY);
@@ -4713,19 +4858,8 @@ export function CanvasSurface({
     const deltaX = event.deltaX * multiplier;
     const deltaY = event.deltaY * multiplier;
 
-    const isPinchZoom = event.ctrlKey || event.metaKey;
-
     if (isPinchZoom) {
-      const pointer = getCachedPointerPosition(event);
-      const zoomFactor = Math.exp(-deltaY * 0.008);
-      const nextZoom = cameraRef.current.zoom * zoomFactor;
-      const nextCamera = zoomCameraAtPoint(cameraRef.current, nextZoom, pointer);
-      cameraRef.current = nextCamera;
-      if (worldRef.current) {
-        worldRef.current.style.transform = cameraTransform(nextCamera);
-        worldRef.current.style.setProperty("--canvas-zoom", String(nextCamera.zoom));
-      }
-      setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
+      applyZoomAtPoint(cameraRef.current.zoom * Math.exp(-deltaY * 0.008), getCachedPointerPosition(event));
     } else {
       const nextCamera = panCamera(cameraRef.current, { x: -deltaX, y: -deltaY });
       cameraRef.current = nextCamera;
@@ -4733,22 +4867,9 @@ export function CanvasSurface({
         worldRef.current.style.transform = cameraTransform(nextCamera);
       }
       setInteractionMode(prev => prev === "panning" ? prev : "panning");
+      commitWheelCamera();
     }
-
-    // The world transform is applied imperatively above; the React camera
-    // commit only needs to happen once the gesture actually pauses. Committing
-    // per wheel tick rendered the whole frame tree mid-gesture — at 1k frames
-    // that's the difference between a smooth pan and a stutter. The delay is
-    // just past CAMERA_SETTLE_MS so the commit lands as interaction goes idle.
-    if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
-    wheelCommitTimeoutRef.current = setTimeout(() => {
-      setCamera(cameraRef.current);
-      wheelCommitTimeoutRef.current = null;
-    }, CAMERA_SETTLE_MS + 20);
-
-    scheduleVisibilityScan();
-    settleInteraction();
-  }, [settleInteraction, getCachedPointerPosition, isNodeGestureActive, scheduleVisibilityScan]);
+  }, [applyZoomAtPoint, commitWheelCamera, getCachedPointerPosition, isNodeGestureActive]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -4762,6 +4883,29 @@ export function CanvasSurface({
       }
     };
   }, [handleWheel]);
+
+  // Safari trackpad pinch arrives as gesture* events instead of ctrl+wheel;
+  // route them into the same camera zoom (the page-zoom guard already blocked
+  // the browser's default, and frame iframes forward theirs via "wheel").
+  useEffect(() => {
+    let gestureBaseZoom = 1;
+    const handleGestureStart = () => {
+      gestureBaseZoom = cameraRef.current.zoom;
+    };
+    const handleGestureChange = (event: Event) => {
+      const { scale, clientX, clientY } = event as Event & { scale?: number; clientX?: number; clientY?: number };
+      if (typeof scale !== "number" || !(scale > 0)) return;
+      if (pointerRef.current !== null || isNodeGestureActive()) return;
+      const pointer = getCachedPointerPosition({ clientX: clientX ?? 0, clientY: clientY ?? 0 });
+      applyZoomAtPoint(gestureBaseZoom * scale, pointer);
+    };
+    document.addEventListener("gesturestart", handleGestureStart);
+    document.addEventListener("gesturechange", handleGestureChange);
+    return () => {
+      document.removeEventListener("gesturestart", handleGestureStart);
+      document.removeEventListener("gesturechange", handleGestureChange);
+    };
+  }, [applyZoomAtPoint, getCachedPointerPosition, isNodeGestureActive]);
 
   const cancelInteraction = useCallback(() => {
     cancelNodeGesture();
@@ -4893,8 +5037,19 @@ export function CanvasSurface({
       case "fit-all":
         fitAllFrames();
         break;
+      case "zoom-in":
+      case "zoom-out":
+      case "zoom-reset": {
+        if (viewport.width <= 0 || viewport.height <= 0) break;
+        const center = { x: viewport.width / 2, y: viewport.height / 2 };
+        const nextZoom = action.type === "zoom-reset"
+          ? 1
+          : cameraRef.current.zoom * (action.type === "zoom-in" ? KEYBOARD_ZOOM_STEP : 1 / KEYBOARD_ZOOM_STEP);
+        updateCamera(zoomCameraAtPoint(cameraRef.current, nextZoom, center));
+        break;
+      }
     }
-  }, [deleteSelectedFrames, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool]);
+  }, [deleteSelectedFrames, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, updateCamera, viewport]);
   runEditorShortcutRef.current = runEditorShortcut;
 
   useEffect(() => {

@@ -1,13 +1,11 @@
 import { Component, useEffect, useMemo, useRef, useState, type ComponentType, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Plus, Search } from "lucide-react";
 import { SafeShaderMount } from "./SafeShaderMount";
+import { useLoadedShader } from "./useLoadedShader";
 import {
   CUSTOM_SHADER_DEFINITIONS,
   PAPER_SHADER_DEFINITIONS,
-  detectPaperShaderSupport,
   getShaderMountProps,
-  isCustomShaderId,
-  loadPaperShader,
   type ShaderId,
 } from "../shaders";
 
@@ -64,10 +62,10 @@ const ENTRY_BY_ID = new Map<string, ShaderEntry>(SHADER_ENTRIES.map((entry) => [
  * Real shader renders captured by scripts/capture-shader-thumbs.mjs into
  * src/assets/shader-thumbs — a full menu of live previews would exhaust the
  * browser's WebGL context budget, so cards show snapshots at rest and mount
- * the live shader only on hover/focus. CSS gradients stay underneath as the
- * loading/missing-image fallback.
+ * the live shader only on hover/focus. The map is shared with the panels that
+ * list placed shaders so every surface shows the same real render.
  */
-const SHADER_THUMB_URLS: Partial<Record<ShaderId, string>> = Object.fromEntries(
+export const SHADER_THUMB_URLS: Partial<Record<ShaderId, string>> = Object.fromEntries(
   Object.entries(
     import.meta.glob("../assets/shader-thumbs/*.webp", {
       eager: true,
@@ -77,7 +75,7 @@ const SHADER_THUMB_URLS: Partial<Record<ShaderId, string>> = Object.fromEntries(
   ).map(([path, url]) => [path.split("/").pop()!.replace(/\.webp$/, "") as ShaderId, url]),
 );
 
-/** Zero-GPU fallbacks, one CSS gradient in each shader's palette. */
+/** Last-resort CSS stand-in, rendered only for a shader with no captured file. */
 const SHADER_THUMBS: Record<ShaderId, string> = {
   "mesh-gradient": "radial-gradient(at 18% 25%, #6f6cf5 0%, transparent 55%), radial-gradient(at 82% 18%, #f06a9b 0%, transparent 50%), radial-gradient(at 55% 88%, #f5b86c 0%, transparent 55%), linear-gradient(140deg, #2a2740, #1c1a30)",
   "grain-gradient": "radial-gradient(at 25% 30%, #f5a86c 0%, transparent 60%), radial-gradient(at 75% 75%, #e05a7a 0%, transparent 55%), linear-gradient(135deg, #3a2430, #241a26)",
@@ -122,7 +120,7 @@ class ShaderPreviewBoundary extends Component<{ children: ReactNode }, { failed:
 
   override render() {
     if (this.state.failed) {
-      return <span className="shader-preview-fallback" aria-hidden="true" />;
+      return null;
     }
     return this.props.children;
   }
@@ -130,35 +128,17 @@ class ShaderPreviewBoundary extends Component<{ children: ReactNode }, { failed:
 
 /** Mounts a real Paper Shader only while visible — WebGL contexts are scarce. */
 function LiveShaderPreview({ shaderId }: { shaderId: ShaderId }) {
-  const [ShaderComponent, setShaderComponent] = useState<ComponentType<{ width?: string; height?: string }> | null>(null);
-  const [failed, setFailed] = useState(false);
+  const { shader, failure } = useLoadedShader(shaderId);
 
-  useEffect(() => {
-    let alive = true;
-    setShaderComponent(null);
-    setFailed(false);
-    loadPaperShader(shaderId)
-      .then((loaded) => {
-        if (!alive) return;
-        if (isCustomShaderId(shaderId) || detectPaperShaderSupport().supported) {
-          setShaderComponent(() => loaded.Component as ComponentType<{ width?: string; height?: string }>);
-        } else {
-          setFailed(true);
-        }
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [shaderId]);
-
-  if (failed) return <span className="shader-preview-fallback" aria-hidden="true" />;
-  if (!ShaderComponent) return <span className="shader-preview-loading" aria-hidden="true" />;
+  if (failure) return null;
+  if (!shader) return <span className="shader-preview-loading" aria-hidden="true" />;
   return (
     <ShaderPreviewBoundary>
-      <SafeShaderMount className="shader-preview-mount" component={ShaderComponent} componentProps={getShaderMountProps(shaderId)} />
+      <SafeShaderMount
+        className="shader-preview-mount"
+        component={shader.Component as ComponentType<{ width?: string; height?: string }>}
+        componentProps={getShaderMountProps(shaderId)}
+      />
     </ShaderPreviewBoundary>
   );
 }
@@ -171,10 +151,11 @@ function ShaderCardPreview({ shaderId, live }: { shaderId: ShaderId; live: boole
   const snapshot = SHADER_THUMB_URLS[shaderId];
   return (
     <div className="shader-card-preview" aria-hidden="true">
-      <span className="shader-card-thumb" style={{ background: SHADER_THUMBS[shaderId] }} />
       {snapshot ? (
-        <img className="shader-card-img" src={snapshot} alt="" draggable={false} loading="lazy" />
-      ) : null}
+        <img className="shader-card-img" src={snapshot} alt="" draggable={false} />
+      ) : (
+        <span className="shader-card-thumb" style={{ background: SHADER_THUMBS[shaderId] }} />
+      )}
       {live ? <LiveShaderPreview shaderId={shaderId} /> : null}
     </div>
   );

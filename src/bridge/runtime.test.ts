@@ -68,6 +68,30 @@ describe("createBridgeRuntimeSource", () => {
     expect(source).toContain('child.style.removeProperty("fill")');
   });
 
+  it("selects the arrow shaft, not the marker tip, as the shape geometry", () => {
+    const source = createBridgeRuntimeSource({
+      parentOrigin: "http://localhost:5173",
+      channel: "test-channel",
+      frameId: "frame-1",
+    });
+    // The arrowhead marker path precedes the line in document order — an
+    // unscoped descendant query returns the tip, so stroke/width edits would
+    // paint the arrowhead while the shaft stays unchanged.
+    expect(source).toContain(":scope > line");
+    expect(source).not.toContain('querySelector("rect,ellipse,circle,line,polyline,polygon,path")');
+
+    // Prove the scoped selector resolves to the shaft on arrow markup where
+    // the marker tip comes first.
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.innerHTML =
+      '<defs><marker id="design-tool-arrowhead"><path d="M1,1 L9,5 L1,9 L3.2,5 Z" fill="#222222"/></marker></defs>' +
+      '<line x1="0" y1="0" x2="100" y2="0" fill="none" stroke="#222222" stroke-width="2"/>';
+    const geometry = svg.querySelector(
+      ":scope > rect,:scope > ellipse,:scope > circle,:scope > line,:scope > polyline,:scope > polygon,:scope > path",
+    );
+    expect(geometry?.tagName.toLowerCase()).toBe("line");
+  });
+
   it("keeps the fill tint when glass is re-applied over a cleared fill", () => {
     const source = createBridgeRuntimeSource({
       parentOrigin: "http://localhost:5173",

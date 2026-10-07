@@ -304,6 +304,89 @@ test.describe("drawing outside frames", () => {
       .toBeLessThan(30); // pad*2 + slack — double-rotated bounds land ~70 over
   });
 
+  test("keeps a dragged shape's freeform frame across a reload", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByTestId("project-lake")).toBeVisible();
+    await page.getByTestId("create-kind-blank").click();
+    await page.getByTestId("blank-choose-website").click();
+    await page.waitForURL(/\/design\//);
+    await expect(page.locator(surfaceSelector)).toBeVisible();
+    await expect(page.locator("[data-brief-frame-id]")).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("r");
+    await expect(page.getByTestId("creation-mode-status")).toContainText("Rectangle mode");
+    const start = await findBackgroundPoint(page);
+    await dragOnCanvas(page, start, 160, 110);
+
+    const freeform = page.locator(freeformSelector);
+    await expect(freeform).toHaveCount(1);
+    const doc = freeform.locator("iframe").contentFrame();
+    const shape = doc.locator('[data-design-tool-kind="rectangle"]');
+    await expect(shape).toHaveCount(1);
+
+    const shapeBox = await shape.boundingBox();
+    if (!shapeBox) throw new Error("The drawn shape is unavailable");
+    await page.mouse.click(shapeBox.x + shapeBox.width / 2, shapeBox.y + shapeBox.height / 2);
+    const selectionBox = page.getByTestId("node-selection-box");
+    const selectionBounds = await selectionBox.boundingBox();
+    if (!selectionBounds) throw new Error("The node selection box is unavailable");
+    const dragStart = { x: selectionBounds.x + selectionBounds.width / 2, y: selectionBounds.y + selectionBounds.height / 2 };
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart.x - 140, dragStart.y - 100, { steps: 8 });
+    await page.mouse.up();
+
+    await expect
+      .poll(async () => page.evaluate(() => {
+        const key = Object.keys(localStorage).find((k) => k.includes("project-data"));
+        const blob = key ? localStorage.getItem(key) ?? "" : "";
+        return blob.includes("translate(");
+      }))
+      .toBe(true);
+
+    await page.reload();
+    await expect(page.locator(surfaceSelector)).toBeVisible();
+
+    const restored = page.locator(freeformSelector);
+    await expect(restored).toHaveCount(1);
+    const doc2 = restored.locator("iframe").contentFrame();
+    const shape2 = doc2.locator('[data-design-tool-kind="rectangle"]');
+    await expect(shape2).toHaveCount(1);
+
+    const shapeBox2 = await shape2.boundingBox();
+    if (!shapeBox2) throw new Error("The restored shape is unavailable");
+    await page.mouse.click(shapeBox2.x + shapeBox2.width / 2, shapeBox2.y + shapeBox2.height / 2);
+    const boxBounds = await page.getByTestId("node-selection-box").boundingBox();
+    if (!boxBounds) throw new Error("The selection box is unavailable after reload");
+    expect(Math.abs(boxBounds.x - shapeBox2.x)).toBeLessThan(6);
+    expect(Math.abs(boxBounds.y - shapeBox2.y)).toBeLessThan(6);
+
+    const dragStart2 = { x: boxBounds.x + boxBounds.width / 2, y: boxBounds.y + boxBounds.height / 2 };
+    await page.mouse.move(dragStart2.x, dragStart2.y);
+    await page.mouse.down();
+    await page.mouse.move(dragStart2.x - 120, dragStart2.y - 90, { steps: 8 });
+    await page.mouse.up();
+
+    const zoom = await page.evaluate(() => {
+      const world = document.querySelector('[data-testid="canvas-world"]');
+      return new DOMMatrixReadOnly(getComputedStyle(world!).transform).a;
+    });
+    await expect
+      .poll(async () => {
+        const [shapeRect, iframeBox] = await Promise.all([
+          shape2.evaluate((element) => element.getBoundingClientRect().toJSON()),
+          restored.locator("iframe").boundingBox(),
+        ]);
+        if (!iframeBox) return -1;
+        const w = iframeBox.width / zoom;
+        const h = iframeBox.height / zoom;
+        const inside = shapeRect.x >= -1 && shapeRect.y >= -1
+          && shapeRect.x + shapeRect.width <= w + 1 && shapeRect.y + shapeRect.height <= h + 1;
+        return inside ? 1 : -1;
+      })
+      .toBe(1);
+  });
+
   test("deletes a canvas-drawn shape and restores it on undo", async ({ page }) => {
     await openDemo(page);
     await page.keyboard.press("r");

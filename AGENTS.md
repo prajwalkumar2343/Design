@@ -18,6 +18,15 @@ free port) to run e2e tests against this checkout:
 npm run build && npm run test:e2e -- --config playwright.comments.config.ts <spec>
 ```
 
+## Dev-server caveat
+
+Run only ONE dev server on this checkout. Concurrent `vite` processes
+(especially `--force`) share `node_modules/.vite/deps` and stomp each other's
+optimized bundles — pages on other ports then hit chunk 404s / stale-hash
+`SyntaxError`s, and lazily imported features (shader elements) surface as
+"failed to load" even though the code is fine. Check `lsof -iTCP -sTCP:LISTEN
+| grep vite` and kill extras before debugging.
+
 ## Concurrent editing
 
 Other agent/tool processes write to this working tree while a session is
@@ -41,6 +50,15 @@ dangling stash commits before hand-repairing.
   `COLOR_SWATCHES`. Fill/Background fields pass `onPickGlass`, which leads
   the grid with a Glass pseudo-swatch that applies the glass effect
   (`DEFAULT_GLASS_LEVEL` in `src/editor/effects.ts`) instead of a color.
+- `src/components/useLoadedShader.ts` — the shared loader hook behind
+  `ShaderElementView`, `ShaderMenu` previews, `ShaderThumbCapture`, and
+  `ShaderParamsEditor` (`checkSupport:false` — it only needs presets, not
+  GL). `loadPaperShader` dedupes per id and retries chunk fetches with
+  backoff; failures classify as `unsupported` | `unknown` | `load-error`
+  and the element UI offers Retry except for `unknown`.
+- `SafeShaderMount` owns GL lifecycle: releases contexts on unmount,
+  remounts the shader on `webglcontextrestored` (or after a grace period),
+  capped at 4 remounts so eviction storms can't ping-pong.
 - Shader selection lives in `CanvasSurface` (`selectedShaderElementId`);
   `ShaderElementView` ignores outside pointerdowns inside
   `[data-canvas-control]` so inspector edits don't deselect.
@@ -75,6 +93,13 @@ dangling stash commits before hand-repairing.
   markup exactly: painted shapes commit with `stroke-width:0` and no inset,
   and bounds use `normalizedBounds(start, end, 1)` like the creation path —
   any divergence shows as an outline during draw or a size pop on commit.
+- Shape paint lives on the SVG geometry child, never CSS: Fill edits run
+  `set-shape-fill` (child `fill`), Border/Width edits run `set-shape-stroke`
+  (child `stroke`/`stroke-width` + re-inset), Radius runs `set-shape-radius`.
+  Lines/arrows/paths are fill="none" — `editNodeStyle` routes their
+  `background-color` commits to the stroke, and `FillBorderSection` relabels
+  the field "Stroke". Kind resolution falls back to node attributes when the
+  bridge inspection hasn't landed yet.
 
 ## Agent bridge
 

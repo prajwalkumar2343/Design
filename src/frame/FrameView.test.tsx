@@ -130,36 +130,47 @@ describe("FrameView", () => {
     expect(props.onSelect).toHaveBeenCalledWith("f1");
   });
 
-  it("shows an activation layer on unselected frames and hides it once selected", () => {
+  it("shows an activation layer only for paused frames, selected or not", () => {
     const { props, unmount } = renderFrame();
     const activation = screen.getByRole("button", { name: "Select Hero" });
     fireEvent.click(activation);
     expect(props.onSelect).toHaveBeenCalledWith("f1");
     unmount();
 
-    renderFrame({ isSelected: true });
+    const { unmount: unmountSelected } = renderFrame({ isSelected: true });
+    expect(screen.getByRole("button", { name: "Select Hero" })).toBeTruthy();
+    unmountSelected();
+
+    const { unmount: unmountLive } = renderFrame({ isLive: true });
+    expect(screen.queryByRole("button", { name: "Select Hero" })).toBeNull();
+    unmountLive();
+
+    renderFrame({ isLive: true, isSelected: true });
     expect(screen.queryByRole("button", { name: "Select Hero" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Pan across Hero" })).toBeNull();
   });
 
-  it("starts a move from the drag ring on selected frames only", () => {
+  it("starts a move from the drag ring whether or not the frame is selected", () => {
     const { props, container, unmount } = renderFrame({ isSelected: true });
     const ring = container.querySelector(".frame-drag-ring")!;
     fireEvent.pointerDown(ring);
     expect(props.onStartMove).toHaveBeenCalledWith("f1", expect.anything());
     unmount();
 
-    const { container: unselected } = renderFrame();
-    expect(unselected.querySelector(".frame-drag-ring")).toBeNull();
+    const { props: unselectedProps, container: unselected } = renderFrame();
+    const unselectedRing = unselected.querySelector(".frame-drag-ring")!;
+    fireEvent.pointerDown(unselectedRing);
+    expect(unselectedProps.onStartMove).toHaveBeenCalledWith("f1", expect.anything());
   });
 
   it("routes the activation layer to the pan handler under the pan tool", () => {
-    const { props } = renderFrame({ isPanTool: true, isSelected: true });
+    const { props, container } = renderFrame({ isPanTool: true, isSelected: true });
     const activation = screen.getByRole("button", { name: "Pan across Hero" });
     fireEvent.pointerDown(activation);
     expect(props.onStartPan).toHaveBeenCalledTimes(1);
     fireEvent.click(activation);
     expect(props.onSelect).not.toHaveBeenCalled();
+    expect(container.querySelector(".frame-drag-ring")).toBeNull();
   });
 
   it("opens a full-site blob preview for desktop frames only", async () => {

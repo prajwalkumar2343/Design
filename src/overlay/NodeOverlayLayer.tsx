@@ -1,5 +1,6 @@
 import { memo, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { Rect } from "../canvas/types";
+import { isFreeformContentTag } from "./freeform-fit";
 import {
   RESIZE_HANDLES,
   type ResizeHandle,
@@ -103,12 +104,16 @@ function worldBox(rect: Rect): CSSProperties {
   };
 }
 
+function paintedRect(target: OverlayNodeTarget): Rect {
+  return target.rotation ? (target.canonicalBounds ?? target.bounds) : target.bounds;
+}
+
 function targetBox(target: OverlayNodeTarget): CSSProperties {
   // A rotated element's `bounds` is its post-transform AABB — painting it
   // with rotate() spins the AABB a second time. When the canonical rect is
   // known, rotate that; otherwise show the plain AABB (still truthful, just
   // looser).
-  const rect = target.rotation ? (target.canonicalBounds ?? target.bounds) : target.bounds;
+  const rect = paintedRect(target);
   return {
     ...worldBox(rect),
     ...(target.rotation && target.canonicalBounds
@@ -147,8 +152,13 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
   );
   const effectiveGuides = gestureState.targets !== null ? gestureState.guides : guides;
   const selectedKeys = new Set(effectiveTargets.map(targetKey));
-  const groupBounds = unionRects(effectiveTargets.map((target) => target.bounds));
-  const movableTargets = effectiveTargets.filter((target) => !target.locked);
+  const movableTargets = effectiveTargets.filter(
+    (target) => !target.locked && isFreeformContentTag(target.tagName),
+  );
+  const groupBounds = unionRects(movableTargets.map((target) => target.bounds));
+  const singleTarget = movableTargets.length === 1 ? movableTargets[0] : null;
+  const chromeRect = singleTarget ? paintedRect(singleTarget) : groupBounds;
+  const chromeRotation = singleTarget?.rotation && singleTarget.canonicalBounds ? singleTarget.rotation : 0;
   const targetIds = movableTargets.map(targetKey);
   const zoomSafe = Math.max(zoom, 0.08);
   const handleSize = 14 / zoomSafe;
@@ -160,8 +170,8 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
   // whole selection body — nor each other's territory. Capping each axis at
   // half the group leaves the middle to the move gesture and prevents corner
   // handles from painting over edge handles on cramped selections.
-  const handleHitWidth = Math.min(handleSize, Math.max(2 / zoomSafe, ((groupBounds?.width ?? 0) * 0.98) / 2));
-  const handleHitHeight = Math.min(handleSize, Math.max(2 / zoomSafe, ((groupBounds?.height ?? 0) * 0.98) / 2));
+  const handleHitWidth = Math.min(handleSize, Math.max(2 / zoomSafe, ((chromeRect?.width ?? 0) * 0.98) / 2));
+  const handleHitHeight = Math.min(handleSize, Math.max(2 / zoomSafe, ((chromeRect?.height ?? 0) * 0.98) / 2));
 
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
@@ -255,11 +265,14 @@ export const NodeOverlayLayer = memo(function NodeOverlayLayer({
         />
       ))}
 
-      {interactive && groupBounds && movableTargets.length > 0 ? (
+      {interactive && chromeRect && movableTargets.length > 0 ? (
         <div
           className="node-selection-box"
           data-testid="node-selection-box"
-          style={worldBox(groupBounds)}
+          style={{
+            ...(singleTarget ? targetBox(singleTarget) : worldBox(chromeRect)),
+            "--unrotate": `${-chromeRotation}deg`,
+          } as CSSProperties}
           onPointerDown={(event) => beginGesture(event, { kind: "move" })}
           onDoubleClick={(event) => {
             if (movableTargets.length !== 1 || !onTextEditStart) return;

@@ -264,8 +264,8 @@ function repairFrame(value: unknown, index: number): JsonRecord | null {
   if (FRAME_CATEGORIES.has(value.category as string)) frame.category = value.category;
   const chrome = repairChrome(value.chrome);
   if (chrome) frame.chrome = chrome;
-  // Whitelist: only fields this branch's codec accepts may be emitted. A
-  // stored `freeform` flag is dropped until the strict parser learns it.
+  if (typeof value.freeform === "boolean") frame.freeform = value.freeform;
+  // Whitelist: only fields this branch's codec accepts may be emitted.
   return frame;
 }
 

@@ -1684,6 +1684,13 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       altKey: Boolean(event.altKey),
       metaKey: Boolean(event.metaKey),
       ctrlKey: Boolean(event.ctrlKey),
+      ...(typeof event.deltaY === "number" && isFiniteNumber(event.deltaY)
+        ? {
+            deltaX: isFiniteNumber(event.deltaX) ? event.deltaX : 0,
+            deltaY: event.deltaY,
+            deltaMode: isFiniteNumber(event.deltaMode) ? event.deltaMode : 0,
+          }
+        : {}),
     });
   }
 
@@ -2235,6 +2242,11 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       if (element && beginTextEdit(element, event)) event.preventDefault();
     }, true);
     document.addEventListener("keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && (event.key === "=" || event.key === "+" || event.key === "-" || event.key === "_" || event.key === "0")) {
+        // The browser's page zoom must not run while the iframe has focus —
+        // the forwarded keydown resolves to a canvas zoom on the parent.
+        event.preventDefault();
+      }
       const target = event.target instanceof Element ? describe(event.target) : null;
       if (activeTextEdit && activeTextEdit.element === event.target) {
         if (event.key === "Escape") {
@@ -2253,6 +2265,41 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     document.addEventListener("input", (event) => {
       const target = event.target instanceof Element ? describe(event.target) : null;
       sendEvent("input", event, target);
+    }, true);
+    // Pinch (ctrl/cmd+wheel) and Safari gesture events inside an iframe never
+    // reach the parent's handlers — cancel the page zoom locally and forward
+    // the deltas so the canvas camera zooms instead.
+    document.addEventListener("wheel", function (event) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      sendEvent("wheel", event, null);
+    }, { passive: false, capture: true });
+    var lastGestureScale = 0;
+    document.addEventListener("gesturestart", function (event) {
+      event.preventDefault();
+      lastGestureScale = typeof event.scale === "number" && event.scale > 0 ? event.scale : 1;
+    }, true);
+    document.addEventListener("gesturechange", function (event) {
+      event.preventDefault();
+      var scale = typeof event.scale === "number" ? event.scale : 0;
+      if (lastGestureScale > 0 && scale > 0) {
+        var delta = scale / lastGestureScale;
+        if (delta !== 1) {
+          sendEvent("wheel", {
+            clientX: event.clientX,
+            clientY: event.clientY,
+            deltaX: 0,
+            deltaY: -Math.log(delta) / 0.008,
+            deltaMode: 0,
+            ctrlKey: true,
+          }, null);
+        }
+        lastGestureScale = scale;
+      }
+    }, true);
+    document.addEventListener("gestureend", function (event) {
+      event.preventDefault();
+      lastGestureScale = 0;
     }, true);
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? describe(event.target) : null;

@@ -88,6 +88,7 @@ export type BridgeEventName =
   | "pointerup"
   | "keydown"
   | "input"
+  | "wheel"
   | "text-edit-start"
   | "text-commit"
   | "text-cancel";
@@ -470,6 +471,9 @@ export type BridgeEventMessage = BridgeEnvelopeBase & {
   altKey?: boolean;
   metaKey?: boolean;
   ctrlKey?: boolean;
+  deltaX?: number;
+  deltaY?: number;
+  deltaMode?: number;
 };
 
 export interface BridgeError {
@@ -911,7 +915,7 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
         : null;
     case "event":
       return (
-        ["hover", "select", "pointerdown", "pointermove", "pointerup", "keydown", "input", "text-edit-start", "text-commit", "text-cancel"].includes(record.event as string) &&
+        ["hover", "select", "pointerdown", "pointermove", "pointerup", "keydown", "input", "wheel", "text-edit-start", "text-commit", "text-cancel"].includes(record.event as string) &&
         (record.target === null || isElementTarget(record.target)) &&
         isPoint(record.point) &&
         (record.key === undefined || isValidString(record.key, { maxLength: 64, allowEmpty: true })) &&
@@ -921,7 +925,10 @@ export function parseBridgeMessage(value: unknown): BridgeMessage | null {
         (record.shiftKey === undefined || typeof record.shiftKey === "boolean") &&
         (record.altKey === undefined || typeof record.altKey === "boolean") &&
         (record.metaKey === undefined || typeof record.metaKey === "boolean") &&
-        (record.ctrlKey === undefined || typeof record.ctrlKey === "boolean")
+        (record.ctrlKey === undefined || typeof record.ctrlKey === "boolean") &&
+        (record.deltaX === undefined || isFiniteNumber(record.deltaX)) &&
+        (record.deltaY === undefined || isFiniteNumber(record.deltaY)) &&
+        (record.deltaMode === undefined || (typeof record.deltaMode === "number" && Number.isInteger(record.deltaMode) && record.deltaMode >= 0 && record.deltaMode <= 2))
       )
         ? (value as BridgeEventMessage)
         : null;

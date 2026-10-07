@@ -50,4 +50,17 @@ describe("editor keyboard shortcuts", () => {
     expect(resolveEditorShortcut({ key: "Escape" })).toEqual({ type: "escape" });
     expect(resolveEditorShortcut({ key: "0" })).toEqual({ type: "fit-all" });
   });
+
+  it("routes browser page-zoom keys to canvas zoom", () => {
+    expect(resolveEditorShortcut({ key: "=", metaKey: true })).toEqual({ type: "zoom-in" });
+    expect(resolveEditorShortcut({ key: "=", ctrlKey: true })).toEqual({ type: "zoom-in" });
+    expect(resolveEditorShortcut({ key: "+", metaKey: true, shiftKey: true })).toEqual({ type: "zoom-in" });
+    expect(resolveEditorShortcut({ key: "-", metaKey: true })).toEqual({ type: "zoom-out" });
+    expect(resolveEditorShortcut({ key: "-", ctrlKey: true })).toEqual({ type: "zoom-out" });
+    expect(resolveEditorShortcut({ key: "_", metaKey: true, shiftKey: true })).toEqual({ type: "zoom-out" });
+    expect(resolveEditorShortcut({ key: "0", metaKey: true })).toEqual({ type: "zoom-reset" });
+    expect(resolveEditorShortcut({ key: "0", ctrlKey: true })).toEqual({ type: "zoom-reset" });
+    expect(resolveEditorShortcut({ key: "=" })).toBeNull();
+    expect(resolveEditorShortcut({ key: "-", metaKey: true, altKey: true })).toBeNull();
+  });
 });

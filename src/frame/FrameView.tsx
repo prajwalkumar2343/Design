@@ -152,7 +152,7 @@ export const FrameView = memo(function FrameView({
   }
   const bridgeSession = bridgeSessionRef.current;
   const transportRef = useRef<IframeBridgeTransport | null>(null);
-  const latestInspectionTargetRef = useRef<string | null>(null);
+  const latestInspectionTargetRef = useRef<{ hover: string | null; select: string | null }>({ hover: null, select: null });
   const [bridgeState, setBridgeState] = useState<BridgeViewState>({
     status: isLive ? "waiting" : "idle",
     hoveredElementId: null,
@@ -200,15 +200,18 @@ export const FrameView = memo(function FrameView({
     const iframe = iframeRef.current;
     let transport: IframeBridgeTransport;
     let snapshotRequestSequence = 0;
-    const inspectTarget = (target: BridgeElementTarget | null) => {
+    const isLatestInspectionTarget = (elementId: string) => {
+      const latest = latestInspectionTargetRef.current;
+      return latest.hover === elementId || latest.select === elementId;
+    };
+    const inspectTarget = (kind: "hover" | "select", target: BridgeElementTarget | null) => {
+      latestInspectionTargetRef.current = { ...latestInspectionTargetRef.current, [kind]: target?.elementId ?? null };
       if (!target) {
-        latestInspectionTargetRef.current = null;
         onBridgeInspection?.(frame.id, null);
         return;
       }
-      latestInspectionTargetRef.current = target.elementId;
       void transport.inspect(target.elementId).then((inspection) => {
-        if (latestInspectionTargetRef.current !== target.elementId) return;
+        if (!isLatestInspectionTarget(target.elementId)) return;
         setBridgeState((current) => ({
           ...current,
           inspectedTagName: inspection?.target.tagName ?? null,
@@ -216,7 +219,7 @@ export const FrameView = memo(function FrameView({
         }));
         onBridgeInspection?.(frame.id, inspection);
       }).catch((error: unknown) => {
-        if (latestInspectionTargetRef.current !== target.elementId) return;
+        if (!isLatestInspectionTarget(target.elementId)) return;
         setBridgeState((current) => ({
           ...current,
           status: "error",
@@ -261,7 +264,7 @@ export const FrameView = memo(function FrameView({
               : current.selectedElementId,
           }));
           onBridgeEvent?.(frame.id, message, iframe);
-          if (message.event === "hover" || message.event === "select") inspectTarget(message.target);
+          if (message.event === "hover" || message.event === "select") inspectTarget(message.event, message.target);
         },
         onMutatingCommand: () => onBridgeMutation?.(frame.id),
       },
@@ -305,7 +308,7 @@ export const FrameView = memo(function FrameView({
     transport.attach();
 
     return () => {
-      latestInspectionTargetRef.current = null;
+      latestInspectionTargetRef.current = { hover: null, select: null };
       onBridgeController?.(frame.id, null);
       transport.destroy();
       if (transportRef.current === transport) transportRef.current = null;

@@ -80,6 +80,28 @@ describe("iframe bridge protocol", () => {
     expect(parseBridgeMessage({ ...base, ctrlKey: 1 })).toBeNull();
   });
 
+  it("accepts forwarded wheel pinch events with finite deltas", () => {
+    const base = {
+      protocol: BRIDGE_PROTOCOL,
+      version: BRIDGE_PROTOCOL_VERSION,
+      ...identity,
+      type: "event",
+      event: "wheel",
+      target: null,
+      point: { x: 25, y: 35 },
+      ctrlKey: true,
+      deltaX: 0,
+      deltaY: -120,
+      deltaMode: 0,
+    };
+
+    expect(parseBridgeMessage(base)).toEqual(base);
+    expect(parseBridgeMessage({ ...base, deltaY: Number.POSITIVE_INFINITY })).toBeNull();
+    expect(parseBridgeMessage({ ...base, deltaY: "120" })).toBeNull();
+    expect(parseBridgeMessage({ ...base, deltaMode: 3 })).toBeNull();
+    expect(parseBridgeMessage({ ...base, deltaMode: 0.5 })).toBeNull();
+  });
+
   it("rejects malformed command shapes while leaving value policy to the sandbox runtime", () => {
     const base = {
       protocol: BRIDGE_PROTOCOL,

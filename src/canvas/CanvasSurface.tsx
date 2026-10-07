@@ -212,6 +212,7 @@ import type { Camera, CanvasFrame, Point, Rect, Size } from "./types";
 
 const CAMERA_FIT_PADDING = 148;
 const CAMERA_SETTLE_MS = 140;
+const KEYBOARD_ZOOM_STEP = 1.25;
 
 function cameraFitPadding(viewport: Size): number {
   return viewport.width < 760 ? 18 : CAMERA_FIT_PADDING;
@@ -572,6 +573,11 @@ export function CanvasSurface({
   const addCommentRef = useRef<(frameId: string, point: Point) => void>(() => undefined);
   const deleteSelectedNodesRef = useRef<() => Promise<void>>(async () => undefined);
   const runEditorShortcutRef = useRef<(action: EditorShortcutAction) => void>(() => undefined);
+  // Bridge wheel events arrive via handleBridgeEvent, which renders before
+  // these callbacks are defined — refs keep the pinch-zoom path reachable
+  // without reordering the component body.
+  const applyZoomAtPointRef = useRef<(nextZoom: number, pointer: Point) => void>(() => undefined);
+  const isNodeGestureActiveRef = useRef<() => boolean>(() => false);
 
   const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
   const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
@@ -1956,6 +1962,19 @@ export function CanvasSurface({
       } else if (message.event === "text-commit" || message.event === "text-cancel") {
         frameTextEditRef.current.delete(frameId);
         setTextEditingNode((current) => (current?.frameId === frameId ? null : current));
+      }
+
+      // Pinch over a frame iframe never reaches the surface wheel handler —
+      // the bridge runtime cancelled the site zoom and forwards the deltas
+      // here so the canvas camera zooms under the pointer instead.
+      if (message.event === "wheel") {
+        if (pointerRef.current !== null || isNodeGestureActiveRef.current()) return;
+        const wheelContext = buildBridgeEventContext(iframe, surface);
+        const pointer = mapIframePointToCanvas(message.point, wheelContext).screen;
+        const wheelMultiplier = message.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : 1;
+        const wheelDeltaY = (message.deltaY ?? 0) * wheelMultiplier;
+        applyZoomAtPointRef.current(cameraRef.current.zoom * Math.exp(-wheelDeltaY * 0.008), pointer);
+        return;
       }
 
       const currentTool = activeToolRef.current;
@@ -3868,6 +3887,7 @@ export function CanvasSurface({
     setInteractionMode,
     freeformShiftRef,
   });
+  isNodeGestureActiveRef.current = isNodeGestureActive;
 
   const sidebarHoveredOverlayTarget = useMemo(() => {
     if (!sidebarHoveredNode) return null;
@@ -4775,8 +4795,40 @@ export function CanvasSurface({
     endPointerOperation(event);
   };
 
+  // The world transform is applied imperatively during wheel gestures; the
+  // React camera commit only needs to happen once the gesture actually pauses.
+  // Committing per wheel tick rendered the whole frame tree mid-gesture — at
+  // 1k frames that's the difference between a smooth pan and a stutter. The
+  // delay is just past CAMERA_SETTLE_MS so the commit lands as interaction
+  // goes idle.
+  const commitWheelCamera = useCallback(() => {
+    if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
+    wheelCommitTimeoutRef.current = setTimeout(() => {
+      setCamera(cameraRef.current);
+      wheelCommitTimeoutRef.current = null;
+    }, CAMERA_SETTLE_MS + 20);
+    scheduleVisibilityScan();
+    settleInteraction();
+  }, [scheduleVisibilityScan, settleInteraction]);
+
+  const applyZoomAtPoint = useCallback((nextZoom: number, pointer: Point) => {
+    const nextCamera = zoomCameraAtPoint(cameraRef.current, nextZoom, pointer);
+    cameraRef.current = nextCamera;
+    if (worldRef.current) {
+      worldRef.current.style.transform = cameraTransform(nextCamera);
+      worldRef.current.style.setProperty("--canvas-zoom", String(nextCamera.zoom));
+    }
+    setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
+    commitWheelCamera();
+  }, [commitWheelCamera]);
+  applyZoomAtPointRef.current = applyZoomAtPoint;
+
   const handleWheel = useCallback((event: WheelEvent) => {
+    const isPinchZoom = event.ctrlKey || event.metaKey;
     if (isCanvasControlTarget(event.target)) {
+      // Overlay controls keep their own wheel scrolling, but a pinch still
+      // must not fall through to the browser's whole-site zoom.
+      if (isPinchZoom) event.preventDefault();
       return;
     }
     // A wheel/pinch during a pointer or node drag would mutate cameraRef under
@@ -4787,7 +4839,7 @@ export function CanvasSurface({
       return;
     }
     const targetEl = event.target as Element | null;
-    if (targetEl && !event.ctrlKey && !event.metaKey) {
+    if (targetEl && !isPinchZoom) {
       const scrollable = targetEl.closest(".sidebar-panel-content, .properties-scroll, .figma-lake-body, .figma-lake, .project-lake") as HTMLElement | null;
       if (scrollable && scrollable.scrollHeight > scrollable.clientHeight + 1) {
         const deltaAbsY = Math.abs(event.deltaY);
@@ -4806,19 +4858,8 @@ export function CanvasSurface({
     const deltaX = event.deltaX * multiplier;
     const deltaY = event.deltaY * multiplier;
 
-    const isPinchZoom = event.ctrlKey || event.metaKey;
-
     if (isPinchZoom) {
-      const pointer = getCachedPointerPosition(event);
-      const zoomFactor = Math.exp(-deltaY * 0.008);
-      const nextZoom = cameraRef.current.zoom * zoomFactor;
-      const nextCamera = zoomCameraAtPoint(cameraRef.current, nextZoom, pointer);
-      cameraRef.current = nextCamera;
-      if (worldRef.current) {
-        worldRef.current.style.transform = cameraTransform(nextCamera);
-        worldRef.current.style.setProperty("--canvas-zoom", String(nextCamera.zoom));
-      }
-      setInteractionMode(prev => prev === "zooming" ? prev : "zooming");
+      applyZoomAtPoint(cameraRef.current.zoom * Math.exp(-deltaY * 0.008), getCachedPointerPosition(event));
     } else {
       const nextCamera = panCamera(cameraRef.current, { x: -deltaX, y: -deltaY });
       cameraRef.current = nextCamera;
@@ -4826,22 +4867,9 @@ export function CanvasSurface({
         worldRef.current.style.transform = cameraTransform(nextCamera);
       }
       setInteractionMode(prev => prev === "panning" ? prev : "panning");
+      commitWheelCamera();
     }
-
-    // The world transform is applied imperatively above; the React camera
-    // commit only needs to happen once the gesture actually pauses. Committing
-    // per wheel tick rendered the whole frame tree mid-gesture — at 1k frames
-    // that's the difference between a smooth pan and a stutter. The delay is
-    // just past CAMERA_SETTLE_MS so the commit lands as interaction goes idle.
-    if (wheelCommitTimeoutRef.current) clearTimeout(wheelCommitTimeoutRef.current);
-    wheelCommitTimeoutRef.current = setTimeout(() => {
-      setCamera(cameraRef.current);
-      wheelCommitTimeoutRef.current = null;
-    }, CAMERA_SETTLE_MS + 20);
-
-    scheduleVisibilityScan();
-    settleInteraction();
-  }, [settleInteraction, getCachedPointerPosition, isNodeGestureActive, scheduleVisibilityScan]);
+  }, [applyZoomAtPoint, commitWheelCamera, getCachedPointerPosition, isNodeGestureActive]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -4855,6 +4883,29 @@ export function CanvasSurface({
       }
     };
   }, [handleWheel]);
+
+  // Safari trackpad pinch arrives as gesture* events instead of ctrl+wheel;
+  // route them into the same camera zoom (the page-zoom guard already blocked
+  // the browser's default, and frame iframes forward theirs via "wheel").
+  useEffect(() => {
+    let gestureBaseZoom = 1;
+    const handleGestureStart = () => {
+      gestureBaseZoom = cameraRef.current.zoom;
+    };
+    const handleGestureChange = (event: Event) => {
+      const { scale, clientX, clientY } = event as Event & { scale?: number; clientX?: number; clientY?: number };
+      if (typeof scale !== "number" || !(scale > 0)) return;
+      if (pointerRef.current !== null || isNodeGestureActive()) return;
+      const pointer = getCachedPointerPosition({ clientX: clientX ?? 0, clientY: clientY ?? 0 });
+      applyZoomAtPoint(gestureBaseZoom * scale, pointer);
+    };
+    document.addEventListener("gesturestart", handleGestureStart);
+    document.addEventListener("gesturechange", handleGestureChange);
+    return () => {
+      document.removeEventListener("gesturestart", handleGestureStart);
+      document.removeEventListener("gesturechange", handleGestureChange);
+    };
+  }, [applyZoomAtPoint, getCachedPointerPosition, isNodeGestureActive]);
 
   const cancelInteraction = useCallback(() => {
     cancelNodeGesture();
@@ -4986,8 +5037,19 @@ export function CanvasSurface({
       case "fit-all":
         fitAllFrames();
         break;
+      case "zoom-in":
+      case "zoom-out":
+      case "zoom-reset": {
+        if (viewport.width <= 0 || viewport.height <= 0) break;
+        const center = { x: viewport.width / 2, y: viewport.height / 2 };
+        const nextZoom = action.type === "zoom-reset"
+          ? 1
+          : cameraRef.current.zoom * (action.type === "zoom-in" ? KEYBOARD_ZOOM_STEP : 1 / KEYBOARD_ZOOM_STEP);
+        updateCamera(zoomCameraAtPoint(cameraRef.current, nextZoom, center));
+        break;
+      }
     }
-  }, [deleteSelectedFrames, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool]);
+  }, [deleteSelectedFrames, deleteSelectedNodes, deleteShaderElement, duplicateSelectedNode, editorStore, fitAllFrames, handleEscape, setActiveTool, updateCamera, viewport]);
   runEditorShortcutRef.current = runEditorShortcut;
 
   useEffect(() => {

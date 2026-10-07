@@ -425,7 +425,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
       const strokeWidth = strokeWidthAttr === null ? 2 : Math.max(0, Number(strokeWidthAttr) || 0);
       const radiusRaw = Number(element.getAttribute("data-design-tool-radius") || 0) || 0;
       const inset = Math.max(0, strokeWidth / 2);
-      const child = element.querySelector("rect,ellipse,line,polyline,polygon,path");
+      const child = shapeGeometryChild(element);
       let scaleX = 1;
       let scaleY = 1;
       if (oldW > 0 && oldH > 0 && !viewBoxMatches) {
@@ -1062,7 +1062,9 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
   }
 
   function shapeGeometryChild(element) {
-    return element.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
+    // Arrowheads live in <defs> ahead of the geometry — scoping to direct
+    // children keeps stroke/fill/glass edits on the shaft, not the marker tip.
+    return element.querySelector(":scope > rect,:scope > ellipse,:scope > circle,:scope > line,:scope > polyline,:scope > polygon,:scope > path");
   }
 
   function rememberOriginalFill(element, child) {
@@ -2217,7 +2219,7 @@ export function createBridgeRuntimeSource(config: BridgeRuntimeConfig): string {
     // Migrate legacy shapes: outline should scale with shape (remove non-scaling-stroke)
     try {
       document.querySelectorAll("[data-design-tool-created='true']").forEach(function(el) {
-        const child = el.querySelector("rect,ellipse,circle,line,polyline,polygon,path");
+        const child = shapeGeometryChild(el);
         if (child && child.getAttribute("vector-effect") === "non-scaling-stroke") child.removeAttribute("vector-effect");
       });
     } catch {}

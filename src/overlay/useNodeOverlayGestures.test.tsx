@@ -6,7 +6,9 @@ import type { IframeBridgeController } from "../bridge/transport";
 import type { Camera } from "../canvas/types";
 import type { FrameEntity, SelectionState } from "../editor/model";
 import type { NodeGestureStart, OverlayNodeTarget } from "./NodeOverlayLayer";
+import type { OverlayStyleChange } from "./commands";
 import {
+  gestureOverlayBox,
   useNodeOverlayGestures,
   type OverlayBridgeTargetState,
 } from "./useNodeOverlayGestures";
@@ -485,5 +487,50 @@ describe("useNodeOverlayGestures cancel", () => {
     } finally {
       h.cleanup();
     }
+  });
+});
+
+describe("gestureOverlayBox", () => {
+  const change = (overrides: Partial<OverlayStyleChange>): OverlayStyleChange => ({
+    target: overlayTarget(),
+    nextBounds: { x: 20, y: 30, width: 100, height: 50 },
+    rotation: 0,
+    previous: {},
+    next: {},
+    ...overrides,
+  });
+
+  it("keeps the canonical rect for a rotated canonical-space change", () => {
+    const canonical = { x: 20, y: 30, width: 100, height: 50 };
+    const box = gestureOverlayBox(
+      change({ canonical: true, rotation: 30, nextBounds: canonical }),
+      undefined,
+    );
+    // Clearing canonicalBounds here would paint the unrotated rect flat and
+    // snap back when the gesture ends.
+    expect(box).toEqual({ bounds: canonical, canonicalBounds: canonical, rotation: 30 });
+  });
+
+  it("rides the canonical rect along an AABB-space change", () => {
+    const box = gestureOverlayBox(
+      change({
+        target: overlayTarget({
+          bounds: { x: 0, y: 0, width: 100, height: 50 },
+          canonicalBounds: { x: 10, y: 10, width: 80, height: 30 },
+        }),
+        nextBounds: { x: 0, y: 0, width: 200, height: 100 },
+        rotation: 30,
+      }),
+      undefined,
+    );
+    expect(box.bounds).toEqual({ x: 0, y: 0, width: 200, height: 100 });
+    expect(box.canonicalBounds).toEqual({ x: 20, y: 20, width: 160, height: 60 });
+    expect(box.rotation).toBe(30);
+  });
+
+  it("leaves unrotated targets without a canonical rect", () => {
+    const box = gestureOverlayBox(change({}), undefined);
+    expect(box.canonicalBounds).toBeUndefined();
+    expect(box.rotation).toBe(0);
   });
 });

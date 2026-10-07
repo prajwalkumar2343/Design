@@ -1,6 +1,6 @@
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useEffect } from "react";
+import { StrictMode, useEffect } from "react";
 import { SafeShaderMount } from "./SafeShaderMount";
 
 function fakeCanvas(label: string): HTMLCanvasElement {
@@ -87,6 +87,37 @@ describe("SafeShaderMount", () => {
     });
 
     await waitFor(() => expect(mounts).toBe(2));
+  });
+
+  it("still recovers from context loss under StrictMode", async () => {
+    const canvas = fakeCanvas("strict-mode");
+    let mounts = 0;
+    function CountedShader() {
+      useEffect(() => {
+        mounts += 1;
+      }, []);
+      return <ShaderStub canvases={[canvas]} />;
+    }
+    render(
+      <StrictMode>
+        <SafeShaderMount className="mount" component={CountedShader} />
+      </StrictMode>,
+    );
+    // StrictMode replays effects on mount — recovery must survive the
+    // simulated unmount cleanup that sets the disposed flag.
+    const settled = mounts;
+    expect(settled).toBeGreaterThan(0);
+
+    const lost = new Event("webglcontextlost", { cancelable: true });
+    await act(async () => {
+      canvas.dispatchEvent(lost);
+    });
+    expect(lost.defaultPrevented).toBe(true);
+    await act(async () => {
+      canvas.dispatchEvent(new Event("webglcontextrestored"));
+    });
+
+    await waitFor(() => expect(mounts).toBeGreaterThan(settled));
   });
 
   it("remounts after a grace period when a lost context is never restored", async () => {

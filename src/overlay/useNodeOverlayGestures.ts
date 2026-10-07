@@ -194,21 +194,26 @@ function mapCanonicalBounds(canonical: Rect, before: Rect, after: Rect): Rect {
  * rotation reproduces the element's real box. AABB-space changes keep the
  * measured box unless a canonical rect can ride along with it; painting a
  * bare AABB with rotate() would double-apply the element's own angle.
+ *
+ * Rotation only paints when `canonicalBounds` is present (see targetBox), so
+ * the updated unrotated rect is always carried along — clearing it drops the
+ * rotation mid-gesture and the chrome snaps back when the gesture ends.
  */
-function gestureOverlayBox(
+export function gestureOverlayBox(
   change: OverlayStyleChange,
   measured: Rect | undefined,
 ): Pick<OverlayNodeTarget, "bounds" | "rotation" | "canonicalBounds"> {
-  // Patched targets carry the canonical-space rect in `bounds`, so the
-  // target's stale `canonicalBounds` must not shadow it when painted.
+  // Patched targets carry the canonical-space rect in `bounds` — carry it as
+  // the canonical rect (overwriting the target's stale one) so the rotation
+  // keeps painting.
   if (change.canonical && !measured) {
-    return { bounds: change.nextBounds, canonicalBounds: undefined, rotation: change.rotation };
+    return { bounds: change.nextBounds, canonicalBounds: change.nextBounds, rotation: change.rotation };
   }
   const bounds = measured ?? change.nextBounds;
   if (change.target.canonicalBounds) {
     return {
-      bounds: mapCanonicalBounds(change.target.canonicalBounds, change.target.bounds, bounds),
-      canonicalBounds: undefined,
+      bounds,
+      canonicalBounds: mapCanonicalBounds(change.target.canonicalBounds, change.target.bounds, bounds),
       rotation: change.rotation,
     };
   }

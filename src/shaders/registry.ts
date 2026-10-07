@@ -308,15 +308,39 @@ function cacheBustedModuleUrl(url: string, nonce: number): string {
   }
 }
 
-async function importShaderModule<T>(load: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
+export interface ImportShaderModuleOptions<T> {
+  /** Re-imports a single URL. Injectable so tests can simulate CDN failures. */
+  importUrl?: (url: string) => Promise<unknown>;
+  /**
+   * Guards the retry path: the failure URL can name a nested dependency
+   * instead of the requested entry, and importing it succeeds with the
+   * wrong exports. Reject those so the entry failure surfaces.
+   */
+  isEntryModule?: (module: unknown) => module is T;
+}
+
+const defaultImportShaderModuleUrl = (url: string): Promise<unknown> =>
+  import(/* @vite-ignore */ url);
+
+export async function importShaderModule<T>(
+  load: () => Promise<T>,
+  options: ImportShaderModuleOptions<T> = {},
+): Promise<T> {
+  const importUrl = options.importUrl ?? defaultImportShaderModuleUrl;
+  const isEntryModule = options.isEntryModule;
+  let lastError: unknown = undefined;
   let failedUrl: string | null = null;
   for (let attempt = 0; ; attempt += 1) {
     try {
       if (failedUrl === null) {
         return await load();
       }
-      return (await import(/* @vite-ignore */ cacheBustedModuleUrl(failedUrl, attempt))) as T;
+      const recovered: unknown = await importUrl(cacheBustedModuleUrl(failedUrl, attempt));
+      // A failed nested dependency (FerroTide's `ogl` import, for example)
+      // names the dependency, not the entry — returning it would hand the
+      // wrong exports to the shader loader as if the entry had loaded.
+      if (isEntryModule && !isEntryModule(recovered)) throw lastError;
+      return recovered as T;
     } catch (error) {
       lastError = error;
       failedUrl ??= failedModuleUrl(error);
@@ -331,7 +355,13 @@ async function loadShaderOnce(
   shaderId: ShaderId,
 ): Promise<LoadedPaperShader | LoadedCustomShader> {
   if (isCustomShaderId(shaderId)) {
-    const { FerroTide, FERRO_TIDE_MOODS } = await importShaderModule(() => import("./ferro-tide"));
+    const { FerroTide, FERRO_TIDE_MOODS } = await importShaderModule(() => import("./ferro-tide"), {
+      isEntryModule: (module): module is typeof import("./ferro-tide") =>
+        !!module &&
+        (typeof module === "object" || typeof module === "function") &&
+        "FerroTide" in module &&
+        "FERRO_TIDE_MOODS" in module,
+    });
     return {
       id: shaderId,
       definition: CUSTOM_SHADER_DEFINITIONS[shaderId],
@@ -343,7 +373,13 @@ async function loadShaderOnce(
     };
   }
   const definition = getPaperShaderDefinition(shaderId);
-  const shaderModule = await importShaderModule(() => import("@paper-design/shaders-react"));
+  const shaderModule = await importShaderModule(() => import("@paper-design/shaders-react"), {
+    isEntryModule: (module): module is PaperShadersModule =>
+      !!module &&
+      (typeof module === "object" || typeof module === "function") &&
+      definition.componentExport in module &&
+      definition.presetsExport in module,
+  });
 
   const Component = shaderModule[definition.componentExport];
   const presets = shaderModule[definition.presetsExport];

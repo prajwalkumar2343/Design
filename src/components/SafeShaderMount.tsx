@@ -77,6 +77,9 @@ export const SafeShaderMount = memo(function SafeShaderMount({ component: Compon
   }, [Component]);
 
   useEffect(() => {
+    // StrictMode replays setup after the simulated unmount cleanup — reset
+    // the flag here so context-loss recovery keeps working in development.
+    disposedRef.current = false;
     const canvases = canvasesRef.current;
     const listeners = listenersRef.current;
     return () => {

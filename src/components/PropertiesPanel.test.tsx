@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { BridgeInspection } from "../bridge/protocol";
 import type { OverlayBridgeTargetState } from "../overlay/useNodeOverlayGestures";
 import type { CanvasShaderElement } from "../shaders";
+import type { TokenStoreState } from "../tokens";
 import { PropertiesPanel } from "./PropertiesPanel";
 
 const inspection: BridgeInspection = {
@@ -282,6 +283,69 @@ const textProps = {
   selection: { ...baseProps.selection, nodeIds: ["text-1"], primaryNodeId: "text-1" },
   bridgeTargets: { "frame-1:text-1": textEntry },
 };
+
+describe("PropertiesPanel shape width/radius tokens", () => {
+  const tokens: TokenStoreState = {
+    sets: {
+      "set-1": {
+        id: "set-1",
+        name: "Core",
+        tokens: {
+          "stroke-md": { id: "stroke-md", name: "stroke.md", type: "spacing", value: "2px" },
+          "radius-md": { id: "radius-md", name: "radius.md", type: "radius", value: "8px" },
+        },
+      },
+    },
+    themes: { "theme-1": { id: "theme-1", name: "Default", setIds: ["set-1"] } },
+    activeThemeId: "theme-1",
+    revision: 1,
+  };
+
+  it("hides the Width and Radius token controls on created vectors", () => {
+    // A var() pick parses to NaN in the shape-command path and falls through
+    // to a wrapper style that never paints the geometry — offering the
+    // control promises a link that silently does nothing.
+    render(<PropertiesPanel {...baseProps} tokens={tokens} />);
+    expect(screen.getByLabelText("Width")).toBeTruthy();
+    expect(screen.getByLabelText("Radius")).toBeTruthy();
+    for (const testId of [
+      "token-picker-border-width",
+      "token-offsystem-border-width",
+      "token-hint-border-width",
+      "token-picker-border-radius",
+      "token-offsystem-border-radius",
+      "token-hint-border-radius",
+    ]) {
+      expect(screen.queryByTestId(testId)).toBeNull();
+    }
+  });
+
+  it("keeps the Width and Radius token controls on plain elements", () => {
+    const divEntry: OverlayBridgeTargetState = {
+      frameId: "frame-1",
+      target: { ...inspection.target, elementId: "box-1", tagName: "div", name: "Box" },
+      inspection: {
+        target: { ...inspection.target, elementId: "box-1", tagName: "div", name: "Box" },
+        text: "",
+        attributes: {},
+        inlineStyle: {},
+        computedStyle: { "border-width": "2px", "border-radius": "8px" },
+      },
+    };
+    render(
+      <PropertiesPanel
+        {...baseProps}
+        selection={{ frameIds: ["frame-1"], nodeIds: ["box-1"], primaryFrameId: "frame-1", primaryNodeId: "box-1" }}
+        bridgeTargets={{ "frame-1:box-1": divEntry }}
+        tokens={tokens}
+      />,
+    );
+    // The controls exist on plain elements (unmatched raw values render
+    // the picker button).
+    expect(screen.getByTestId("token-picker-border-width")).toBeTruthy();
+    expect(screen.getByTestId("token-picker-border-radius")).toBeTruthy();
+  });
+});
 
 describe("PropertiesPanel font family picker", () => {
   it("lists the bundled catalog and commits a font stack", () => {

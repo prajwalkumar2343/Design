@@ -635,6 +635,11 @@ function FillBorderSection({ entries, nodes, onEditNodeStyle, onApplyGlassEffect
       onCommit={(value) => onEditNodeStyle(property, value)}
     />
   );
+  // Width and radius travel to vectors as parsed numbers through the shape
+  // commands — a `var(--token)` pick parses to NaN and falls through to a
+  // wrapper style that never paints the geometry, so the token controls stay
+  // hidden until token links are supported there.
+  const allVectors = entries.length > 0 && entries.every((entry) => kindOf(entry) !== undefined);
   return (
     <PropertySection title="Fill & border" icon={<Palette size={13} />}>
       <div className="property-grid property-grid-single">
@@ -648,9 +653,9 @@ function FillBorderSection({ entries, nodes, onEditNodeStyle, onApplyGlassEffect
         />
         <div className="property-grid">
           {strokeOnly ? null : <PropertyField label="Border" value={border} onCommit={(value) => onEditNodeStyle("border-color", value)} token={control("border-color", border)} />}
-          <PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={control("border-width", borderWidth)} />
+          <PropertyField label="Width" value={borderWidth} onCommit={(value) => onEditNodeStyle("border-width", value)} token={allVectors ? undefined : control("border-width", borderWidth)} />
         </div>
-        {strokeOnly ? null : <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} token={control("border-radius", radius)} />}
+        {strokeOnly ? null : <PropertyField label="Radius" value={radius} onCommit={(value) => onEditNodeStyle("border-radius", value)} token={allVectors ? undefined : control("border-radius", radius)} />}
       </div>
     </PropertySection>
   );
